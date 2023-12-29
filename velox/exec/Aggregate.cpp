@@ -20,6 +20,7 @@
 #include "velox/exec/AggregateCompanionAdapter.h"
 #include "velox/exec/AggregateCompanionSignatures.h"
 #include "velox/exec/AggregateWindow.h"
+#include "velox/expression/SignatureBinder.h"
 
 namespace facebook::velox::exec {
 
