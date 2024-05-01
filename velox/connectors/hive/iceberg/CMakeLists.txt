@@ -14,7 +14,10 @@
 
 velox_add_library(
   velox_hive_iceberg_splitreader
+  EqualityDeleteFileReader.cpp
+  FilterUtil.cpp
   IcebergColumnHandle.cpp
+  IcebergDeleteFile.cpp
   DataFileStatsCollector.cpp
   IcebergDataSink.cpp
   IcebergPartitionIdGenerator.cpp
@@ -26,7 +29,8 @@ velox_add_library(
   TransformFactory.cpp
   Transforms.cpp)
 
-velox_link_libraries(velox_hive_iceberg_splitreader velox_connector Folly::folly)
+velox_link_libraries(velox_hive_iceberg_splitreader velox_connector
+                     velox_dwio_common Folly::folly)
 
 if(VELOX_ENABLE_PARQUET)
   velox_link_libraries(velox_hive_iceberg_splitreader
