@@ -1,0 +1,15 @@
+{
+  "settingsInheritedFrom": "whitesource-config/whitesource-config@master",
+  "remediateSettings": {
+    "workflowRules": {
+      "enabled": true
+    },
+    "leastVulnerablePackageSettings": {
+      "enabled": true
+    }
+  },
+  "scanSettings": {
+    "baseBranches": ["main","wxd-fedramp-baseline"],
+    "configMode": "LOCAL"
+  }
+}
