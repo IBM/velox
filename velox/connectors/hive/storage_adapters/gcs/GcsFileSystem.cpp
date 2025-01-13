@@ -15,8 +15,12 @@
  */
 
 #include "velox/connectors/hive/storage_adapters/gcs/GcsFileSystem.h"
+
+#include <dlfcn.h>
+
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/config/Config.h"
+#include "velox/common/encode/Base64.h"
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/storage_adapters/gcs/GcsReadFile.h"
 #include "velox/connectors/hive/storage_adapters/gcs/GcsUtil.h"
@@ -31,6 +35,36 @@
 #include <google/cloud/storage/client.h>
 
 namespace facebook::velox {
+namespace {
+
+auto constexpr kDecryptLib{"ibm-lh-preloader.so"};
+auto constexpr kDecryptFunc{"do_decrypt_string"};
+// Same as `MAX_LINE_LENGTH` in ibm-open-lakehouse/images/crypt-utils/src/crypt/cryptlib.h
+auto constexpr kMaxDecryptedLength{8192};
+
+void loadDecryptLibAndDecrypt(char* cipher_text, char* out) {
+  void* handle = dlopen(kDecryptLib, RTLD_LAZY);
+  if (!handle) {
+    LOG(WARNING) << "Error loading decrypt library " << kDecryptLib;
+    return;
+  }
+
+  dlerror();
+  const auto decryptFunc = reinterpret_cast<int (*)(char*, char*, int)>(
+      dlsym(handle, kDecryptFunc));
+  if (!decryptFunc) {
+    LOG(WARNING) << "Error loading " << kDecryptFunc << " " << dlerror();
+    dlclose(handle);
+    return;
+  }
+
+  decryptFunc(cipher_text, out, kMaxDecryptedLength);
+  dlclose(handle);
+  LOG(INFO) << "Successfully decrypted string";
+}
+
+} // namespace
+
 namespace filesystems {
 using namespace connector::hive;
 namespace gcs = ::google::cloud::storage;
@@ -130,7 +164,16 @@ class GcsFileSystem::Impl {
         std::stringstream credsBuffer;
         credsBuffer << jsonFile.rdbuf();
         auto creds = credsBuffer.str();
-        auto credentials = gc::MakeServiceAccountCredentials(std::move(creds));
+        std::string_view kKeyType = "\"type\"";
+        // Looking at the code in googe-cloud-cpp, "type" seems to be a required
+        // field. The file is likely ecrypted if this field is not found.
+        if (creds.find(kKeyType) == std::string::npos) {
+          VLOG(1) << "Key is likely encrypted. Trying to decrypt the key.";
+          char decrypted[kMaxDecryptedLength] = {};
+          loadDecryptLibAndDecrypt(creds.data(), decrypted);
+          creds = encoding::Base64::decode(decrypted);
+        }
+        auto credentials = gc::MakeServiceAccountCredentials(creds);
         options.set<gc::UnifiedCredentialsOption>(credentials);
       }
     } else {
