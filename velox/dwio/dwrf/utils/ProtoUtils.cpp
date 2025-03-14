@@ -58,10 +58,23 @@ void ProtoUtils::writeType(
     parent->addSubtypes(footer.typesSize() - 1);
   }
 
-  auto kind =
-      VELOX_STATIC_FIELD_DYNAMIC_DISPATCH(SchemaType, kind, type.kind());
-  auto typeKindWrapper = TypeKindWrapper(&kind);
-  self.setKind(typeKindWrapper);
+  bool kindSet = false;
+  if (type.kind() == TypeKind::HUGEINT) {
+    // Hugeint is not supported by DWRF, and this branch is only for ORC
+    // testing before the ORC footer write is implemented.
+    auto kind = SchemaType<TypeKind::BIGINT>::kind;
+    auto typeKindWrapper = TypeKindWrapper(&kind);
+    self.setKind(typeKindWrapper);
+    common::testutil::TestValue::adjust(
+        "facebook::velox::dwrf::ProtoUtils::writeType", &kindSet);
+  } else {
+    auto kind =
+        VELOX_STATIC_FIELD_DYNAMIC_DISPATCH(SchemaType, kind, type.kind());
+    auto typeKindWrapper = TypeKindWrapper(&kind);
+    self.setKind(typeKindWrapper);
+    kindSet = true;
+  }
+  VELOX_CHECK(kindSet, "Unknown type {}.", type.toString());
 
   switch (type.kind()) {
     case TypeKind::ROW: {
