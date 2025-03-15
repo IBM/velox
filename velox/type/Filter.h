@@ -26,6 +26,7 @@
 #include "velox/type/StringView.h"
 #include "velox/type/Subfield.h"
 #include "velox/type/Type.h"
+#include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::common {
 
