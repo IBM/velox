@@ -100,6 +100,8 @@ std::unique_ptr<SplitReader> SplitReader::create(
     FileHandleFactory* fileHandleFactory,
     folly::Executor* ioExecutor,
     const std::shared_ptr<common::ScanSpec>& scanSpec,
+    core::ExpressionEvaluator* expressionEvaluator,
+    std::atomic<uint64_t>& totalRemainingFilterTime,
     const common::SubfieldFilters* subfieldFiltersForValidation) {
   //  Create the SplitReader based on hiveSplit->customSplitInfo["table_format"]
   if (hiveSplit->customSplitInfo.count("table_format") > 0 &&
@@ -115,7 +117,9 @@ std::unique_ptr<SplitReader> SplitReader::create(
         fsStats,
         fileHandleFactory,
         ioExecutor,
-        scanSpec);
+        scanSpec,
+        expressionEvaluator,
+        totalRemainingFilterTime);
   } else {
     return std::unique_ptr<SplitReader>(new SplitReader(
         hiveSplit,
