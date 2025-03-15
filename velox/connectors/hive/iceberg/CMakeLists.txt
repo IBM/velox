@@ -14,13 +14,16 @@
 
 velox_add_library(
   velox_hive_iceberg_splitreader
+  EqualityDeleteFileReader.cpp
+  FilterUtil.cpp
   IcebergDataSink.cpp
-  IcebergSplitReader.cpp
+  IcebergDeleteFile.cpp
   IcebergSplit.cpp
+  IcebergSplitReader.cpp
   PositionalDeleteFileReader.cpp
 )
 
-velox_link_libraries(velox_hive_iceberg_splitreader velox_connector Folly::folly)
+velox_link_libraries(velox_hive_iceberg_splitreader velox_connector velox_dwio_common Folly::folly)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
