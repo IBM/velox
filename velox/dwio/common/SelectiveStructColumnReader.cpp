@@ -423,7 +423,6 @@ void SelectiveStructColumnReaderBase::read(
   }
 
   const auto& childSpecs = scanSpec_->children();
-  VELOX_CHECK(!childSpecs.empty());
   for (size_t i = 0; i < childSpecs.size(); ++i) {
     const auto& childSpec = childSpecs[i];
 
@@ -522,9 +521,12 @@ bool SelectiveStructColumnReaderBase::isChildMissing(
                                                   // row type that doesn't exist
                                                   // in the output.
        fileType_->type()->kind() !=
-           TypeKind::MAP && // If this is the case it means this is a flat map,
-                            // so it can't have "missing" fields.
-       childSpec.channel() >= fileType_->size());
+           TypeKind::MAP // If this is the case it means this is a flat map,
+                         // so it can't have "missing" fields.
+       ) &&
+      (columnReaderOptions_.columnMappingMode_ == dwio::common::ColumnMappingMode::kName
+           ? !asRowType(fileType_->type())->containsChild(childSpec.fieldName())
+           : childSpec.channel() >= fileType_->size());
 }
 
 std::unique_ptr<velox::dwio::common::ColumnLoader>
@@ -546,7 +548,6 @@ SelectiveStructColumnReaderBase::makeColumnLoader(vector_size_t index) {
 void SelectiveStructColumnReaderBase::getValues(
     const RowSet& rows,
     VectorPtr* result) {
-  VELOX_CHECK(!scanSpec_->children().empty());
   VELOX_CHECK_NOT_NULL(
       *result, "SelectiveStructColumnReaderBase expects a non-null result");
 
