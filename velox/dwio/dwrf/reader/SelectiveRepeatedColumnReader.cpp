@@ -53,7 +53,8 @@ SelectiveListColumnReader::SelectiveListColumnReader(
     const TypePtr& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     DwrfParams& params,
-    common::ScanSpec& scanSpec)
+    common::ScanSpec& scanSpec,
+    bool useColumnNames)
     : dwio::common::SelectiveListColumnReader(
           requestedType,
           fileType,
@@ -80,7 +81,8 @@ SelectiveListColumnReader::SelectiveListColumnReader(
       childType,
       fileType_->childAt(0),
       childParams,
-      *scanSpec_->children()[0]);
+      *scanSpec_->children()[0],
+      useColumnNames);
   children_ = {child_.get()};
 }
 
@@ -89,7 +91,8 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
     const TypePtr& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     DwrfParams& params,
-    common::ScanSpec& scanSpec)
+    common::ScanSpec& scanSpec,
+    bool useColumnNames)
     : dwio::common::SelectiveMapColumnReader(
           requestedType,
           fileType,
@@ -118,7 +121,8 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
       keyType,
       fileType_->childAt(0),
       keyParams,
-      *scanSpec_->children()[0].get());
+      *scanSpec_->children()[0].get(),
+      useColumnNames);
 
   auto& valueType = requestedType_->childAt(1);
   auto elementParams = DwrfParams(
@@ -131,7 +135,8 @@ SelectiveMapColumnReader::SelectiveMapColumnReader(
       valueType,
       fileType_->childAt(1),
       elementParams,
-      *scanSpec_->children()[1]);
+      *scanSpec_->children()[1],
+      useColumnNames);
   children_ = {keyReader_.get(), elementReader_.get()};
 }
 

@@ -45,7 +45,8 @@ class DwrfUnit : public LoadUnit {
       std::shared_ptr<dwio::common::ColumnSelector> columnSelector,
       const std::shared_ptr<BitSet>& projectedNodes,
       RowReaderOptions options,
-      const dwio::common::ColumnReaderOptions& columnReaderOptions)
+      const dwio::common::ColumnReaderOptions& columnReaderOptions,
+      bool useColumnNames)
       : stripeReaderBase_{stripeReaderBase},
         strideIndexProvider_{strideIndexProvider},
         columnReaderStatistics_{&columnReaderStatistics},
@@ -55,7 +56,8 @@ class DwrfUnit : public LoadUnit {
         options_{std::move(options)},
         columnReaderOptions_{columnReaderOptions},
         stripeInfo_{
-            stripeReaderBase.getReader().footer().stripes(stripeIndex_)} {}
+            stripeReaderBase.getReader().footer().stripes(stripeIndex_)},
+        useColumnNames_{useColumnNames} {}
 
   ~DwrfUnit() override = default;
 
@@ -94,6 +96,9 @@ class DwrfUnit : public LoadUnit {
   const RowReaderOptions options_;
   const dwio::common::ColumnReaderOptions& columnReaderOptions_;
   const StripeInformationWrapper stripeInfo_;
+
+  // Whether to use names for mapping table field names to file field names.
+  const bool useColumnNames_;
 
   // Mutables
   bool preloaded_;
@@ -170,6 +175,7 @@ void DwrfUnit::ensureDecoders() {
         streamLabels,
         *columnReaderStatistics_,
         scanSpec,
+        useColumnNames_,
         flatMapContext,
         /*isRoot=*/true);
     selectiveColumnReader_->setIsTopLevel();
@@ -336,7 +342,8 @@ std::unique_ptr<dwio::common::UnitLoader> DwrfRowReader::getUnitLoader() {
         columnSelector_,
         projectedNodes_,
         options_,
-        columnReaderOptions_));
+        columnReaderOptions_,
+        readerBaseShared()->readerOptions().useColumnNamesForColumnMapping()));
   }
   std::shared_ptr<UnitLoaderFactory> unitLoaderFactory =
       options_.unitLoaderFactory();

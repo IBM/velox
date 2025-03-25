@@ -65,6 +65,7 @@ std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     DwrfParams& params,
     common::ScanSpec& scanSpec,
+    bool useColumnNames,
     bool isRoot) {
   VELOX_CHECK(
       !isRoot || fileType->type()->kind() == TypeKind::ROW,
@@ -91,16 +92,16 @@ std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
           requestedType, fileType, params, SHORT_BYTE_SIZE, scanSpec);
     case TypeKind::ARRAY:
       return std::make_unique<SelectiveListColumnReader>(
-          columnReaderOptions, requestedType, fileType, params, scanSpec);
+          columnReaderOptions, requestedType, fileType, params, scanSpec, useColumnNames);
     case TypeKind::MAP:
       if (stripe.format() == DwrfFormat::kDwrf &&
           stripe.getEncoding(ek).kind() ==
               proto::ColumnEncoding_Kind_MAP_FLAT) {
         return createSelectiveFlatMapColumnReader(
-            columnReaderOptions, requestedType, fileType, params, scanSpec);
+            columnReaderOptions, requestedType, fileType, params, scanSpec, useColumnNames);
       }
       return std::make_unique<SelectiveMapColumnReader>(
-          columnReaderOptions, requestedType, fileType, params, scanSpec);
+          columnReaderOptions, requestedType, fileType, params, scanSpec, useColumnNames);
     case TypeKind::REAL:
       if (requestedType->kind() == TypeKind::REAL) {
         return std::make_unique<
@@ -122,6 +123,7 @@ std::unique_ptr<SelectiveColumnReader> SelectiveDwrfReader::build(
           fileType,
           params,
           scanSpec,
+          useColumnNames,
           isRoot);
     case TypeKind::BOOLEAN:
       return std::make_unique<SelectiveByteRleColumnReader>(

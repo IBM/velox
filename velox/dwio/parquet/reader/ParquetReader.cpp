@@ -83,6 +83,10 @@ class ReaderBase {
     return options_.fileColumnNamesReadAsLowerCase();
   }
 
+  bool useColumnNamesForColumnMapping() const {
+    return options_.useColumnNamesForColumnMapping();
+  }
+
   const tz::TimeZone* sessionTimezone() const {
     return options_.sessionTimezone();
   }
@@ -1070,7 +1074,9 @@ class ParquetRowReader::Impl {
         requestedType_,
         readerBase_->schemaWithId(), // Id is schema id
         params,
-        *options_.scanSpec());
+        *options_.scanSpec(),
+        pool_,
+        readerBase_->useColumnNamesForColumnMapping());
     columnReader_->setIsTopLevel();
 
     filterRowGroups();

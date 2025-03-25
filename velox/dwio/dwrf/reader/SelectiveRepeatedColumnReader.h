@@ -32,7 +32,8 @@ class SelectiveListColumnReader
       const TypePtr& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       DwrfParams& params,
-      common::ScanSpec& scanSpec);
+      common::ScanSpec& scanSpec,
+      bool useColumnNames);
 
   void resetFilterCaches() override {
     child_->resetFilterCaches();
@@ -66,7 +67,8 @@ class SelectiveMapColumnReader : public dwio::common::SelectiveMapColumnReader {
       const TypePtr& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       DwrfParams& params,
-      common::ScanSpec& scanSpec);
+      common::ScanSpec& scanSpec,
+      bool useColumnNames);
 
   void resetFilterCaches() override {
     keyReader_->resetFilterCaches();

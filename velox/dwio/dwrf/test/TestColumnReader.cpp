@@ -153,6 +153,7 @@ class ColumnReaderTestBase {
           labels_,
           columnReaderStatistics_,
           scanSpec,
+          /*useColumnNames=*/false,
           FlatMapContext{});
       selectiveColumnReader_->setIsTopLevel();
       columnReader_ = nullptr;

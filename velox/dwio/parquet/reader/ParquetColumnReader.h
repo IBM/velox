@@ -47,6 +47,8 @@ class ParquetColumnReader {
       const TypePtr& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       ParquetParams& params,
-      common::ScanSpec& scanSpec);
+      common::ScanSpec& scanSpec,
+      memory::MemoryPool& pool,
+      bool useColumnNames);
 };
 } // namespace facebook::velox::parquet
