@@ -18,7 +18,7 @@
 #include <boost/random/uniform_int_distribution.hpp>
 #include "velox/common/base/Fs.h"
 #include "velox/common/base/VeloxException.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/Spill.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
@@ -738,7 +738,7 @@ folly::dynamic serialize(
   jsonSplits.reserve(planWithSplits.splits.size());
   for (const auto& split : planWithSplits.splits) {
     const auto filePath =
-        std::dynamic_pointer_cast<connector::hive::HiveConnectorSplit>(
+        std::dynamic_pointer_cast<connector::hiveV2::HiveConnectorSplit>(
             split.connectorSplit)
             ->filePath;
     if (filePaths.count(filePath) == 0) {

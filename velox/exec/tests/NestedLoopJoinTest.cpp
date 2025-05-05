@@ -16,12 +16,15 @@
 #include "velox/core/PlanNode.h"
 #include "velox/exec/NestedLoopJoinBuild.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/VectorTestUtil.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
 namespace facebook::velox::exec::test {
+
+using namespace facebook::velox::connector::hiveV2::test;
+
 namespace {
 
 using facebook::velox::test::assertEqualVectors;

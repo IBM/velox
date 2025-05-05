@@ -18,8 +18,8 @@
 
 #include <folly/executors/GlobalExecutor.h>
 #include <pybind11/stl.h>
-#include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveTableHandle.h"
 #include "velox/connectors/tpch/TpchConnectorSplit.h"
 #include "velox/core/PlanNode.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
@@ -198,7 +198,7 @@ PyPlanBuilder& PyPlanBuilder::tableScan(
   std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;
   if (inputFiles.has_value()) {
     for (const auto& inputFile : *inputFiles) {
-      splits.push_back(std::make_shared<connector::hive::HiveConnectorSplit>(
+      splits.push_back(std::make_shared<connector::hiveV2::HiveConnectorSplit>(
           connectorId, inputFile.filePath(), inputFile.fileFormat()));
     }
   }

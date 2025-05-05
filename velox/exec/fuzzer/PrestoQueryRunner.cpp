@@ -21,7 +21,7 @@
 
 #include "velox/common/base/Fs.h"
 #include "velox/common/encode/Base64.h"
-#include "velox/connectors/hive/HiveDataSink.h"
+#include "velox/connectors/hiveV2/HiveDataSink.h"
 #include "velox/core/Expressions.h"
 #include "velox/core/ITypedExpr.h"
 #include "velox/dwio/common/WriterFactory.h"

@@ -16,9 +16,9 @@
 
 #include "velox/python/init/PyInit.h"
 #include "velox/common/memory/Memory.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/connectors/hive/HiveDataSink.h"
-#include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveDataSink.h"
+#include "velox/connectors/hiveV2/HiveTableHandle.h"
 #include "velox/connectors/tpch/TpchConnectorSplit.h"
 #include "velox/core/PlanNode.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
@@ -46,12 +46,12 @@ void registerAllResourcesOnce() {
   velox::core::PlanNode::registerSerDe();
   velox::Type::registerSerDe();
   velox::common::Filter::registerSerDe();
-  velox::connector::hive::LocationHandle::registerSerDe();
-  velox::connector::hive::HiveSortingColumn::registerSerDe();
-  velox::connector::hive::HiveBucketProperty::registerSerDe();
-  velox::connector::hive::HiveTableHandle::registerSerDe();
-  velox::connector::hive::HiveColumnHandle::registerSerDe();
-  velox::connector::hive::HiveInsertTableHandle::registerSerDe();
+  velox::connector::hiveV2::LocationHandle::registerSerDe();
+  velox::connector::hiveV2::HiveSortingColumn::registerSerDe();
+  velox::connector::hiveV2::HiveBucketProperty::registerSerDe();
+  velox::connector::hiveV2::HiveTableHandle::registerSerDe();
+  velox::connector::hiveV2::HiveColumnHandle::registerSerDe();
+  velox::connector::hiveV2::HiveInsertTableHandle::registerSerDe();
   velox::core::ITypedExpr::registerSerDe();
 
   // Register functions.

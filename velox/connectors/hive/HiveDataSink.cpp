@@ -371,27 +371,6 @@ HiveDataSink::HiveDataSink(
     const ConnectorQueryCtx* connectorQueryCtx,
     CommitStrategy commitStrategy,
     const std::shared_ptr<const HiveConfig>& hiveConfig)
-    : HiveDataSink(
-          inputType,
-          insertTableHandle,
-          connectorQueryCtx,
-          commitStrategy,
-          hiveConfig,
-          getBucketCount(insertTableHandle->bucketProperty()),
-          getBucketCount(insertTableHandle->bucketProperty()) > 0
-              ? createBucketFunction(
-                    *insertTableHandle->bucketProperty(),
-                    inputType)
-              : nullptr) {}
-
-HiveDataSink::HiveDataSink(
-    RowTypePtr inputType,
-    std::shared_ptr<const HiveInsertTableHandle> insertTableHandle,
-    const ConnectorQueryCtx* connectorQueryCtx,
-    CommitStrategy commitStrategy,
-    const std::shared_ptr<const HiveConfig>& hiveConfig,
-    uint32_t bucketCount,
-    std::unique_ptr<core::PartitionFunction> bucketFunction)
     : inputType_(std::move(inputType)),
       insertTableHandle_(std::move(insertTableHandle)),
       connectorQueryCtx_(connectorQueryCtx),

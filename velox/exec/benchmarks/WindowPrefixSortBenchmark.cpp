@@ -21,7 +21,7 @@
 
 #include "velox/common/memory/SharedArbitrator.h"
 #include "velox/exec/Cursor.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+//#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/window/WindowFunctionsRegistration.h"
@@ -39,7 +39,7 @@ static constexpr int32_t kRowsPerVector = 1'0000;
 
 namespace {
 
-class WindowPrefixSortBenchmark : public HiveConnectorTestBase {
+class WindowPrefixSortBenchmark : public connector::hiveV2::test::HiveConnectorTestBase {
  public:
   explicit WindowPrefixSortBenchmark() {
     memory::SharedArbitrator::registerFactory();

@@ -17,7 +17,7 @@
 #include "velox/runner/LocalRunner.h"
 #include "velox/common/time/Timer.h"
 
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 
 namespace facebook::velox::runner {
 namespace {

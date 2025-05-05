@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
 namespace facebook::velox::exec::test {
+
+using namespace facebook::velox::connector::hiveV2::test;
 
 class AssertQueryBuilderTest : public HiveConnectorTestBase {};
 
@@ -107,7 +109,7 @@ TEST_F(AssertQueryBuilderTest, hiveSplits) {
           .planNode(),
       duckDbQueryRunner_)
       .split(HiveConnectorSplitBuilder(file->getPath())
-                 .hivePartitionKey("ds", "2022-05-10")
+                 .partitionKey("ds", "2022-05-10")
                  .build())
       .assertResults(
           "VALUES (1, '2022-05-10'), (2, '2022-05-10'), (3, '2022-05-10')");

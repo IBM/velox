@@ -21,7 +21,7 @@
 #include <velox/core/PlanFragment.h>
 #include <velox/core/PlanNode.h>
 #include "velox/common/memory/Memory.h"
-#include "velox/connectors/hive/HiveDataSink.h"
+#include "velox/connectors/hiveV2/HiveDataSink.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/IExpr.h"
 #include "velox/parse/PlanNodeIdGenerator.h"
@@ -401,7 +401,7 @@ class PlanBuilder {
 
     /// @param sortBy Specifies the sort by columns.
     TableWriterBuilder& sortBy(
-        std::vector<std::shared_ptr<const connector::hive::HiveSortingColumn>>
+        std::vector<std::shared_ptr<const connector::hiveV2::HiveSortingColumn>>
             sortBy) {
       sortBy_ = std::move(sortBy);
       return *this;
@@ -463,7 +463,7 @@ class PlanBuilder {
     int32_t bucketCount_{0};
     std::vector<std::string> bucketedBy_;
     std::vector<std::string> aggregates_;
-    std::vector<std::shared_ptr<const connector::hive::HiveSortingColumn>>
+    std::vector<std::shared_ptr<const connector::hiveV2::HiveSortingColumn>>
         sortBy_;
 
     std::unordered_map<std::string, std::string> serdeParameters_;
@@ -681,7 +681,7 @@ class PlanBuilder {
       int32_t bucketCount,
       const std::vector<std::string>& bucketedBy,
       const std::vector<
-          std::shared_ptr<const connector::hive::HiveSortingColumn>>& sortBy,
+          std::shared_ptr<const connector::hiveV2::HiveSortingColumn>>& sortBy,
       const dwio::common::FileFormat fileFormat =
           dwio::common::FileFormat::DWRF,
       const std::vector<std::string>& aggregates = {},
@@ -1049,7 +1049,7 @@ class PlanBuilder {
   /// A convenience method to add a LocalPartitionNode with a single source (the
   /// current plan node) and hive bucket property.
   PlanBuilder& localPartitionByBucket(
-      const std::shared_ptr<connector::hive::HiveBucketProperty>&
+      const std::shared_ptr<connector::hiveV2::HiveBucketProperty>&
           bucketProperty);
 
   /// Add a LocalPartitionNode to partition the input using batch-level

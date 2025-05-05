@@ -18,7 +18,7 @@
 #include <boost/random/uniform_int_distribution.hpp>
 
 #include "velox/common/base/Portability.h"
-#include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hiveV2/HiveTableHandle.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 
 #include "velox/exec/tests/utils/PlanBuilder.h"
@@ -265,10 +265,10 @@ AggregationFuzzer::AggregationFuzzer(
 
 void AggregationFuzzer::go(const std::string& planPath) {
   Type::registerSerDe();
-  connector::hive::HiveTableHandle::registerSerDe();
-  connector::hive::LocationHandle::registerSerDe();
-  connector::hive::HiveColumnHandle::registerSerDe();
-  connector::hive::HiveInsertTableHandle::registerSerDe();
+  connector::hiveV2::HiveTableHandle::registerSerDe();
+  connector::hiveV2::LocationHandle::registerSerDe();
+  connector::hiveV2::HiveColumnHandle::registerSerDe();
+  connector::hiveV2::HiveInsertTableHandle::registerSerDe();
   core::ITypedExpr::registerSerDe();
   core::PlanNode::registerSerDe();
   registerPartitionFunctionSerDe();

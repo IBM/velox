@@ -163,10 +163,10 @@ void WaveHiveDataSource::registerConnector() {
   // Create hive connector with config...
   auto hiveConnector =
       connector::getConnectorFactory(
-          connector::hive::HiveConnectorFactory::kHiveConnectorName)
+          connector::hiveV2::HiveConnectorFactory::kHiveConnectorName)
           ->newConnector("wavemock", config, nullptr);
   connector::registerConnector(hiveConnector);
-  connector::hive::HiveDataSource::registerWaveDelegateHook(
+  connector::hiveV2::HiveDataSource::registerWaveDelegateHook(
       [](const std::shared_ptr<HiveTableHandle>& hiveTableHandle,
          const std::shared_ptr<common::ScanSpec>& scanSpec,
          const RowTypePtr& readerOutputType,

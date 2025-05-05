@@ -22,7 +22,7 @@
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/dwio/parquet/RegisterParquetWriter.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/exec/tests/utils/TpchQueryBuilder.h"
@@ -32,7 +32,7 @@
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
-using namespace facebook::velox::exec::test;
+using namespace facebook::velox::connector::hiveV2::test;
 
 class ParquetTpchTest : public testing::Test {
  protected:
@@ -55,12 +55,12 @@ class ParquetTpchTest : public testing::Test {
     parquet::registerParquetWriterFactory();
 
     connector::registerConnectorFactory(
-        std::make_shared<connector::hive::HiveConnectorFactory>());
+        std::make_shared<connector::hiveV2::HiveConnectorFactory>());
     auto hiveConnector =
         connector::getConnectorFactory(
-            connector::hive::HiveConnectorFactory::kHiveConnectorName)
+            connector::hiveV2::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(
-                kHiveConnectorId,
+                connector::hiveV2::test::kHiveConnectorId,
                 std::make_shared<config::ConfigBase>(
                     std::unordered_map<std::string, std::string>()));
     connector::registerConnector(hiveConnector);
@@ -82,10 +82,10 @@ class ParquetTpchTest : public testing::Test {
 
   static void TearDownTestSuite() {
     connector::unregisterConnectorFactory(
-        connector::hive::HiveConnectorFactory::kHiveConnectorName);
+        connector::hiveV2::HiveConnectorFactory::kHiveConnectorName);
     connector::unregisterConnectorFactory(
         connector::tpch::TpchConnectorFactory::kTpchConnectorName);
-    connector::unregisterConnector(kHiveConnectorId);
+    connector::unregisterConnector(connector::hiveV2::test::kHiveConnectorId);
     connector::unregisterConnector(kTpchConnectorId);
     parquet::unregisterParquetReaderFactory();
     parquet::unregisterParquetWriterFactory();
@@ -143,10 +143,10 @@ class ParquetTpchTest : public testing::Test {
       auto& task = taskCursor->task();
       for (const auto& entry : tpchPlan.dataFiles) {
         for (const auto& path : entry.second) {
-          auto const splits = HiveConnectorTestBase::makeHiveConnectorSplits(
+          auto splits = HiveConnectorTestBase::makeHiveConnectorSplits(
               path, kNumSplits, tpchPlan.dataFileFormat);
-          for (const auto& split : splits) {
-            task->addSplit(entry.first, Split(split));
+          for (auto split : splits) {
+            task->addSplit(entry.first, Split(std::move(split)));
           }
         }
         task->noMoreSplits(entry.first);

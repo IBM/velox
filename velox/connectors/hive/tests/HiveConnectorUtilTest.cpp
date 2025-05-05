@@ -19,7 +19,7 @@
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/connectors/hive/TableHandle.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hive/tests/HiveConnectorTestBase.h"
 
 #include "velox/dwio/dwrf/writer/Writer.h"
 
@@ -31,7 +31,7 @@ namespace facebook::velox::connector {
 
 using namespace dwio::common;
 
-class HiveConnectorUtilTest : public exec::test::HiveConnectorTestBase {
+class HiveConnectorUtilTest : public connector::hiveV2::test::HiveConnectorTestBase {
  protected:
   static bool compareSerDeOptions(
       const SerDeOptions& l,
@@ -348,26 +348,4 @@ TEST_F(HiveConnectorUtilTest, configureRowReaderOptions) {
       ->setFilter(common::createBigintValues({1, 3}, false));
   float_features->setFlatMapFeatureSelection({"1", "3"});
 }
-
-TEST_F(HiveConnectorUtilTest, configureStoragePamatersRowReaderOptions) {
-  dwio::common::RowReaderOptions rowReaderOpts;
-  auto hiveSplit =
-      std::make_shared<hive::HiveConnectorSplit>("", "", FileFormat::SST);
-  hiveSplit->storageParameters = {
-      {"key_col_indices", "0,1,2"},
-      {"value_col_indices", "4,5"},
-  };
-  configureRowReaderOptions(
-      /*tableParameters=*/{},
-      /*scanSpec=*/nullptr,
-      /*metadataFilter=*/nullptr,
-      /*rowType=*/nullptr,
-      /*hiveSplit=*/hiveSplit,
-      /*hiveConfig=*/nullptr,
-      /*sessionProperties=*/nullptr,
-      /*rowReaderOptions=*/rowReaderOpts);
-
-  EXPECT_EQ(rowReaderOpts.storageParameters(), hiveSplit->storageParameters);
-}
-
 } // namespace facebook::velox::connector

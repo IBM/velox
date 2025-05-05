@@ -18,8 +18,8 @@
 #include "velox/common/base/tests/GTestUtils.h"
 
 #include "velox/common/file/FileSystems.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/dwio/dwrf/RegisterDwrfWriter.h"
@@ -70,10 +70,10 @@ void AggregationTestBase::SetUp() {
   OperatorTestBase::SetUp();
   filesystems::registerLocalFileSystem();
   connector::registerConnectorFactory(
-      std::make_shared<connector::hive::HiveConnectorFactory>());
+      std::make_shared<connector::hiveV2::HiveConnectorFactory>());
   auto hiveConnector =
       connector::getConnectorFactory(
-          connector::hive::HiveConnectorFactory::kHiveConnectorName)
+          connector::hiveV2::HiveConnectorFactory::kHiveConnectorName)
           ->newConnector(
               kHiveConnectorId,
               std::make_shared<config::ConfigBase>(
@@ -86,7 +86,7 @@ void AggregationTestBase::TearDown() {
   dwrf::unregisterDwrfReaderFactory();
   connector::unregisterConnector(kHiveConnectorId);
   connector::unregisterConnectorFactory(
-      connector::hive::HiveConnectorFactory::kHiveConnectorName);
+      connector::hiveV2::HiveConnectorFactory::kHiveConnectorName);
   OperatorTestBase::TearDown();
 }
 
@@ -709,7 +709,7 @@ void AggregationTestBase::testReadFromFiles(
     auto file = exec::test::TempFilePath::create();
     writeToFile(file->getPath(), vector, writerPool.get());
     files.push_back(file);
-    splits.emplace_back(std::make_shared<connector::hive::HiveConnectorSplit>(
+    splits.emplace_back(std::make_shared<connector::hiveV2::HiveConnectorSplit>(
         kHiveConnectorId, file->getPath(), dwio::common::FileFormat::DWRF));
   }
   // No need to test streaming as the streaming test generates its own inputs,

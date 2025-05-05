@@ -18,8 +18,8 @@
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/hyperloglog/SparseHll.h"
 #include "velox/common/testutil/TestValue.h"
-#include "velox/connectors/hive/HiveConfig.h"
-#include "velox/connectors/hive/HivePartitionFunction.h"
+#include "velox/connectors/hiveV2/HiveConfig.h"
+#include "velox/connectors/hiveV2/HivePartitionFunction.h"
 #include "velox/dwio/common/WriterFactory.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/TableWriter.h"
@@ -44,12 +44,13 @@ using namespace facebook::velox::common;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::connector;
-using namespace facebook::velox::connector::hive;
+using namespace facebook::velox::connector::hiveV2;
+using namespace facebook::velox::connector::hiveV2::test;
 using namespace facebook::velox::dwio::common;
 using namespace facebook::velox::common::testutil;
 using namespace facebook::velox::common::hll;
 
-class TableWriterTestBase : public HiveConnectorTestBase {
+class TableWriterTestBase : public connector::hiveV2::HiveConnectorTestBase {
  public:
   enum class TestMode {
     kUnpartitioned,

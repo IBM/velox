@@ -29,7 +29,8 @@
 #include "velox/exec/tests/utils/ArbitratorTestUtil.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/HashJoinTestBase.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
+//#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/exec/tests/utils/VectorTestUtil.h"
@@ -37,6 +38,8 @@
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
+//using namespace facebook::velox::connector::hiveV2;
+using namespace facebook::velox::connector::hiveV2::test;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::common::testutil;
 
@@ -4494,7 +4497,7 @@ TEST_F(HashJoinTest, dynamicFiltersAppliedToPreloadedSplits) {
     tempFiles.push_back(TempFilePath::create());
     writeToFile(tempFiles.back()->getPath(), rowVector);
     auto split = HiveConnectorSplitBuilder(tempFiles.back()->getPath())
-                     .hivePartitionKey("p1", std::to_string(i))
+                     .partitionKey("p1", std::to_string(i))
                      .build();
     probeSplits.push_back(exec::Split(split));
   }
@@ -4889,9 +4892,9 @@ TEST_F(HashJoinTest, dynamicFilterOnPartitionKey) {
   std::vector<RowVectorPtr> buildVectors{
       makeRowVector({"c0"}, {makeFlatVector<int64_t>({0, 1, 2})})};
   createDuckDbTable("t", buildVectors);
-  auto split = facebook::velox::exec::test::HiveConnectorSplitBuilder(
+  auto split = HiveConnectorSplitBuilder(
                    filePaths[0]->getPath())
-                   .hivePartitionKey("k", "0")
+                   .partitionKey("k", "0")
                    .build();
   auto outputType = ROW({"n1_0", "n1_1"}, {BIGINT(), BIGINT()});
   ColumnHandleMap assignments = {

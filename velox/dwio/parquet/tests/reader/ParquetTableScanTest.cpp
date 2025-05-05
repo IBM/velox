@@ -17,24 +17,25 @@
 #include <folly/init/Init.h>
 
 #include "velox/common/base/tests/GTestUtils.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h" // @manual
 #include "velox/dwio/common/tests/utils/DataFiles.h" // @manual
 #include "velox/dwio/parquet/RegisterParquetReader.h" // @manual
 #include "velox/dwio/parquet/reader/PageReader.h" // @manual
 #include "velox/dwio/parquet/reader/ParquetReader.h" // @manual=//velox/connectors/hive:velox_hive_connector_parquet
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h" // @manual
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/type/tests/SubfieldFiltersBuilder.h"
 #include "velox/type/tz/TimeZoneMap.h"
 
-#include "velox/connectors/hive/HiveConfig.h" // @manual=//velox/connectors/hive:velox_hive_connector_parquet
+#include "velox/connectors/hiveV2/HiveConfig.h" // @manual=//velox/connectors/hive:velox_hive_connector_parquet
 #include "velox/dwio/parquet/writer/Writer.h" // @manual
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
-using namespace facebook::velox::connector::hive;
-using namespace facebook::velox::exec::test;
+using namespace facebook::velox::connector::hiveV2;
+using namespace facebook::velox::connector::hiveV2::test;
+//using namespace facebook::velox::exec::test;
 using namespace facebook::velox::parquet;
 using namespace facebook::velox::test;
 
@@ -187,7 +188,7 @@ class ParquetTableScanTest : public HiveConnectorTestBase {
         "velox/dwio/parquet/tests/reader", "../examples/" + fileName);
   }
 
-  std::shared_ptr<connector::hive::HiveConnectorSplit> makeSplit(
+  std::shared_ptr<connector::hiveV2::HiveConnectorSplit> makeSplit(
       const std::string& filePath,
       const std::optional<
           std::unordered_map<std::string, std::optional<std::string>>>&
@@ -671,10 +672,11 @@ TEST_F(ParquetTableScanTest, readAsLowerCase) {
       core::QueryCtx::create(executor.get());
   std::unordered_map<std::string, std::string> session = {
       {std::string(
-           connector::hive::HiveConfig::kFileColumnNamesReadAsLowerCaseSession),
+           connector::hiveV2::HiveConfig::
+               kFileColumnNamesReadAsLowerCaseSession),
        "true"}};
   queryCtx->setConnectorSessionOverridesUnsafe(
-      kHiveConnectorId, std::move(session));
+      connector::hiveV2::test::kHiveConnectorId, std::move(session));
   params.queryCtx = queryCtx;
   params.planNode = plan;
   const int numSplitsPerFile = 1;
@@ -684,12 +686,12 @@ TEST_F(ParquetTableScanTest, readAsLowerCase) {
       return;
     }
     auto& task = taskCursor->task();
-    auto const splits = HiveConnectorTestBase::makeHiveConnectorSplits(
+    auto splits = HiveConnectorTestBase::makeHiveConnectorSplits(
         {getExampleFilePath("upper.parquet")},
         numSplitsPerFile,
         dwio::common::FileFormat::PARQUET);
-    for (const auto& split : splits) {
-      task->addSplit("0", exec::Split(split));
+    for (auto split : splits) {
+      task->addSplit("0", exec::Split(std::move(split)));
     }
     task->noMoreSplits("0");
     taskCursor->setNoMoreSplits();
@@ -721,21 +723,21 @@ TEST_F(ParquetTableScanTest, rowIndex) {
       std::unordered_map<std::string, std::string>{{kPath, filePath}});
   std::unordered_map<std::string, std::shared_ptr<connector::ColumnHandle>>
       assignments;
-  assignments["a"] = std::make_shared<connector::hive::HiveColumnHandle>(
+  assignments["a"] = std::make_shared<connector::hiveV2::HiveColumnHandle>(
       "a",
-      connector::hive::HiveColumnHandle::ColumnType::kRegular,
+      connector::hiveV2::HiveColumnHandle::ColumnType::kRegular,
       BIGINT(),
       BIGINT());
-  assignments["b"] = std::make_shared<connector::hive::HiveColumnHandle>(
+  assignments["b"] = std::make_shared<connector::hiveV2::HiveColumnHandle>(
       "b",
-      connector::hive::HiveColumnHandle::ColumnType::kRegular,
+      connector::hiveV2::HiveColumnHandle::ColumnType::kRegular,
       DOUBLE(),
       DOUBLE());
   assignments[kPath] = synthesizedHiveColumn(kPath, VARCHAR());
   assignments["_tmp_metadata_row_index"] =
-      std::make_shared<connector::hive::HiveColumnHandle>(
+      std::make_shared<connector::hiveV2::HiveColumnHandle>(
           "_tmp_metadata_row_index",
-          connector::hive::HiveColumnHandle::ColumnType::kRowIndex,
+          connector::hiveV2::HiveColumnHandle::ColumnType::kRowIndex,
           BIGINT(),
           BIGINT());
 
@@ -931,12 +933,13 @@ TEST_F(ParquetTableScanTest, timestampPrecisionMicrosecond) {
 
     // Read timestamp data from parquet with microsecond precision.
     auto split = makeSplit(file->getPath());
-    auto result =
-        AssertQueryBuilder(plan, duckDbQueryRunner_)
-            .connectorSessionProperty(
-                kHiveConnectorId, HiveConfig::kReadTimestampUnitSession, "6")
-            .split(split)
-            .copyResults(pool());
+    auto result = AssertQueryBuilder(plan, duckDbQueryRunner_)
+                      .connectorSessionProperty(
+                          connector::hiveV2::test::kHiveConnectorId,
+                          HiveConfig::kReadTimestampUnitSession,
+                          "6")
+                      .split(split)
+                      .copyResults(pool());
     auto expected = makeRowVector({
         makeFlatVector<Timestamp>(
             kSize, [](auto i) { return Timestamp(i, i * 1'001'000); }),
@@ -1041,8 +1044,8 @@ TEST_F(ParquetTableScanTest, schemaMatchWithComplexTypes) {
   // find any names.
   result = AssertQueryBuilder(op)
                .connectorSessionProperty(
-                   kHiveConnectorId,
-                   connector::hive::HiveConfig::kParquetUseColumnNamesSession,
+                   connector::hiveV2::test::kHiveConnectorId,
+                   connector::hiveV2::HiveConfig::kParquetUseColumnNamesSession,
                    "true")
                .split(split)
                .copyResults(pool());
@@ -1115,8 +1118,8 @@ TEST_F(ParquetTableScanTest, schemaMatch) {
 
   result = AssertQueryBuilder(op)
                .connectorSessionProperty(
-                   kHiveConnectorId,
-                   connector::hive::HiveConfig::kParquetUseColumnNamesSession,
+                   connector::hiveV2::test::kHiveConnectorId,
+                   connector::hiveV2::HiveConfig::kParquetUseColumnNamesSession,
                    "true")
                .split(split)
                .copyResults(pool());

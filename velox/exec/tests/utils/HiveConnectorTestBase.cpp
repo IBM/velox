@@ -223,7 +223,7 @@ HiveConnectorTestBase::makeHiveConnectorSplits(
     }
     if (partitionKeys.has_value()) {
       for (auto partitionKey : partitionKeys.value()) {
-        splitBuilder.hivePartitionKey(partitionKey.first, partitionKey.second);
+        splitBuilder.partitionKey(partitionKey.first, partitionKey.second);
       }
     }
 

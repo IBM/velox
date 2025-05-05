@@ -17,12 +17,12 @@
 #include "velox/connectors/Connector.h"
 #include "velox/core/PlanNode.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/parse/PlanNodeIdGenerator.h"
 
 namespace fecebook::velox::exec::test {
 class IndexLookupJoinTestBase
-    : public facebook::velox::exec::test::HiveConnectorTestBase {
+    : public facebook::velox::connector::hiveV2::test::HiveConnectorTestBase {
  protected:
   IndexLookupJoinTestBase() = default;
 

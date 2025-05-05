@@ -15,7 +15,7 @@
  */
 
 #include "velox/exec/tests/utils/LocalRunnerTestBase.h"
-#include "velox/connectors/hive/HiveConfig.h"
+#include "velox/connectors/hiveV2/HiveConfig.h"
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
 
 namespace facebook::velox::exec::test {
@@ -60,11 +60,11 @@ void LocalRunnerTestBase::setupConnector() {
   connector::unregisterConnector(kHiveConnectorId);
 
   std::unordered_map<std::string, std::string> configs;
-  configs[connector::hive::HiveConfig::kLocalDataPath] = testDataPath_;
-  configs[connector::hive::HiveConfig::kLocalFileFormat] = localFileFormat_;
+  configs[connector::hiveV2::HiveConfig::kLocalDataPath] = testDataPath_;
+  configs[connector::hiveV2::HiveConfig::kLocalFileFormat] = localFileFormat_;
   auto hiveConnector =
       connector::getConnectorFactory(
-          connector::hive::HiveConnectorFactory::kHiveConnectorName)
+          connector::hiveV2::HiveConnectorFactory::kHiveConnectorName)
           ->newConnector(
               kHiveConnectorId,
               std::make_shared<config::ConfigBase>(std::move(configs)),
@@ -116,7 +116,7 @@ LocalRunnerTestBase::makeSimpleSplitSourceFactory(
       VELOX_CHECK(!files.empty(), "No splits known for {}", name);
       std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;
       for (auto& file : files) {
-        splits.push_back(connector::hive::HiveConnectorSplitBuilder(file)
+        splits.push_back(connector::hiveV2::HiveConnectorSplitBuilder(file)
                              .connectorId(kHiveConnectorId)
                              .fileFormat(dwio::common::FileFormat::DWRF)
                              .build());

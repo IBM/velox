@@ -17,16 +17,17 @@
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/prestosql/window/WindowFunctionsRegistration.h"
 
 using facebook::velox::test::BatchMaker;
 
 namespace facebook::velox::exec::test {
+
 namespace {
 
-class LocalPartitionTest : public HiveConnectorTestBase {
+class LocalPartitionTest : public connector::hiveV2::test::HiveConnectorTestBase {
  protected:
   void SetUp() override {
     HiveConnectorTestBase::SetUp();

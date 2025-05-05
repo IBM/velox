@@ -20,7 +20,7 @@
 
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/testutil/TestValue.h"
-#include "velox/connectors/hive/HiveConnector.h" // @manual
+#include "velox/connectors/hiveV2/HiveConnector.h" // @manual
 #include "velox/core/QueryCtx.h"
 #include "velox/dwio/parquet/RegisterParquetWriter.h" // @manual
 #include "velox/dwio/parquet/reader/PageReader.h"
@@ -46,10 +46,10 @@ class ParquetWriterTest : public ParquetTestBase {
     testutil::TestValue::enable();
     filesystems::registerLocalFileSystem();
     connector::registerConnectorFactory(
-        std::make_shared<connector::hive::HiveConnectorFactory>());
+        std::make_shared<connector::hiveV2::HiveConnectorFactory>());
     auto hiveConnector =
         connector::getConnectorFactory(
-            connector::hive::HiveConnectorFactory::kHiveConnectorName)
+            connector::hiveV2::HiveConnectorFactory::kHiveConnectorName)
             ->newConnector(
                 kHiveConnectorId,
                 std::make_shared<config::ConfigBase>(

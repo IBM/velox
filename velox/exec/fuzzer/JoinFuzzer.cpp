@@ -16,7 +16,7 @@
 #include "velox/exec/fuzzer/JoinFuzzer.h"
 #include <boost/random/uniform_int_distribution.hpp>
 #include "velox/common/file/FileSystems.h"
-#include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/dwio/dwrf/RegisterDwrfWriter.h"
 #include "velox/exec/HashJoinBridge.h"
@@ -204,12 +204,12 @@ JoinFuzzer::JoinFuzzer(
 
   // Make sure not to run out of open file descriptors.
   std::unordered_map<std::string, std::string> hiveConfig = {
-      {connector::hive::HiveConfig::kNumCacheFileHandles, "1000"}};
+      {connector::hiveV2::HiveConfig::kNumCacheFileHandles, "1000"}};
   connector::registerConnectorFactory(
-      std::make_shared<connector::hive::HiveConnectorFactory>());
+      std::make_shared<connector::hiveV2::HiveConnectorFactory>());
   auto hiveConnector =
       connector::getConnectorFactory(
-          connector::hive::HiveConnectorFactory::kHiveConnectorName)
+          connector::hiveV2::HiveConnectorFactory::kHiveConnectorName)
           ->newConnector(
               test::kHiveConnectorId,
               std::make_shared<config::ConfigBase>(std::move(hiveConfig)));

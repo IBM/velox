@@ -17,7 +17,7 @@
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/testutil/TestValue.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 
 #include "folly/experimental/EventCount.h"
@@ -27,7 +27,7 @@ using namespace facebook::velox::common::testutil;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 
-class MergeJoinTest : public HiveConnectorTestBase {
+class MergeJoinTest : public connector::hiveV2::test::HiveConnectorTestBase {
  protected:
   using OperatorTestBase::assertQuery;
 

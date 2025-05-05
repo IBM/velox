@@ -15,7 +15,7 @@
  */
 
 #include "velox/exec/fuzzer/PrestoQueryRunnerToSqlPlanNodeVisitor.h"
-#include "velox/connectors/hive/HiveDataSink.h"
+#include "velox/connectors/hiveV2/HiveDataSink.h"
 #include "velox/exec/fuzzer/PrestoQueryRunner.h"
 
 using namespace facebook::velox;
@@ -203,7 +203,7 @@ void PrestoQueryRunnerToSqlPlanNodeVisitor::visit(
       static_cast<PrestoSqlPlanNodeVisitorContext&>(ctx);
 
   auto insertTableHandle =
-      std::dynamic_pointer_cast<connector::hive::HiveInsertTableHandle>(
+      std::dynamic_pointer_cast<connector::hiveV2::HiveInsertTableHandle>(
           node.insertTableHandle()->connectorInsertTableHandle());
 
   // Returns a CTAS sql with specified table properties from TableWriteNode,

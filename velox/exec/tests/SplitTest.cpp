@@ -16,7 +16,7 @@
 
 #include "velox/exec/Split.h"
 #include <gtest/gtest.h>
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/exec/Exchange.h"
 
 namespace facebook::velox::exec {
@@ -31,7 +31,7 @@ TEST(SplitToStringTest, remoteSplit) {
 }
 
 TEST(SplitToStringTest, hiveSplit) {
-  Split split{std::make_shared<connector::hive::HiveConnectorSplit>(
+  Split split{std::make_shared<connector::hiveV2::HiveConnectorSplit>(
       "hive",
       "path/to/file.parquet",
       dwio::common::FileFormat::PARQUET,

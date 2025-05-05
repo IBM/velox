@@ -29,7 +29,7 @@
 #include "velox/exec/TableWriter.h"
 #include "velox/exec/TraceUtil.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/serializers/PrestoSerializer.h"
@@ -43,12 +43,15 @@ using namespace facebook::velox::common;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
 using namespace facebook::velox::connector;
-using namespace facebook::velox::connector::hive;
+using namespace facebook::velox::connector::hiveV2;
 using namespace facebook::velox::dwio::common;
 using namespace facebook::velox::common::testutil;
 using namespace facebook::velox::common::hll;
 
 namespace facebook::velox::tool::trace::test {
+
+using namespace facebook::velox::connector::hiveV2::test;
+
 class TableWriterReplayerTest : public HiveConnectorTestBase {
  protected:
   static void SetUpTestCase() {
@@ -60,11 +63,11 @@ class TableWriterReplayerTest : public HiveConnectorTestBase {
     }
     Type::registerSerDe();
     common::Filter::registerSerDe();
-    connector::hive::HiveTableHandle::registerSerDe();
-    connector::hive::LocationHandle::registerSerDe();
-    connector::hive::HiveColumnHandle::registerSerDe();
-    connector::hive::HiveInsertTableHandle::registerSerDe();
-    connector::hive::HiveInsertFileNameGenerator::registerSerDe();
+    connector::hiveV2::HiveTableHandle::registerSerDe();
+    connector::hiveV2::LocationHandle::registerSerDe();
+    connector::hiveV2::HiveColumnHandle::registerSerDe();
+    connector::hiveV2::HiveInsertTableHandle::registerSerDe();
+    connector::hiveV2::HiveInsertFileNameGenerator::registerSerDe();
     core::PlanNode::registerSerDe();
     core::ITypedExpr::registerSerDe();
     registerPartitionFunctionSerDe();
@@ -95,7 +98,7 @@ class TableWriterReplayerTest : public HiveConnectorTestBase {
   // Helper method to return InsertTableHandle.
   std::shared_ptr<core::InsertTableHandle> createInsertTableHandle(
       const RowTypePtr& outputRowType,
-      const connector::hive::LocationHandle::TableType& outputTableType,
+      const connector::hiveV2::LocationHandle::TableType& outputTableType,
       const std::string& outputDirectoryPath,
       const std::vector<std::string>& partitionedBy,
       const std::shared_ptr<HiveBucketProperty> bucketProperty,
@@ -122,8 +125,8 @@ class TableWriterReplayerTest : public HiveConnectorTestBase {
       const std::vector<std::string>& partitionedBy = {},
       std::shared_ptr<HiveBucketProperty> bucketProperty = nullptr,
       const std::optional<CompressionKind> compressionKind = {},
-      const connector::hive::LocationHandle::TableType& outputTableType =
-          connector::hive::LocationHandle::TableType::kNew,
+      const connector::hiveV2::LocationHandle::TableType& outputTableType =
+          connector::hiveV2::LocationHandle::TableType::kNew,
       const CommitStrategy& outputCommitStrategy = CommitStrategy::kNoCommit,
       bool aggregateResult = true,
       std::shared_ptr<core::AggregationNode> aggregationNode = nullptr) {

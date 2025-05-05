@@ -17,7 +17,7 @@
 #include <gtest/gtest.h>
 #include "velox/connectors/Connector.h"
 #include "velox/connectors/hive/HiveConnector.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hive/tests/HiveConnectorTestBase.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 
 namespace facebook::velox::connector::hive::test {
@@ -25,7 +25,7 @@ namespace {
 
 using namespace facebook::velox::exec;
 
-class HiveConnectorSerDeTest : public exec::test::HiveConnectorTestBase {
+class HiveConnectorSerDeTest : public connector::hiveV2::test::HiveConnectorTestBase {
  protected:
   HiveConnectorSerDeTest() {
     Type::registerSerDe();
@@ -38,7 +38,6 @@ class HiveConnectorSerDeTest : public exec::test::HiveConnectorTestBase {
     HiveBucketProperty::registerSerDe();
     HiveSortingColumn::registerSerDe();
     HiveConnectorSplit::registerSerDe();
-    HiveInsertFileNameGenerator::registerSerDe();
   }
 
   template <typename T>
@@ -164,7 +163,7 @@ TEST_F(HiveConnectorSerDeTest, hiveColumnHandle) {
   };
 
   for (auto columnHandleType : columnHandleTypes) {
-    auto columnHandle = exec::test::HiveConnectorTestBase::makeHiveColumnHandle(
+    auto columnHandle = connector::hiveV2::test::HiveConnectorTestBase::makeHiveColumnHandle(
         "columnHandle",
         columnType,
         columnType,
@@ -176,7 +175,7 @@ TEST_F(HiveConnectorSerDeTest, hiveColumnHandle) {
 }
 
 TEST_F(HiveConnectorSerDeTest, locationHandle) {
-  auto locationHandle = exec::test::HiveConnectorTestBase::makeHiveLocationHandle(
+  auto locationHandle = connector::hiveV2::test::HiveConnectorTestBase::makeHiveLocationHandle(
       "targetDirectory",
       std::optional("writeDirectory"),
       LocationHandle::TableType::kNew);
@@ -199,7 +198,7 @@ TEST_F(HiveConnectorSerDeTest, hiveInsertTableHandle) {
   tableColumnTypes.emplace_back(arrType);
   tableColumnTypes.emplace_back(varcharType);
 
-  auto locationHandle = exec::test::HiveConnectorTestBase::makeHiveLocationHandle(
+  auto locationHandle = connector::hiveV2::test::HiveConnectorTestBase::makeHiveLocationHandle(
       "targetDirectory",
       std::optional("writeDirectory"),
       LocationHandle::TableType::kNew);
@@ -219,7 +218,7 @@ TEST_F(HiveConnectorSerDeTest, hiveInsertTableHandle) {
   };
 
   auto hiveInsertTableHandle =
-      exec::test::HiveConnectorTestBase::makeHiveInsertTableHandle(
+      connector::hiveV2::test::HiveConnectorTestBase::makeHiveInsertTableHandle(
           tableColumnNames,
           tableColumnTypes,
           {"loc"},

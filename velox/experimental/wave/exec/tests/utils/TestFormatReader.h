@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include "velox/connectors/hive/FileHandle.h"
+#include "velox/connectors/hiveV2/FileHandle.h"
 #include "velox/experimental/wave/dwio/ColumnReader.h"
 #include "velox/experimental/wave/exec/tests/utils/FileFormat.h"
 #include "velox/type/Subfield.h"

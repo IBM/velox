@@ -19,7 +19,7 @@
 #include <gtest/gtest.h>
 #include <unordered_set>
 #include "velox/common/memory/SharedArbitrator.h"
-#include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
 #include "velox/exec/MemoryReclaimer.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
 #include "velox/exec/fuzzer/MemoryArbitrationFuzzerRunner.h"

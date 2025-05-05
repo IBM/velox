@@ -406,9 +406,9 @@ core::PlanNodePtr SubstraitVeloxPlanConverter::toVeloxPlan(
 
   // Velox requires Filter Pushdown must being enabled.
   bool filterPushdownEnabled = true;
-  std::shared_ptr<connector::hive::HiveTableHandle> tableHandle;
+  std::shared_ptr<connector::hiveV2::HiveTableHandle> tableHandle;
   if (!readRel.has_filter()) {
-    tableHandle = std::make_shared<connector::hive::HiveTableHandle>(
+    tableHandle = std::make_shared<connector::hiveV2::HiveTableHandle>(
         kHiveConnectorId,
         "hive_table",
         filterPushdownEnabled,
@@ -418,7 +418,7 @@ core::PlanNodePtr SubstraitVeloxPlanConverter::toVeloxPlan(
   } else {
     common::SubfieldFilters filters =
         toVeloxFilter(colNameList, veloxTypeList, readRel.filter());
-    tableHandle = std::make_shared<connector::hive::HiveTableHandle>(
+    tableHandle = std::make_shared<connector::hiveV2::HiveTableHandle>(
         kHiveConnectorId,
         "hive_table",
         filterPushdownEnabled,
@@ -434,9 +434,9 @@ core::PlanNodePtr SubstraitVeloxPlanConverter::toVeloxPlan(
       assignments;
   for (int idx = 0; idx < colNameList.size(); idx++) {
     auto outName = substraitParser_->makeNodeName(planNodeId_, idx);
-    assignments[outName] = std::make_shared<connector::hive::HiveColumnHandle>(
+    assignments[outName] = std::make_shared<connector::hiveV2::HiveColumnHandle>(
         colNameList[idx],
-        connector::hive::HiveColumnHandle::ColumnType::kRegular,
+        connector::hiveV2::HiveColumnHandle::ColumnType::kRegular,
         veloxTypeList[idx],
         veloxTypeList[idx]);
     outNames.emplace_back(outName);

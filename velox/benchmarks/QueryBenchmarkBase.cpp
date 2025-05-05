@@ -176,22 +176,22 @@ void QueryBenchmarkBase::initialize() {
 
   // Add new values into the hive configuration...
   auto configurationValues = std::unordered_map<std::string, std::string>();
-  configurationValues[connector::hive::HiveConfig::kMaxCoalescedBytes] =
+  configurationValues[connector::hiveV2::HiveConfig::kMaxCoalescedBytes] =
       std::to_string(FLAGS_max_coalesced_bytes);
-  configurationValues[connector::hive::HiveConfig::kMaxCoalescedDistance] =
+  configurationValues[connector::hiveV2::HiveConfig::kMaxCoalescedDistance] =
       FLAGS_max_coalesced_distance_bytes;
-  configurationValues[connector::hive::HiveConfig::kPrefetchRowGroups] =
+  configurationValues[connector::hiveV2::HiveConfig::kPrefetchRowGroups] =
       std::to_string(FLAGS_parquet_prefetch_rowgroups);
   auto properties = std::make_shared<const config::ConfigBase>(
       std::move(configurationValues));
 
   // Create hive connector with config...
   connector::registerConnectorFactory(
-      std::make_shared<connector::hive::HiveConnectorFactory>());
+      std::make_shared<connector::hiveV2::HiveConnectorFactory>());
   auto hiveConnector =
       connector::getConnectorFactory(
-          connector::hive::HiveConnectorFactory::kHiveConnectorName)
-          ->newConnector(kHiveConnectorId, properties, ioExecutor_.get());
+          connector::hiveV2::HiveConnectorFactory::kHiveConnectorName)
+          ->newConnector(connector::hiveV2::test::kHiveConnectorId, properties, ioExecutor_.get());
   connector::registerConnector(hiveConnector);
   parquet::registerParquetReaderFactory();
   dwrf::registerDwrfReaderFactory();

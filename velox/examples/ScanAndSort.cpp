@@ -17,13 +17,13 @@
 #include "velox/common/base/Fs.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/common/memory/Memory.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/dwio/common/FileSink.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/dwio/dwrf/RegisterDwrfWriter.h"
 #include "velox/exec/Task.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/type/Type.h"
@@ -87,12 +87,12 @@ int main(int argc, char** argv) {
 
   // Register the Hive Connector Factory.
   connector::registerConnectorFactory(
-      std::make_shared<connector::hive::HiveConnectorFactory>());
+      std::make_shared<connector::hiveV2::HiveConnectorFactory>());
   // Create a new connector instance from the connector factory and register
   // it:
   auto hiveConnector =
       connector::getConnectorFactory(
-          connector::hive::HiveConnectorFactory::kHiveConnectorName)
+          connector::hiveV2::HiveConnectorFactory::kHiveConnectorName)
           ->newConnector(
               kHiveConnectorId,
               std::make_shared<config::ConfigBase>(
@@ -181,7 +181,7 @@ int main(int argc, char** argv) {
   // above, the local file path (the "file:" prefix specifies which FileSystem
   // to use; local, in this case), and the file format (DWRF/ORC).
   for (auto& filePath : fs::directory_iterator(absTempDirPath)) {
-    auto connectorSplit = std::make_shared<connector::hive::HiveConnectorSplit>(
+    auto connectorSplit = std::make_shared<connector::hiveV2::HiveConnectorSplit>(
         kHiveConnectorId,
         "file:" + filePath.path().string(),
         dwio::common::FileFormat::DWRF);

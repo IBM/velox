@@ -20,14 +20,14 @@
 
 #include "velox/common/file/FileSystems.h"
 #include "velox/common/memory/Memory.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/connectors/hive/HiveDataSink.h"
-#include "velox/connectors/hive/TableHandle.h"
-#include "velox/connectors/hive/storage_adapters/abfs/RegisterAbfsFileSystem.h"
-#include "velox/connectors/hive/storage_adapters/gcs/RegisterGcsFileSystem.h"
-#include "velox/connectors/hive/storage_adapters/hdfs/RegisterHdfsFileSystem.h"
-#include "velox/connectors/hive/storage_adapters/s3fs/RegisterS3FileSystem.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveDataSink.h"
+#include "velox/connectors/hiveV2/HiveTableHandle.h"
+#include "velox/connectors/hive_common/storage_adapters/abfs/RegisterAbfsFileSystem.h"
+#include "velox/connectors/hive_common/storage_adapters/gcs/RegisterGcsFileSystem.h"
+#include "velox/connectors/hive_common/storage_adapters/hdfs/RegisterHdfsFileSystem.h"
+#include "velox/connectors/hive_common/storage_adapters/s3fs/RegisterS3FileSystem.h"
 #include "velox/core/PlanNode.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/dwio/dwrf/RegisterDwrfWriter.h"
@@ -283,14 +283,14 @@ void TraceReplayRunner::init() {
   if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kUnsafeRow)) {
     serializer::spark::UnsafeRowVectorSerde::registerNamedVectorSerde();
   }
-  connector::hive::HiveTableHandle::registerSerDe();
-  connector::hive::LocationHandle::registerSerDe();
-  connector::hive::HiveColumnHandle::registerSerDe();
-  connector::hive::HiveInsertTableHandle::registerSerDe();
-  connector::hive::HiveInsertFileNameGenerator::registerSerDe();
-  connector::hive::HiveConnectorSplit::registerSerDe();
-  connector::hive::registerHivePartitionFunctionSerDe();
-  connector::hive::HiveBucketProperty::registerSerDe();
+  connector::hiveV2::HiveTableHandle::registerSerDe();
+  connector::hiveV2::LocationHandle::registerSerDe();
+  connector::hiveV2::HiveColumnHandle::registerSerDe();
+  connector::hiveV2::HiveInsertTableHandle::registerSerDe();
+  connector::hiveV2::HiveInsertFileNameGenerator::registerSerDe();
+  connector::hiveV2::HiveConnectorSplit::registerSerDe();
+  connector::hiveV2::registerHivePartitionFunctionSerDe();
+  connector::hiveV2::HiveBucketProperty::registerSerDe();
 
   functions::prestosql::registerAllScalarFunctions(FLAGS_function_prefix);
   aggregate::prestosql::registerAllAggregateFunctions(FLAGS_function_prefix);
@@ -298,7 +298,7 @@ void TraceReplayRunner::init() {
 
   if (!facebook::velox::connector::hasConnectorFactory("hive")) {
     connector::registerConnectorFactory(
-        std::make_shared<connector::hive::HiveConnectorFactory>());
+        std::make_shared<connector::hiveV2::HiveConnectorFactory>());
   }
 
   fs_ = filesystems::getFileSystem(FLAGS_root_dir, nullptr);
