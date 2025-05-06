@@ -67,7 +67,7 @@ jobs:
             mv ./${MINIO_BINARY} /usr/local/bin/
           fi
 
-      - uses: assignUser/stash/restore@v1
+      - uses: actions/cache/restore@v4
         with:
           path: '${{ env.CCACHE_DIR }}'
           key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
@@ -105,7 +105,7 @@ jobs:
       - name: Ccache after
         run: ccache -s
 
-      - uses: assignUser/stash/save@v1
+      - uses: actions/cache/save@v4
         with:
           path: '${{ env.CCACHE_DIR }}'
           key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
@@ -135,7 +135,7 @@ jobs:
     steps:
 
       - name: Get Ccache Stash
-        uses: assignUser/stash/restore@v1
+        uses: actions/cache/restore@v4
         with:
           path: '${{ env.CCACHE_DIR }}'
           key: ccache-ubuntu-debug-default-${{ inputs.use-clang && 'clang' || 'gcc' }}
@@ -171,7 +171,7 @@ jobs:
         run: |
           ccache -vs
 
-      - uses: assignUser/stash/save@v1
+      - uses: actions/cache/save@v4
         with:
           path: '${{ env.CCACHE_DIR }}'
           key: ccache-ubuntu-debug-default-${{ inputs.use-clang && 'clang' || 'gcc' }}
