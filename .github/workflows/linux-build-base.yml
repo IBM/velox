@@ -27,8 +27,8 @@ jobs:
   adapters:
     name: Linux release with adapters
     # prevent errors when forks ff their main branch
-    if: ${{ github.repository == 'facebookincubator/velox' }}
-    runs-on: 8-core-ubuntu-22.04
+    if: ${{ github.repository == 'IBM/velox' }}
+    runs-on: ubuntu-22.04
     container: ghcr.io/facebookincubator/velox-dev:adapters
     defaults:
       run:
@@ -122,9 +122,9 @@ jobs:
           ctest -j 8 --label-exclude cuda_driver --output-on-failure --no-tests=error
 
   ubuntu-debug:
-    runs-on: 8-core-ubuntu-22.04
+    runs-on: ubuntu-22.04
     # prevent errors when forks ff their main branch
-    if: ${{ github.repository == 'facebookincubator/velox' }}
+    if: ${{ github.repository == 'IBM/velox' }}
     name: "Ubuntu debug with resolve_dependency"
     env:
       CCACHE_DIR: "${{ github.workspace }}/ccache"
