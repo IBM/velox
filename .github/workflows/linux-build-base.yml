@@ -68,10 +68,10 @@ jobs:
             mv ./${MINIO_BINARY} /usr/local/bin/
           fi
 
-      - uses: assignUser/stash/restore@v1
-        with:
-          path: '${{ env.CCACHE_DIR }}'
-          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
+#      - uses: assignUser/stash/restore@v1
+#        with:
+#          path: '${{ env.CCACHE_DIR }}'
+#          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
 
       - name: "Zero Ccache Statistics"
         run: |
@@ -106,10 +106,10 @@ jobs:
       - name: Ccache after
         run: ccache -s
 
-      - uses: assignUser/stash/save@v1
-        with:
-          path: '${{ env.CCACHE_DIR }}'
-          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
+#      - uses: assignUser/stash/save@v1
+#        with:
+#          path: '${{ env.CCACHE_DIR }}'
+#          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
 
       - name: Run Tests
         # Some of the adapters dependencies are in the 'adapters' conda env
@@ -135,11 +135,11 @@ jobs:
         working-directory: velox
     steps:
 
-      - name: Get Ccache Stash
-        uses: assignUser/stash/restore@v1
-        with:
-          path: '${{ env.CCACHE_DIR }}'
-          key: ccache-ubuntu-debug-default-${{ inputs.use-clang && 'clang' || 'gcc' }}
+#      - name: Get Ccache Stash
+#        uses: assignUser/stash/restore@v1
+#        with:
+#          path: '${{ env.CCACHE_DIR }}'
+#          key: ccache-ubuntu-debug-default-${{ inputs.use-clang && 'clang' || 'gcc' }}
 
       - name: Ensure Stash Dirs Exists
         working-directory: ${{ github.workspace }}
@@ -172,10 +172,10 @@ jobs:
         run: |
           ccache -vs
 
-      - uses: assignUser/stash/save@v1
-        with:
-          path: '${{ env.CCACHE_DIR }}'
-          key: ccache-ubuntu-debug-default-${{ inputs.use-clang && 'clang' || 'gcc' }}
+#      - uses: assignUser/stash/save@v1
+#        with:
+#          path: '${{ env.CCACHE_DIR }}'
+#          key: ccache-ubuntu-debug-default-${{ inputs.use-clang && 'clang' || 'gcc' }}
 
       - name: Run Tests
         run: |
