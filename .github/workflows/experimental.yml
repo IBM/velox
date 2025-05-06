@@ -47,7 +47,7 @@ permissions:
 
 jobs:
   compile:
-    runs-on: 16-core-ubuntu
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
     env:
       CCACHE_DIR: "${{ github.workspace }}/ccache/"
@@ -110,7 +110,7 @@ jobs:
           path: velox/_build/debug/velox/expression/fuzzer/spark_expression_fuzzer_test
 
   presto-java-aggregation-fuzzer-run:
-    runs-on: 16-core-ubuntu
+    runs-on: ubuntu-22.04
     container: ghcr.io/facebookincubator/velox-dev:presto-java
     timeout-minutes: 120
     env:

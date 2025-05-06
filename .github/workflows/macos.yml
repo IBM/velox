@@ -44,7 +44,7 @@ concurrency:
 
 jobs:
   macos-build:
-    if: ${{ github.repository == 'facebookincubator/velox' }}
+    if: ${{ github.repository == 'IBM/velox' }}
     name: "${{ matrix.os }}"
     strategy:
       fail-fast: false
