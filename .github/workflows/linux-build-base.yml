@@ -119,7 +119,7 @@ jobs:
         working-directory: _build/release
         run: |
           export CLASSPATH=`/usr/local/hadoop/bin/hdfs classpath --glob`
-          ctest -j 8 --label-exclude cuda_driver --output-on-failure --no-tests=error
+          ctest -j 4 --label-exclude cuda_driver --output-on-failure --no-tests=error
 
   ubuntu-debug:
     runs-on: ubuntu-22.04
