@@ -76,7 +76,7 @@ jobs:
       - name: "Build"
         run: |
           cd velox
-          make debug NUM_THREADS="${{ inputs.numThreads || 8 }}" MAX_HIGH_MEM_JOBS="${{ inputs.maxHighMemJobs || 8 }}" MAX_LINK_JOBS="${{ inputs.maxLinkJobs || 4 }}" EXTRA_CMAKE_FLAGS="-DVELOX_ENABLE_ARROW=ON ${{ inputs.extraCMakeFlags }}"
+          make debug NUM_THREADS="4" MAX_HIGH_MEM_JOBS="1" MAX_LINK_JOBS="4" EXTRA_CMAKE_FLAGS="-DVELOX_ENABLE_ARROW=ON ${{ inputs.extraCMakeFlags }}"
           ccache -s
 
       - name: Upload aggregation fuzzer
@@ -140,7 +140,7 @@ jobs:
         run: |
           cd velox
           source /opt/rh/gcc-toolset-12/enable
-          make debug NUM_THREADS="${{ inputs.numThreads || 8 }}" MAX_HIGH_MEM_JOBS="${{ inputs.maxHighMemJobs || 8 }}" MAX_LINK_JOBS="${{ inputs.maxLinkJobs || 4 }}" EXTRA_CMAKE_FLAGS="-DVELOX_ENABLE_ARROW=ON ${{ inputs.extraCMakeFlags }}"
+          make debug NUM_THREADS="4" MAX_HIGH_MEM_JOBS="1" MAX_LINK_JOBS="4" EXTRA_CMAKE_FLAGS="-DVELOX_ENABLE_ARROW=ON ${{ inputs.extraCMakeFlags }}"
           ccache -s
 
       - name: "Run Aggregate Fuzzer"
