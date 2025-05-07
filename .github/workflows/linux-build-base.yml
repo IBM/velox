@@ -25,7 +25,7 @@ on:
 
 jobs:
   adapters-exec:
-    name: Linux release with adapters
+    name: Linux release with adapters - exec
     # prevent errors when forks ff their main branch
     if: ${{ github.repository == 'IBM/velox' }}
     runs-on: ubuntu-22.04
@@ -122,7 +122,7 @@ jobs:
           ctest -j 4 -R velox_exec_test --label-exclude cuda_driver --output-on-failure --no-tests=error
 
   adapters-others:
-    name: Linux release with adapters
+    name: Linux release with adapters - others
     # prevent errors when forks ff their main branch
     if: ${{ github.repository == 'IBM/velox' }}
     runs-on: ubuntu-22.04
