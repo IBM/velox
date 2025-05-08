@@ -242,7 +242,7 @@ jobs:
           path: velox
       - name: "node-cleanup" # by default the free runner does not have enough disk space
         run: |
-          bash .github/workflow/free_disk_space.sh
+          bash .github/workflow/utils/free_disk_space.sh
       - name: Install Dependencies
         run: |
           source scripts/setup-ubuntu.sh && install_apt_deps
