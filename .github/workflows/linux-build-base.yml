@@ -119,7 +119,8 @@ jobs:
         working-directory: _build/release
         run: |
           export CLASSPATH=`/usr/local/hadoop/bin/hdfs classpath --glob`
-          ctest -VV -R velox_exec_test -E *ScaleWriterLocalPartitionTest* --label-exclude cuda_driver --output-on-failure --no-tests=error
+          # ctest -VV -R velox_exec_test -E *ScaleWriterLocalPartitionTest* --label-exclude cuda_driver --output-on-failure --no-tests=error
+          ./velox/exec/tests/velox_exec_test --gtest_filter=-ScaleWriterLocalPartitionTest*
 
   adapters-others:
     name: Linux release with adapters - others
@@ -263,6 +264,8 @@ jobs:
           sudo rm -rf /usr/local/share/chromium
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /usr/local/lib/node_modules
+          sudo docker image prune --all --force
+          sudo docker builder prune -a
           df -h
       - name: Install Dependencies
         run: |
