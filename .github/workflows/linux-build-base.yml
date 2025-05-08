@@ -266,6 +266,7 @@ jobs:
           sudo rm -rf /usr/local/lib/node_modules
           sudo docker image prune --all --force
           sudo docker builder prune -a
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
           df -h
       - name: Install Dependencies
         run: |

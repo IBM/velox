@@ -133,16 +133,6 @@ jobs:
           path: velox
           submodules: 'recursive'
           ref: "${{ inputs.ref || 'main' }}"
-      - name: "node-cleanup" # by default the free runner does not have enough disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet/
-          sudo rm -rf /usr/local/graalvm/
-          sudo rm -rf /usr/local/.ghcup/
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/local/share/chromium
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/local/lib/node_modules
-          df -h
 
       - name: "Build"
         run: |
