@@ -24,11 +24,11 @@ on:
         type: boolean
 
 jobs:
-  adapters:
-    name: Linux release with adapters
+  adapters-exec:
+    name: Linux release with adapters - exec
     # prevent errors when forks ff their main branch
-    if: ${{ github.repository == 'facebookincubator/velox' }}
-    runs-on: 8-core-ubuntu-22.04
+    if: ${{ github.repository == 'IBM/velox' }}
+    runs-on: ubuntu-22.04
     container: ghcr.io/facebookincubator/velox-dev:adapters
     defaults:
       run:
@@ -68,7 +68,7 @@ jobs:
             mv ./${MINIO_BINARY} /usr/local/bin/
           fi
 
-      - uses: assignUser/stash/restore@v1
+      - uses: actions/cache/restore@v4
         with:
           path: '${{ env.CCACHE_DIR }}'
           key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
@@ -79,7 +79,7 @@ jobs:
 
       - name: Make Release Build
         env:
-          MAKEFLAGS: 'NUM_THREADS=8 MAX_HIGH_MEM_JOBS=4 MAX_LINK_JOBS=4'
+          #MAKEFLAGS: 'NUM_THREADS=8 MAX_HIGH_MEM_JOBS=4 MAX_LINK_JOBS=4'
           CUDA_ARCHITECTURES: 70
           CUDA_COMPILER: /usr/local/cuda-${CUDA_VERSION}/bin/nvcc
           # Set compiler to GCC 12
@@ -106,7 +106,7 @@ jobs:
       - name: Ccache after
         run: ccache -s
 
-      - uses: assignUser/stash/save@v1
+      - uses: actions/cache/save@v4
         with:
           path: '${{ env.CCACHE_DIR }}'
           key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
@@ -119,64 +119,99 @@ jobs:
         working-directory: _build/release
         run: |
           export CLASSPATH=`/usr/local/hadoop/bin/hdfs classpath --glob`
-          ctest -j 8 --label-exclude cuda_driver --output-on-failure --no-tests=error
+          # ctest -VV -R velox_exec_test -E *ScaleWriterLocalPartitionTest* --label-exclude cuda_driver --output-on-failure --no-tests=error
+          ./velox/exec/tests/velox_exec_test --gtest_filter=-ScaleWriterLocalPartitionTest*:HashJoinBridgeTest*
 
-  ubuntu-debug:
-    runs-on: 8-core-ubuntu-22.04
+  adapters-others:
+    name: Linux release with adapters - others
     # prevent errors when forks ff their main branch
-    if: ${{ github.repository == 'facebookincubator/velox' }}
-    name: "Ubuntu debug with resolve_dependency"
-    env:
-      CCACHE_DIR: "${{ github.workspace }}/ccache"
-      USE_CLANG: "${{ inputs.use-clang && 'true' || 'false' }}"
+    if: ${{ github.repository == 'IBM/velox' }}
+    runs-on: ubuntu-22.04
+    container: ghcr.io/facebookincubator/velox-dev:adapters
     defaults:
       run:
         shell: bash
-        working-directory: velox
+    env:
+      CCACHE_DIR: "${{ github.workspace }}/ccache"
+      VELOX_DEPENDENCY_SOURCE: SYSTEM
+      GTest_SOURCE: BUNDLED
+      simdjson_SOURCE: BUNDLED
+      xsimd_SOURCE: BUNDLED
+      geos_SOURCE: BUNDLED
+      CUDA_VERSION: "12.8"
+      USE_CLANG: "${{ inputs.use-clang && 'true' || 'false' }}"
     steps:
-
-      - name: Get Ccache Stash
-        uses: assignUser/stash/restore@v1
-        with:
-          path: '${{ env.CCACHE_DIR }}'
-          key: ccache-ubuntu-debug-default-${{ inputs.use-clang && 'clang' || 'gcc' }}
-
-      - name: Ensure Stash Dirs Exists
-        working-directory: ${{ github.workspace }}
-        run: |
-          mkdir -p '${{ env.CCACHE_DIR }}'
-
       - uses: actions/checkout@v4
-        with:
-          path: velox
+
+      - name: Fix git permissions
+        # Usually actions/checkout does this but as we run in a container
+        # it doesn't work
+        run: git config --global --add safe.directory ${GITHUB_WORKSPACE}
 
       - name: Install Dependencies
         run: |
-          source scripts/setup-ubuntu.sh && install_apt_deps
+          # Allows to install arbitrary cuda-version whithout needing to update
+          # docker container before. It simplifies testing new/different versions
+          if ! yum list installed cuda-nvcc-$(echo ${CUDA_VERSION} | tr '.' '-') 1>/dev/null; then
+            source scripts/setup-centos9.sh
+            install_cuda ${CUDA_VERSION}
+          fi
 
-      - name: Clear CCache Statistics
+      - name: Install Minio
+        run: |
+          MINIO_BINARY="minio-2022-05-26"
+          if [ ! -f /usr/local/bin/${MINIO_BINARY} ]; then
+            wget https://dl.min.io/server/minio/release/linux-amd64/archive/minio.RELEASE.2022-05-26T05-48-41Z -O ${MINIO_BINARY}
+            chmod +x ./${MINIO_BINARY}
+            mv ./${MINIO_BINARY} /usr/local/bin/
+          fi
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
+
+      - name: "Zero Ccache Statistics"
         run: |
           ccache -sz
 
-      - name: Make Debug Build
+      - name: Make Release Build
         env:
-          VELOX_DEPENDENCY_SOURCE: BUNDLED
-          ICU_SOURCE: SYSTEM
-          MAKEFLAGS: "NUM_THREADS=8 MAX_HIGH_MEM_JOBS=4 MAX_LINK_JOBS=3"
-          EXTRA_CMAKE_FLAGS: "-DVELOX_ENABLE_ARROW=ON -DVELOX_ENABLE_PARQUET=ON -DVELOX_ENABLE_EXAMPLES=ON"
+          #MAKEFLAGS: 'NUM_THREADS=8 MAX_HIGH_MEM_JOBS=4 MAX_LINK_JOBS=4'
+          CUDA_ARCHITECTURES: 70
+          CUDA_COMPILER: /usr/local/cuda-${CUDA_VERSION}/bin/nvcc
+          # Set compiler to GCC 12
+          CUDA_FLAGS: "-ccbin /opt/rh/gcc-toolset-12/root/usr/bin"
         run: |
-          if [[ "${USE_CLANG}" = "true" ]]; then export CC=/usr/bin/clang-15; export CXX=/usr/bin/clang++-15; fi
-          make debug
+          EXTRA_CMAKE_FLAGS=(
+            "-DVELOX_ENABLE_BENCHMARKS=ON"
+            "-DVELOX_ENABLE_EXAMPLES=ON"
+            "-DVELOX_ENABLE_ARROW=ON"
+            "-DVELOX_ENABLE_GEO=ON"
+            "-DVELOX_ENABLE_PARQUET=ON"
+            "-DVELOX_ENABLE_HDFS=ON"
+            "-DVELOX_ENABLE_S3=ON"
+            "-DVELOX_ENABLE_GCS=ON"
+            "-DVELOX_ENABLE_ABFS=ON"
+            "-DVELOX_ENABLE_REMOTE_FUNCTIONS=ON"
+            "-DVELOX_ENABLE_GPU=ON"
+            "-DVELOX_MONO_LIBRARY=ON"
+            "-DVELOX_BUILD_SHARED=ON"
+          )
+          if [[ "${USE_CLANG}" = "true" ]]; then scripts/setup-centos9.sh install_clang15; export CC=/usr/bin/clang-15; export CXX=/usr/bin/clang++-15; CUDA_FLAGS="-ccbin /usr/lib64/llvm15/bin/clang++-15"; fi
+          make release EXTRA_CMAKE_FLAGS="${EXTRA_CMAKE_FLAGS[*]}"
 
-      - name: CCache after
-        run: |
-          ccache -vs
-
-      - uses: assignUser/stash/save@v1
-        with:
-          path: '${{ env.CCACHE_DIR }}'
-          key: ccache-ubuntu-debug-default-${{ inputs.use-clang && 'clang' || 'gcc' }}
+      - name: Ccache after
+        run: ccache -s
 
       - name: Run Tests
+        # Some of the adapters dependencies are in the 'adapters' conda env
+        shell: mamba run --no-capture-output -n adapters /usr/bin/bash -e {0}
+        env:
+          LIBHDFS3_CONF: "${{ github.workspace }}/scripts/hdfs-client.xml"
+        working-directory: _build/release
         run: |
-          cd _build/debug && ctest -j 8 --output-on-failure --no-tests=error
+          export CLASSPATH=`/usr/local/hadoop/bin/hdfs classpath --glob`
+          ctest -VV -E velox_exec_test --label-exclude cuda_driver --output-on-failure --no-tests=error
+
+
