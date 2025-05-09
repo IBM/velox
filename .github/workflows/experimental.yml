@@ -48,7 +48,7 @@ permissions:
 jobs:
   compile:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 240
     env:
       CCACHE_DIR: "${{ github.workspace }}/ccache/"
       LINUX_DISTRO: "ubuntu"
@@ -111,7 +111,7 @@ jobs:
   presto-java-aggregation-fuzzer-run:
     runs-on: ubuntu-22.04
     container: ghcr.io/facebookincubator/velox-dev:presto-java
-    timeout-minutes: 120
+    timeout-minutes: 240
     env:
       CCACHE_DIR: "${{ github.workspace }}/ccache/"
       LINUX_DISTRO: "centos"
