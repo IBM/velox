@@ -381,7 +381,7 @@ if(ENABLE_ALL_WARNINGS)
          -Wno-unused-result \
          -Wno-format-overflow \
          -Wno-strict-aliasing \
-         -Wno-stringop-overflow")
+         -Wno-error=stringop-overflow")
   endif()
 
   set(KNOWN_WARNINGS
