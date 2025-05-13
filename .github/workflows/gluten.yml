@@ -15,13 +15,9 @@
 name: Gluten Build
 
 on:
-  workflow_call:
-    inputs:
-      use-clang:
-        description: 'Use Clang to compile the project.'
-        default: false
-        required: false
-        type: boolean
+  pull_request:
+    paths:
+      - '.github/workflows/gluten.yml'
 
 jobs:
 
@@ -76,12 +72,18 @@ jobs:
     runs-on: ubuntu-22.04
     container: apache/gluten:centos-8-jdk8
     steps:
-      - uses: actions/checkout@v2
+      - name: Setup Gluten
+        run: |
+          git clone https://github.com/oap-project/gluten && cd gluten
+          BRANCH=$(echo ${GITHUB_REF#refs/heads/})
+          sed -i 's/oap-project/"${GITHUB_REPOSITORY_OWNER}"/g' ep/build-velox/src/get_velox.sh
+          sed -i 's/VELOX_BRANCH=main/VELOX_BRANCH="${BRANCH}"/g' ep/build-velox/src/get_velox.sh
+          head -n10 ep/build-velox/src/get_velox.sh
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
           name: velox-native-lib-centos-7-${{github.sha}}
-          path: ./cpp/build/releases
+          path: ./gluten/cpp/build/releases
       - name: Download Arrow Jars
         uses: actions/download-artifact@v4
         with:
@@ -96,7 +98,7 @@ jobs:
           pip3 install pandas pyarrow
       - name: Build and Run unit test for Spark 3.4.4 (other tests)
         run: |
-          cd $GITHUB_WORKSPACE/
+          cd $GITHUB_WORKSPACE/gluten
           export SPARK_SCALA_VERSION=2.12
           yum install -y java-17-openjdk-devel
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
@@ -134,12 +136,18 @@ jobs:
     runs-on: ubuntu-22.04
     container: apache/gluten:centos-8-jdk8
     steps:
-      - uses: actions/checkout@v2
+      - name: Setup Gluten
+        run: |
+          git clone https://github.com/oap-project/gluten && cd gluten
+          BRANCH=$(echo ${GITHUB_REF#refs/heads/})
+          sed -i 's/oap-project/"${GITHUB_REPOSITORY_OWNER}"/g' ep/build-velox/src/get_velox.sh
+          sed -i 's/VELOX_BRANCH=main/VELOX_BRANCH="${BRANCH}"/g' ep/build-velox/src/get_velox.sh
+          head -n10 ep/build-velox/src/get_velox.sh
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
           name: velox-native-lib-centos-7-${{github.sha}}
-          path: ./cpp/build/releases
+          path: ./gluten/cpp/build/releases
       - name: Download Arrow Jars
         uses: actions/download-artifact@v4
         with:
@@ -147,7 +155,7 @@ jobs:
           path: /root/.m2/repository/org/apache/arrow/
       - name: Build and Run unit test for Spark 3.4.4 (slow tests)
         run: |
-          cd $GITHUB_WORKSPACE/
+          cd $GITHUB_WORKSPACE/gluten
           yum install -y java-17-openjdk-devel
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
           export PATH=$JAVA_HOME/bin:$PATH
