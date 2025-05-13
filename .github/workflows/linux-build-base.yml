@@ -115,7 +115,8 @@ jobs:
         run: |
           export CLASSPATH=`/usr/local/hadoop/bin/hdfs classpath --glob`
           # ctest -VV -R velox_exec_test -E *ScaleWriterLocalPartitionTest* --label-exclude cuda_driver --output-on-failure --no-tests=error
-          ./velox/exec/tests/velox_exec_test --gtest_filter=-ScaleWriterLocalPartitionTest*:HashJoinBridgeTest*
+          cd ../../velox/exec/tests/
+          ../../../_build/release/velox/exec/tests/velox_exec_test --gtest_filter=-ScaleWriterLocalPartitionTest*:HashJoinBridgeTest*
 
   adapters-others:
     name: Linux release with adapters - others
