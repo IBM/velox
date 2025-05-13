@@ -47,7 +47,7 @@ permissions:
 
 jobs:
   compile:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 240
     env:
       CCACHE_DIR: "${{ github.workspace }}/ccache/"
@@ -173,7 +173,7 @@ jobs:
             /tmp/server.log
 
   linux-spark-fuzzer-run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: compile
     timeout-minutes: 120
     steps:
@@ -214,7 +214,7 @@ jobs:
             /tmp/spark_aggregate_fuzzer_repro
 
   linux-join-fuzzer-run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: compile
     timeout-minutes: 120
     steps:
@@ -255,7 +255,7 @@ jobs:
             /tmp/join_fuzzer_repro
 
   presto-expression-fuzzer-run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: compile
     timeout-minutes: 120
     steps:
@@ -305,7 +305,7 @@ jobs:
             /tmp/presto_fuzzer_repro
 
   spark-expression-fuzzer-run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: compile
     timeout-minutes: 120
     steps:
