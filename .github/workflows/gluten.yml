@@ -18,6 +18,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/gluten.yml'
+env:
+  MVN_CMD: 'mvn -ntp'
 
 jobs:
 
