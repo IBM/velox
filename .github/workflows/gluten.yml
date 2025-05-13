@@ -35,12 +35,18 @@ jobs:
         with:
           path: '${{ env.CCACHE_DIR }}'
           key: ccache-centos7-release-default-${{github.sha}}
+      - name: Setup Gluten
+        run: |
+          git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
+          BRANCH=$(echo ${GITHUB_REF#refs/heads/})
+          sed -i 's/oap-project/"${GITHUB_REPOSITORY_OWNER}"/g' ep/build-velox/src/get_velox.sh
+          sed -i 's/VELOX_BRANCH=main/VELOX_BRANCH="${BRANCH}"/g' ep/build-velox/src/get_velox.sh
+          head -n10 ep/build-velox/src/get_velox.sh
       - name: Build Gluten native libraries
         run: |
           docker pull apache/gluten:vcpkg-centos-7
-          docker run -v $GITHUB_WORKSPACE:/work -w /work apache/gluten:vcpkg-centos-7 bash -c "
+          docker run -v $GITHUB_WORKSPACE/gluten:/work -w /work apache/gluten:vcpkg-centos-7 bash -c "
             set -e
-            yum install tzdata -y
             df -a
             cd /work
             export CCACHE_DIR=/work/.ccache
@@ -74,7 +80,7 @@ jobs:
     steps:
       - name: Setup Gluten
         run: |
-          git clone https://github.com/oap-project/gluten && cd gluten
+          git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
           BRANCH=$(echo ${GITHUB_REF#refs/heads/})
           sed -i 's/oap-project/"${GITHUB_REPOSITORY_OWNER}"/g' ep/build-velox/src/get_velox.sh
           sed -i 's/VELOX_BRANCH=main/VELOX_BRANCH="${BRANCH}"/g' ep/build-velox/src/get_velox.sh
@@ -138,7 +144,7 @@ jobs:
     steps:
       - name: Setup Gluten
         run: |
-          git clone https://github.com/oap-project/gluten && cd gluten
+          git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
           BRANCH=$(echo ${GITHUB_REF#refs/heads/})
           sed -i 's/oap-project/"${GITHUB_REPOSITORY_OWNER}"/g' ep/build-velox/src/get_velox.sh
           sed -i 's/VELOX_BRANCH=main/VELOX_BRANCH="${BRANCH}"/g' ep/build-velox/src/get_velox.sh
