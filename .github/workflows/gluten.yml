@@ -38,10 +38,9 @@ jobs:
       - name: Setup Gluten
         run: |
           git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
-          BRANCH=$(echo ${GITHUB_REF#refs/heads/})
-          sed -i 's/oap-project/"${GITHUB_REPOSITORY_OWNER}"/g' ep/build-velox/src/get_velox.sh
-          sed -i 's/VELOX_BRANCH=main/VELOX_BRANCH="${BRANCH}"/g' ep/build-velox/src/get_velox.sh
-          head -n10 ep/build-velox/src/get_velox.sh
+#          BRANCH=$(echo ${GITHUB_REF#refs/heads/})
+#          sed -i 's/oap-project/"${GITHUB_REPOSITORY_OWNER}"/g' ep/build-velox/src/get_velox.sh
+#          sed -i 's/VELOX_BRANCH=main/VELOX_BRANCH="${BRANCH}"/g' ep/build-velox/src/get_velox.sh
       - name: Build Gluten native libraries
         run: |
           docker pull apache/gluten:vcpkg-centos-7
@@ -81,10 +80,6 @@ jobs:
       - name: Setup Gluten
         run: |
           git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
-          BRANCH=$(echo ${GITHUB_REF#refs/heads/})
-          sed -i 's/oap-project/"${GITHUB_REPOSITORY_OWNER}"/g' ep/build-velox/src/get_velox.sh
-          sed -i 's/VELOX_BRANCH=main/VELOX_BRANCH="${BRANCH}"/g' ep/build-velox/src/get_velox.sh
-          head -n10 ep/build-velox/src/get_velox.sh
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -145,10 +140,6 @@ jobs:
       - name: Setup Gluten
         run: |
           git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
-          BRANCH=$(echo ${GITHUB_REF#refs/heads/})
-          sed -i 's/oap-project/"${GITHUB_REPOSITORY_OWNER}"/g' ep/build-velox/src/get_velox.sh
-          sed -i 's/VELOX_BRANCH=main/VELOX_BRANCH="${BRANCH}"/g' ep/build-velox/src/get_velox.sh
-          head -n10 ep/build-velox/src/get_velox.sh
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
         with:

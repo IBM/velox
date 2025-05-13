@@ -380,8 +380,7 @@ if(ENABLE_ALL_WARNINGS)
          -Wno-maybe-uninitialized \
          -Wno-unused-result \
          -Wno-format-overflow \
-         -Wno-strict-aliasing \
-         -Wno-error=stringop-overflow")
+         -Wno-strict-aliasing")
   endif()
 
   set(KNOWN_WARNINGS
