@@ -192,14 +192,14 @@ class TableScanTest : public HiveConnectorTestBase {
       const TypePtr& partitionType,
       const std::optional<std::string>& partitionValue) {
     auto split = exec::test::HiveConnectorSplitBuilder(filePath)
-                     .partitionKey("pkey", partitionValue)
+                     .hivePartitionKey("pkey", partitionValue)
                      .build();
     auto outputType =
         ROW({"pkey", "c0", "c1"}, {partitionType, BIGINT(), DOUBLE()});
     ColumnHandleMap assignments = {
-        {"pkey", partitionKey("pkey", partitionType)},
-        {"c0", regularColumn("c0", BIGINT())},
-        {"c1", regularColumn("c1", DOUBLE())}};
+        {"pkey", hivePartitionKey("pkey", partitionType)},
+        {"c0", regularHiveColumn("c0", BIGINT())},
+        {"c1", regularHiveColumn("c1", DOUBLE())}};
 
     auto op = PlanBuilder()
                   .startTableScan()
@@ -238,7 +238,7 @@ class TableScanTest : public HiveConnectorTestBase {
         fmt::format("SELECT c0, c1, {} FROM tmp", partitionValueStr));
 
     // select only partition key
-    assignments = {{"pkey", partitionKey("pkey", partitionType)}};
+    assignments = {{"pkey", hivePartitionKey("pkey", partitionType)}};
     outputType = ROW({"pkey"}, {partitionType});
     op = PlanBuilder()
              .startTableScan()
@@ -480,11 +480,11 @@ TEST_F(TableScanTest, partitionKeyAlias) {
   createDuckDbTable(vectors);
 
   ColumnHandleMap assignments = {
-      {"a", regularColumn("c0", BIGINT())},
-      {"ds_alias", partitionKey("ds", VARCHAR())}};
+      {"a", regularHiveColumn("c0", BIGINT())},
+      {"ds_alias", hivePartitionKey("ds", VARCHAR())}};
 
   auto split = exec::test::HiveConnectorSplitBuilder(filePath->getPath())
-                   .partitionKey("ds", "2021-12-02")
+                   .hivePartitionKey("ds", "2021-12-02")
                    .build();
 
   auto outputType = ROW({"a", "ds_alias"}, {BIGINT(), VARCHAR()});
@@ -1303,7 +1303,7 @@ TEST_F(TableScanTest, missingColumns) {
   auto tableHandle = std::make_shared<HiveTableHandle>(
       kHiveConnectorId, "tmp", true, std::move(filters), nullptr, dataColumns);
   ColumnHandleMap assignments;
-  assignments["c0"] = regularColumn("c0", BIGINT());
+  assignments["c0"] = regularHiveColumn("c0", BIGINT());
   op = PlanBuilder(pool_.get())
            .startTableScan()
            .outputType(outputTypeC0)
@@ -1330,8 +1330,8 @@ TEST_F(TableScanTest, missingColumns) {
   outputType = ROW({"a", "b"}, {BIGINT(), DOUBLE()});
 
   assignments.clear();
-  assignments["a"] = regularColumn("c0", BIGINT());
-  assignments["b"] = regularColumn("c1", DOUBLE());
+  assignments["a"] = regularHiveColumn("c0", BIGINT());
+  assignments["b"] = regularHiveColumn("c1", DOUBLE());
 
   op = PlanBuilder(pool_.get())
            .startTableScan()
@@ -2140,13 +2140,13 @@ TEST_F(TableScanTest, partitionedTableDateKey) {
   // Test partition filter on date column.
   {
     auto split = exec::test::HiveConnectorSplitBuilder(filePath->getPath())
-                     .partitionKey("pkey", partitionValue)
+                     .hivePartitionKey("pkey", partitionValue)
                      .build();
     auto outputType = ROW({"pkey", "c0", "c1"}, {DATE(), BIGINT(), DOUBLE()});
     ColumnHandleMap assignments = {
-        {"pkey", partitionKey("pkey", DATE())},
-        {"c0", regularColumn("c0", BIGINT())},
-        {"c1", regularColumn("c1", DOUBLE())}};
+        {"pkey", hivePartitionKey("pkey", DATE())},
+        {"c0", regularHiveColumn("c0", BIGINT())},
+        {"c1", regularHiveColumn("c1", DOUBLE())}};
 
     common::SubfieldFilters filters;
     // pkey > 2020-09-01.
@@ -2180,13 +2180,13 @@ TEST_F(TableScanTest, partitionedTableTimestampKey) {
   testPartitionedTable(filePath->getPath(), partitionType, std::nullopt);
 
   auto split = exec::test::HiveConnectorSplitBuilder(filePath->getPath())
-                   .partitionKey("pkey", partitionValue)
+                   .hivePartitionKey("pkey", partitionValue)
                    .build();
 
   ColumnHandleMap assignments = {
-      {"pkey", partitionKey("pkey", TIMESTAMP())},
-      {"c0", regularColumn("c0", BIGINT())},
-      {"c1", regularColumn("c1", DOUBLE())}};
+      {"pkey", hivePartitionKey("pkey", TIMESTAMP())},
+      {"c0", regularHiveColumn("c0", BIGINT())},
+      {"c1", regularHiveColumn("c1", DOUBLE())}};
 
   Timestamp ts =
       util::fromTimestampString(
@@ -2290,7 +2290,7 @@ TEST_F(TableScanTest, partitionedTableTimestampKey) {
             .startTableScan()
             .tableName("hive_table")
             .outputType(ROW({"pkey"}, {partitionType}))
-            .assignments({{"pkey", partitionKey("pkey", partitionType)}})
+            .assignments({{"pkey", hivePartitionKey("pkey", partitionType)}})
             .endTableScan()
             .planNode();
 
@@ -2511,10 +2511,10 @@ TEST_F(TableScanTest, statsBasedSkipping) {
   // c0 <= -1 -> whole file should be skipped based on stats
   auto subfieldFilters = singleSubfieldFilter("c0", lessThanOrEqual(-1));
 
-  ColumnHandleMap assignments = {{"c1", regularColumn("c1", INTEGER())}};
+  ColumnHandleMap assignments = {{"c1", regularHiveColumn("c1", INTEGER())}};
 
   auto assertQuery = [&](const std::string& query) {
-    auto tableHandle = makeTableHandle(
+    auto tableHandle = makeHiveTableHandle(
         std::move(subfieldFilters),
         nullptr,
         "hive_table",
@@ -3026,7 +3026,7 @@ TEST_F(TableScanTest, filterPushdown) {
           .add("c1", greaterThanOrEqual(0, true))
           .add("c3", std::make_unique<common::BoolValue>(true, false))
           .build();
-  auto tableHandle = makeTableHandle(
+  auto tableHandle = makeHiveTableHandle(
       std::move(subfieldFilters), nullptr, "hive_table", rowType);
 
   auto assignments = allRegularColumns(rowType);
@@ -3049,7 +3049,7 @@ TEST_F(TableScanTest, filterPushdown) {
 
   // Repeat the same but do not project out the filtered columns.
   assignments.clear();
-  assignments["c0"] = regularColumn("c0", TINYINT());
+  assignments["c0"] = regularHiveColumn("c0", TINYINT());
   assertQuery(
       PlanBuilder()
           .startTableScan()
@@ -3078,7 +3078,7 @@ TEST_F(TableScanTest, filterPushdown) {
   // Do the same for count, no filter, no projections.
   assignments.clear();
   subfieldFilters.clear(); // Explicitly clear this.
-  tableHandle = makeTableHandle(std::move(subfieldFilters));
+  tableHandle = makeHiveTableHandle(std::move(subfieldFilters));
   assertQuery(
       PlanBuilder()
           .startTableScan()
@@ -3102,7 +3102,7 @@ TEST_F(TableScanTest, path) {
   static const char* kPath = "$path";
 
   auto assignments = allRegularColumns(rowType);
-  assignments[kPath] = synthesizedColumn(kPath, VARCHAR());
+  assignments[kPath] = synthesizedHiveColumn(kPath, VARCHAR());
 
   auto& pathValue = filePath->getPath();
   auto typeWithPath = ROW({kPath, "a"}, {VARCHAR(), BIGINT()});
@@ -3116,7 +3116,7 @@ TEST_F(TableScanTest, path) {
       op, {filePath}, fmt::format("SELECT '{}', * FROM tmp", pathValue));
 
   // use $path in a filter, but don't project it out
-  auto tableHandle = makeTableHandle(
+  auto tableHandle = makeHiveTableHandle(
       common::SubfieldFilters{},
       parseExpr(fmt::format("\"{}\" = '{}'", kPath, pathValue), typeWithPath));
   op = PlanBuilder()
@@ -3153,8 +3153,8 @@ TEST_F(TableScanTest, fileSizeAndModifiedTime) {
       ROW({"a", kSize, kModifiedTime}, {BIGINT(), BIGINT(), BIGINT()});
 
   auto assignments = allRegularColumns(rowType);
-  assignments[kSize] = synthesizedColumn(kSize, BIGINT());
-  assignments[kModifiedTime] = synthesizedColumn(kModifiedTime, BIGINT());
+  assignments[kSize] = synthesizedHiveColumn(kSize, BIGINT());
+  assignments[kModifiedTime] = synthesizedHiveColumn(kModifiedTime, BIGINT());
 
   auto fileSizeValue = fmt::format("{}", filePath->fileSize());
   auto fileTimeValue = fmt::format("{}", filePath->fileModifiedTime());
@@ -3173,7 +3173,7 @@ TEST_F(TableScanTest, fileSizeAndModifiedTime) {
       fmt::format("SELECT *, {}, {} FROM tmp", fileSizeValue, fileTimeValue));
 
   auto filterTest = [&](const std::string& filter) {
-    auto tableHandle = makeTableHandle(
+    auto tableHandle = makeHiveTableHandle(
         common::SubfieldFilters{},
         parseExpr(filter, allColumns),
         "hive_table",
@@ -3244,7 +3244,7 @@ TEST_F(TableScanTest, bucket) {
   auto rowType = asRowType(rowVectors.front()->type());
 
   auto assignments = allRegularColumns(rowType);
-  assignments[kBucket] = synthesizedColumn(kBucket, INTEGER());
+  assignments[kBucket] = synthesizedHiveColumn(kBucket, INTEGER());
 
   // Query that spans on all buckets
   auto typeWithBucket =
@@ -3310,7 +3310,7 @@ TEST_F(TableScanTest, bucketConversion) {
     std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;
     for (int bucket : selectedBuckets) {
       std::vector<std::shared_ptr<HiveColumnHandle>> handles;
-      handles.push_back(makeColumnHandle("c0", INTEGER(), {}));
+      handles.push_back(makeHiveColumnHandle("c0", INTEGER(), {}));
       auto split = makeHiveConnectorSplit(file->getPath());
       split->tableBucketNumber = bucket;
       split->bucketConversion = {kNewNumBuckets, 2, std::move(handles)};
@@ -3361,7 +3361,7 @@ TEST_F(TableScanTest, bucketConversion) {
                              HiveColumnHandle::ColumnType::kRowIndex,
                              BIGINT(),
                              BIGINT())},
-                        {"c1", makeColumnHandle("c1", BIGINT(), {})},
+                        {"c1", makeHiveColumnHandle("c1", BIGINT(), {})},
                     })
                     .endTableScan()
                     .planNode();
@@ -3392,7 +3392,7 @@ TEST_F(TableScanTest, bucketConversionWithSubfieldPruning) {
   std::vector<std::shared_ptr<connector::ConnectorSplit>> splits;
   for (int bucket : selectedBuckets) {
     std::vector<std::shared_ptr<HiveColumnHandle>> handles;
-    handles.push_back(makeColumnHandle("c0", key->type(), {}));
+    handles.push_back(makeHiveColumnHandle("c0", key->type(), {}));
     auto split = makeHiveConnectorSplit(file->getPath());
     split->tableBucketNumber = bucket;
     split->bucketConversion = {kNewNumBuckets, 1, std::move(handles)};
@@ -3403,7 +3403,7 @@ TEST_F(TableScanTest, bucketConversionWithSubfieldPruning) {
                   .outputType(schema)
                   .dataColumns(schema)
                   .assignments({
-                      {"c0", makeColumnHandle("c0", key->type(), {"c0.c0"})},
+                      {"c0", makeHiveColumnHandle("c0", key->type(), {"c0.c0"})},
                   })
                   .endTableScan()
                   .planNode();
@@ -3705,7 +3705,7 @@ TEST_F(TableScanTest, remainingFilter) {
       "SELECT * FROM tmp WHERE c1 > c0 AND c0 >= 0");
 
   // Remaining filter uses columns that are not used otherwise.
-  ColumnHandleMap assignments = {{"c2", regularColumn("c2", DOUBLE())}};
+  ColumnHandleMap assignments = {{"c2", regularHiveColumn("c2", DOUBLE())}};
 
   assertQuery(
       PlanBuilder(pool_.get())
@@ -3722,8 +3722,8 @@ TEST_F(TableScanTest, remainingFilter) {
   // Remaining filter uses one column that is used elsewhere (is projected out)
   // and another column that is not used anywhere else.
   assignments = {
-      {"c1", regularColumn("c1", INTEGER())},
-      {"c2", regularColumn("c2", DOUBLE())}};
+      {"c1", regularHiveColumn("c1", INTEGER())},
+      {"c2", regularHiveColumn("c2", DOUBLE())}};
 
   assertQuery(
       PlanBuilder(pool_.get())
@@ -4314,7 +4314,7 @@ TEST_F(TableScanTest, interleaveLazyEager) {
   auto eagerFile = TempFilePath::create();
   writeToFile(eagerFile->getPath(), rowsWithNulls);
 
-  ColumnHandleMap assignments = {{"c0", regularColumn("c0", column->type())}};
+  ColumnHandleMap assignments = {{"c0", regularHiveColumn("c0", column->type())}};
   CursorParameters params;
   params.planNode = PlanBuilder()
                         .startTableScan()
@@ -5128,11 +5128,11 @@ TEST_F(TableScanTest, varbinaryPartitionKey) {
   createDuckDbTable(vectors);
 
   ColumnHandleMap assignments = {
-      {"a", regularColumn("c0", BIGINT())},
-      {"ds_alias", partitionKey("ds", VARBINARY())}};
+      {"a", regularHiveColumn("c0", BIGINT())},
+      {"ds_alias", hivePartitionKey("ds", VARBINARY())}};
 
   auto split = exec::test::HiveConnectorSplitBuilder(filePath->getPath())
-                   .partitionKey("ds", "2021-12-02")
+                   .hivePartitionKey("ds", "2021-12-02")
                    .build();
 
   auto outputType = ROW({"a", "ds_alias"}, {BIGINT(), VARBINARY()});
@@ -5178,13 +5178,13 @@ TEST_F(TableScanTest, timestampPartitionKey) {
     for (auto& t : inputs) {
       splits.push_back(
           exec::test::HiveConnectorSplitBuilder(filePath->getPath())
-              .partitionKey("t", t)
+              .hivePartitionKey("t", t)
               .build());
     }
     return splits;
   };
 
-  ColumnHandleMap assignments = {{"t", partitionKey("t", TIMESTAMP())}};
+  ColumnHandleMap assignments = {{"t", hivePartitionKey("t", TIMESTAMP())}};
   auto plan = PlanBuilder()
                   .startTableScan()
                   .outputType(ROW({"t"}, {TIMESTAMP()}))
@@ -5220,7 +5220,7 @@ TEST_F(TableScanTest, partitionKeyNotMatchPartitionKeysHandle) {
   createDuckDbTable(vectors);
 
   auto split = exec::test::HiveConnectorSplitBuilder(filePath->getPath())
-                   .partitionKey("ds", "2021-12-02")
+                   .hivePartitionKey("ds", "2021-12-02")
                    .build();
 
   auto outputType = ROW({"c0"}, {BIGINT()});
@@ -5622,13 +5622,13 @@ TEST_F(TableScanTest, rowNumberInRemainingFilter) {
   auto outputType = ROW({"c0"}, {BIGINT()});
   auto remainingFilter = parseExpr("r1 % 2 == 0", ROW({"r1"}, {BIGINT()}));
   auto tableHandle =
-      makeTableHandle(common::SubfieldFilters{}, remainingFilter);
+      makeHiveTableHandle(common::SubfieldFilters{}, remainingFilter);
   auto plan = PlanBuilder()
                   .startTableScan()
                   .outputType(outputType)
                   .tableHandle(tableHandle)
                   .assignments({
-                      {"c0", makeColumnHandle("c0", BIGINT(), {})},
+                      {"c0", makeHiveColumnHandle("c0", BIGINT(), {})},
                       {"r1",
                        std::make_shared<HiveColumnHandle>(
                            "r1",
@@ -5691,7 +5691,7 @@ TEST_F(TableScanTest, rowId) {
                     .startTableScan()
                     .outputType(outputType)
                     .assignments({
-                        {"c0", makeColumnHandle("c0", BIGINT(), {})},
+                        {"c0", makeHiveColumnHandle("c0", BIGINT(), {})},
                         {"c1", makeRowIdColumnHandle("c1")},
                     })
                     .endTableScan()
@@ -5730,10 +5730,10 @@ TEST_F(TableScanTest, rowId) {
         parseExpr("c1.row_number % 2 == 0", ROW({"c1"}, {rowIdType}));
     auto plan = PlanBuilder()
                     .startTableScan()
-                    .tableHandle(makeTableHandle({}, remainingFilter))
+                    .tableHandle(makeHiveTableHandle({}, remainingFilter))
                     .outputType(ROW({"c0"}, {BIGINT()}))
                     .assignments({
-                        {"c0", makeColumnHandle("c0", BIGINT(), {})},
+                        {"c0", makeHiveColumnHandle("c0", BIGINT(), {})},
                         {"c1", makeRowIdColumnHandle("c1")},
                     })
                     .endTableScan()
@@ -5827,7 +5827,7 @@ TEST_F(TableScanTest, statsBasedFilterReorderDisabled) {
     auto* cache = cache::AsyncDataCache::getInstance();
     cache->clear();
 
-    auto tableHandle = makeTableHandle(
+    auto tableHandle = makeHiveTableHandle(
         // Set the filter conditions can't leverage the column stats.
         SubfieldFiltersBuilder()
             .add("c1", in({1, 7, 11}, true))

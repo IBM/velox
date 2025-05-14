@@ -34,7 +34,7 @@ TEST(HiveSplitTest, builder) {
                    .splitWeight(1)
                    .fileFormat(dwio::common::FileFormat::DWRF)
                    .infoColumn("info1", "infoValue1")
-                   .partitionKey("DS", "2024-11-01")
+                   .hivePartitionKey("DS", "2024-11-01")
                    .tableBucketNumber(11)
                    .customSplitInfo(custom)
                    .extraFileInfo(extra)

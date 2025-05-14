@@ -3722,8 +3722,8 @@ TEST_F(HashJoinTest, dynamicFilters) {
   {
     auto scanOutputType = ROW({"a", "b"}, {INTEGER(), BIGINT()});
     ColumnHandleMap assignments;
-    assignments["a"] = regularColumn("c0", INTEGER());
-    assignments["b"] = regularColumn("c1", BIGINT());
+    assignments["a"] = regularHiveColumn("c0", INTEGER());
+    assignments["b"] = regularHiveColumn("c1", BIGINT());
 
     core::PlanNodeId probeScanId;
     core::PlanNodeId joinId;
@@ -4494,15 +4494,15 @@ TEST_F(HashJoinTest, dynamicFiltersAppliedToPreloadedSplits) {
     tempFiles.push_back(TempFilePath::create());
     writeToFile(tempFiles.back()->getPath(), rowVector);
     auto split = HiveConnectorSplitBuilder(tempFiles.back()->getPath())
-                     .partitionKey("p1", std::to_string(i))
+                     .hivePartitionKey("p1", std::to_string(i))
                      .build();
     probeSplits.push_back(exec::Split(split));
   }
 
   auto outputType = ROW({"p0", "p1"}, {BIGINT(), BIGINT()});
   ColumnHandleMap assignments = {
-      {"p0", regularColumn("p0", BIGINT())},
-      {"p1", partitionKey("p1", BIGINT())}};
+      {"p0", regularHiveColumn("p0", BIGINT())},
+      {"p1", hivePartitionKey("p1", BIGINT())}};
   createDuckDbTable("p", probeVectors);
 
   // Prepare build side table.
@@ -4891,12 +4891,12 @@ TEST_F(HashJoinTest, dynamicFilterOnPartitionKey) {
   createDuckDbTable("t", buildVectors);
   auto split = facebook::velox::exec::test::HiveConnectorSplitBuilder(
                    filePaths[0]->getPath())
-                   .partitionKey("k", "0")
+                   .hivePartitionKey("k", "0")
                    .build();
   auto outputType = ROW({"n1_0", "n1_1"}, {BIGINT(), BIGINT()});
   ColumnHandleMap assignments = {
-      {"n1_0", regularColumn("c0", BIGINT())},
-      {"n1_1", partitionKey("k", BIGINT())}};
+      {"n1_0", regularHiveColumn("c0", BIGINT())},
+      {"n1_1", hivePartitionKey("k", BIGINT())}};
 
   core::PlanNodeId probeScanId;
   auto planNodeIdGenerator = std::make_shared<core::PlanNodeIdGenerator>();

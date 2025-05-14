@@ -30,7 +30,7 @@ TEST(FileHandleTest, hiveColumnHandle) {
        {"c0c1",
         ARRAY(MAP(
             VARCHAR(), ROW({{"c0c1c0", BIGINT()}, {"c0c1c1", BIGINT()}})))}});
-  auto columnHandle = exec::test::HiveConnectorTestBase::makeColumnHandle(
+  auto columnHandle = exec::test::HiveConnectorTestBase::makeHiveColumnHandle(
       "columnHandle", columnType, columnType, {"c0.c0c1[3][\"foo\"].c0c1c0"});
   ASSERT_EQ(columnHandle->name(), "columnHandle");
   ASSERT_EQ(
@@ -48,7 +48,7 @@ TEST(FileHandleTest, hiveColumnHandle) {
 
   auto incompatibleHiveType = ROW({{"c0c0", BIGINT()}, {"c0c1", BIGINT()}});
   VELOX_ASSERT_THROW(
-      exec::test::HiveConnectorTestBase::makeColumnHandle(
+      exec::test::HiveConnectorTestBase::makeHiveColumnHandle(
           "columnHandle",
           columnType,
           incompatibleHiveType,

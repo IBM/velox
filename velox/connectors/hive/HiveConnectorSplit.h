@@ -161,7 +161,7 @@ class HiveConnectorSplitBuilder {
     return *this;
   }
 
-  HiveConnectorSplitBuilder& partitionKey(
+  HiveConnectorSplitBuilder& hivePartitionKey(
       std::string name,
       std::optional<std::string> value) {
     partitionKeys_.emplace(std::move(name), std::move(value));

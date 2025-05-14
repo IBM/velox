@@ -107,7 +107,7 @@ class TableWriterReplayerTest : public HiveConnectorTestBase {
             outputRowType->children(),
             partitionedBy,
             bucketProperty,
-            makeLocationHandle(
+            makeHiveLocationHandle(
                 outputDirectoryPath, std::nullopt, outputTableType),
             fileFormat_,
             compressionKind));

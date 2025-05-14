@@ -157,7 +157,7 @@ class HiveDataSinkTest : public exec::test::HiveConnectorTestBase {
         outputRowType->children(),
         partitionedBy,
         bucketProperty,
-        makeLocationHandle(
+        makeHiveLocationHandle(
             outputDirectoryPath,
             std::nullopt,
             connector::hive::LocationHandle::TableType::kNew),
@@ -1279,7 +1279,7 @@ TEST_F(HiveDataSinkTest, ensureFilesUnsupported) {
           rowType_->children(),
           {rowType_->names()[0]}, // partitionedBy
           nullptr, // bucketProperty
-          makeLocationHandle(
+          makeHiveLocationHandle(
               "/path/to/test",
               std::nullopt,
               connector::hive::LocationHandle::TableType::kNew),
@@ -1302,7 +1302,7 @@ TEST_F(HiveDataSinkTest, ensureFilesUnsupported) {
               std::vector<std::string>{rowType_->names()[0]},
               std::vector<TypePtr>{rowType_->children()[0]},
               std::vector<std::shared_ptr<const HiveSortingColumn>>{})},
-          makeLocationHandle(
+          makeHiveLocationHandle(
               "/path/to/test",
               std::nullopt,
               connector::hive::LocationHandle::TableType::kNew),

@@ -122,7 +122,7 @@ TEST_F(HiveConnectorSerDeTest, hiveTableHandle) {
   auto rowType =
       ROW({"c0c0", "c1", "c2", "c3", "c4", "c5"},
           {INTEGER(), BIGINT(), DOUBLE(), BOOLEAN(), BIGINT(), VARCHAR()});
-  auto tableHandle = makeTableHandle(
+  auto tableHandle = makeHiveTableHandle(
       common::test::SubfieldFiltersBuilder()
           .add("c0.c0", isNotNull())
           .add(
@@ -164,7 +164,7 @@ TEST_F(HiveConnectorSerDeTest, hiveColumnHandle) {
   };
 
   for (auto columnHandleType : columnHandleTypes) {
-    auto columnHandle = exec::test::HiveConnectorTestBase::makeColumnHandle(
+    auto columnHandle = exec::test::HiveConnectorTestBase::makeHiveColumnHandle(
         "columnHandle",
         columnType,
         columnType,
@@ -176,7 +176,7 @@ TEST_F(HiveConnectorSerDeTest, hiveColumnHandle) {
 }
 
 TEST_F(HiveConnectorSerDeTest, locationHandle) {
-  auto locationHandle = exec::test::HiveConnectorTestBase::makeLocationHandle(
+  auto locationHandle = exec::test::HiveConnectorTestBase::makeHiveLocationHandle(
       "targetDirectory",
       std::optional("writeDirectory"),
       LocationHandle::TableType::kNew);
@@ -199,7 +199,7 @@ TEST_F(HiveConnectorSerDeTest, hiveInsertTableHandle) {
   tableColumnTypes.emplace_back(arrType);
   tableColumnTypes.emplace_back(varcharType);
 
-  auto locationHandle = exec::test::HiveConnectorTestBase::makeLocationHandle(
+  auto locationHandle = exec::test::HiveConnectorTestBase::makeHiveLocationHandle(
       "targetDirectory",
       std::optional("writeDirectory"),
       LocationHandle::TableType::kNew);
@@ -298,7 +298,7 @@ TEST_F(HiveConnectorSerDeTest, hiveConnectorSplit) {
 
   auto split3 = HiveConnectorSplit(connectorId, filePath, fileFormat);
   std::vector<std::shared_ptr<HiveColumnHandle>> handles;
-  handles.push_back(makeColumnHandle("c0", INTEGER(), {}));
+  handles.push_back(makeHiveColumnHandle("c0", INTEGER(), {}));
   split3.bucketConversion = {16, 2, std::move(handles)};
   testSerde(split3);
 }

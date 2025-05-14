@@ -94,20 +94,20 @@ TEST_F(AssertQueryBuilderTest, hiveSplits) {
 
   // Split with partition key.
   ColumnHandleMap assignments = {
-      {"ds", partitionKey("ds", VARCHAR())},
-      {"c0", regularColumn("c0", BIGINT())}};
+      {"ds", hivePartitionKey("ds", VARCHAR())},
+      {"c0", regularHiveColumn("c0", BIGINT())}};
 
   AssertQueryBuilder(
       PlanBuilder()
           .startTableScan()
           .outputType(ROW({"c0", "ds"}, {INTEGER(), VARCHAR()}))
-          .tableHandle(makeTableHandle())
+          .tableHandle(makeHiveTableHandle())
           .assignments(assignments)
           .endTableScan()
           .planNode(),
       duckDbQueryRunner_)
       .split(HiveConnectorSplitBuilder(file->getPath())
-                 .partitionKey("ds", "2022-05-10")
+                 .hivePartitionKey("ds", "2022-05-10")
                  .build())
       .assertResults(
           "VALUES (1, '2022-05-10'), (2, '2022-05-10'), (3, '2022-05-10')");

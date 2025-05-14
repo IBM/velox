@@ -731,7 +731,7 @@ TEST_F(ParquetTableScanTest, rowIndex) {
       connector::hive::HiveColumnHandle::ColumnType::kRegular,
       DOUBLE(),
       DOUBLE());
-  assignments[kPath] = synthesizedColumn(kPath, VARCHAR());
+  assignments[kPath] = synthesizedHiveColumn(kPath, VARCHAR());
   assignments["_tmp_metadata_row_index"] =
       std::make_shared<connector::hive::HiveColumnHandle>(
           "_tmp_metadata_row_index",
@@ -803,9 +803,9 @@ TEST_F(ParquetTableScanTest, filterNullIcebergPartition) {
       std::unordered_map<std::string, std::optional<std::string>>{
           {"c1", std::nullopt}});
 
-  std::shared_ptr<connector::ColumnHandle> c0 = makeColumnHandle(
+  std::shared_ptr<connector::ColumnHandle> c0 = makeHiveColumnHandle(
       "c0", BIGINT(), BIGINT(), {}, HiveColumnHandle::ColumnType::kRegular);
-  std::shared_ptr<connector::ColumnHandle> c1 = makeColumnHandle(
+  std::shared_ptr<connector::ColumnHandle> c1 = makeHiveColumnHandle(
       "c1",
       BIGINT(),
       BIGINT(),
@@ -1342,15 +1342,15 @@ TEST_F(ParquetTableScanTest, booleanRle) {
   writeToParquetFile(file->getPath(), {vector}, options);
   loadData(file->getPath(), schema, vector);
 
-  std::shared_ptr<connector::ColumnHandle> c0 = makeColumnHandle(
+  std::shared_ptr<connector::ColumnHandle> c0 = makeHiveColumnHandle(
       "c0", BOOLEAN(), BOOLEAN(), {}, HiveColumnHandle::ColumnType::kRegular);
-  std::shared_ptr<connector::ColumnHandle> c1 = makeColumnHandle(
+  std::shared_ptr<connector::ColumnHandle> c1 = makeHiveColumnHandle(
       "c1", BOOLEAN(), BOOLEAN(), {}, HiveColumnHandle::ColumnType::kRegular);
-  std::shared_ptr<connector::ColumnHandle> c2 = makeColumnHandle(
+  std::shared_ptr<connector::ColumnHandle> c2 = makeHiveColumnHandle(
       "c2", BOOLEAN(), BOOLEAN(), {}, HiveColumnHandle::ColumnType::kRegular);
-  std::shared_ptr<connector::ColumnHandle> c3 = makeColumnHandle(
+  std::shared_ptr<connector::ColumnHandle> c3 = makeHiveColumnHandle(
       "c3", BOOLEAN(), BOOLEAN(), {}, HiveColumnHandle::ColumnType::kRegular);
-  std::shared_ptr<connector::ColumnHandle> c4 = makeColumnHandle(
+  std::shared_ptr<connector::ColumnHandle> c4 = makeHiveColumnHandle(
       "c4", BOOLEAN(), BOOLEAN(), {}, HiveColumnHandle::ColumnType::kRegular);
 
   assertSelect({"c0"}, "SELECT c0 FROM tmp");
@@ -1378,11 +1378,11 @@ TEST_F(ParquetTableScanTest, singleBooleanRle) {
   writeToParquetFile(file->getPath(), {vector}, options);
   loadData(file->getPath(), schema, vector);
 
-  std::shared_ptr<connector::ColumnHandle> c0 = makeColumnHandle(
+  std::shared_ptr<connector::ColumnHandle> c0 = makeHiveColumnHandle(
       "c0", BOOLEAN(), BOOLEAN(), {}, HiveColumnHandle::ColumnType::kRegular);
-  std::shared_ptr<connector::ColumnHandle> c1 = makeColumnHandle(
+  std::shared_ptr<connector::ColumnHandle> c1 = makeHiveColumnHandle(
       "c1", BOOLEAN(), BOOLEAN(), {}, HiveColumnHandle::ColumnType::kRegular);
-  std::shared_ptr<connector::ColumnHandle> c2 = makeColumnHandle(
+  std::shared_ptr<connector::ColumnHandle> c2 = makeHiveColumnHandle(
       "c2", BOOLEAN(), BOOLEAN(), {}, HiveColumnHandle::ColumnType::kRegular);
 
   assertSelect({"c0"}, "SELECT c0 FROM tmp");
