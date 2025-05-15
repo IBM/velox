@@ -70,7 +70,9 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: '${{ env.CCACHE_DIR }}'
-          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
+          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}-${{github.sha}}
+          restore-keys: |
+            ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
 
       - name: "Zero Ccache Statistics"
         run: |
@@ -108,7 +110,7 @@ jobs:
       - uses: actions/cache/save@v4
         with:
           path: '${{ env.CCACHE_DIR }}'
-          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
+          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}-${{github.sha}}
 
       - name: Run Tests
         # Some of the adapters dependencies are in the 'adapters' conda env
