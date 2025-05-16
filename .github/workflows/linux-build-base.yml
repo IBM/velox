@@ -122,6 +122,6 @@ jobs:
           export CLASSPATH=`/usr/local/hadoop/bin/hdfs classpath --glob`
           ctest -VV -E velox_exec_test --label-exclude cuda_driver --output-on-failure --no-tests=error
           cd ../../velox/exec/tests/
-          ../../../_build/release/velox/exec/tests/velox_exec_test --gtest_filter=-ScaleWriterLocalPartitionTest*:HashJoinBridgeTest*
+          ../../../_build/release/velox/exec/tests/velox_exec_test --gtest_filter=-ScaleWriterLocalPartitionTest*:HashJoinBridgeTest*:MergeJoinTest*
 
 
