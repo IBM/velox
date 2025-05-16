@@ -88,8 +88,8 @@ jobs:
   compile:
     name: Build
     # prevent errors when forks ff their main branch
-    if: ${{ github.repository == 'facebookincubator/velox' }}
-    runs-on: 32-core-ubuntu
+    if: ${{ github.repository == 'IBM/velox' }}
+    runs-on: ubuntu-22.04
     container: ghcr.io/facebookincubator/velox-dev:centos9
     timeout-minutes: 120
     env:
