@@ -17,7 +17,7 @@
 #include "velox/exec/fuzzer/RowNumberFuzzerBase.h"
 
 #include <utility>
-#include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/exec/Spill.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
@@ -91,7 +91,7 @@ void RowNumberFuzzerBase::setupReadWrite() {
 
   // Make sure not to run out of open file descriptors.
   std::unordered_map<std::string, std::string> hiveConfig = {
-      {connector::hive::HiveConfig::kNumCacheFileHandles, "1000"}};
+      {connector::hiveV2::HiveConfig::kNumCacheFileHandles, "1000"}};
   test::registerHiveConnector(hiveConfig);
 }
 

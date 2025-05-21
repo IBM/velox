@@ -37,6 +37,7 @@ add_library(
 
 target_link_libraries(
   velox_exec_test_lib
+  PRIVATE
   velox_vector_test_lib
   velox_vector_fuzzer
   velox_temp_path
@@ -57,6 +58,10 @@ target_link_libraries(
   velox_presto_serializer
   velox_functions_prestosql
   velox_aggregates)
+
+if(${VELOX_ENABLE_HIVE_CONNECTOR})
+  target_link_libraries(velox_exec_test_lib PUBLIC velox_connector_test_lib)
+endif()
 
 if(${VELOX_BUILD_RUNNER})
   add_library(velox_exec_runner_test_util DistributedPlanBuilder.cpp

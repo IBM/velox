@@ -16,7 +16,7 @@
 
 #include "velox/tool/trace/TableScanReplayer.h"
 
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/exec/OperatorTraceReader.h"
 #include "velox/exec/TraceUtil.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -66,10 +66,10 @@ std::vector<exec::Split> TableScanReplayer::getSplits() const {
   for (const auto& splitStr : splitStrs) {
     folly::dynamic splitInfoObj = folly::parseJson(splitStr);
     const auto split =
-        ISerializable::deserialize<connector::hive::HiveConnectorSplit>(
+        ISerializable::deserialize<connector::hiveV2::HiveConnectorSplit>(
             splitInfoObj);
     splits.emplace_back(
-        std::const_pointer_cast<connector::hive::HiveConnectorSplit>(split));
+        std::const_pointer_cast<connector::hiveV2::HiveConnectorSplit>(split));
   }
   return splits;
 }

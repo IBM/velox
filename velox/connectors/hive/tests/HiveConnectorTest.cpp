@@ -15,7 +15,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hive/tests/HiveConnectorTestBase.h"
 
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/connectors/hive/HiveConfig.h"
@@ -29,7 +29,7 @@ namespace {
 using namespace facebook::velox::common;
 using namespace facebook::velox::exec::test;
 
-class HiveConnectorTest : public exec::test::HiveConnectorTestBase {
+class HiveConnectorTest : public connector::hiveV2::test::HiveConnectorTestBase {
  protected:
   std::shared_ptr<memory::MemoryPool> pool_ =
       memory::memoryManager()->addLeafPool();

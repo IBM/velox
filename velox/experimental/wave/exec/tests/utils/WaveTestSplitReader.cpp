@@ -29,7 +29,7 @@ WaveTestSplitReader::WaveTestSplitReader(
     const DefinesMap* defines) {
   params_ = params;
   auto hiveSplit =
-      dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
+      dynamic_cast<connector::hiveV2::HiveConnectorSplit*>(split.get());
   VELOX_CHECK_NOT_NULL(hiveSplit);
 
   stripe_ = test::Table::getStripe(hiveSplit->filePath);
@@ -117,7 +117,7 @@ class WaveTestSplitReaderFactory : public WaveSplitReaderFactory {
       const SplitReaderParams& params,
       const DefinesMap* defines) override {
     auto hiveSplit =
-        dynamic_cast<connector::hive::HiveConnectorSplit*>(split.get());
+        dynamic_cast<connector::hiveV2::HiveConnectorSplit*>(split.get());
     if (!hiveSplit) {
       return nullptr;
     }

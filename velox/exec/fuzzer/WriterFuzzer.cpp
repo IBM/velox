@@ -24,9 +24,9 @@
 #include "velox/common/encode/Base64.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/common/file/tests/FaultyFileSystem.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveTableHandle.h"
 #include "velox/dwio/dwrf/reader/DwrfReader.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
 #include "velox/exec/fuzzer/PrestoQueryRunner.h"
@@ -64,7 +64,7 @@ DEFINE_double(
     "Chance of adding a null value in a vector "
     "(expressed as double from 0 to 1).");
 
-using namespace facebook::velox::connector::hive;
+using namespace facebook::velox::connector::hiveV2;
 using namespace facebook::velox::test;
 
 namespace facebook::velox::exec::test {
@@ -682,7 +682,7 @@ RowVectorPtr WriterFuzzer::execute(
   return builder.maxDrivers(maxDrivers)
       .connectorSessionProperty(
           kHiveConnectorId,
-          connector::hive::HiveConfig::kMaxPartitionsPerWritersSession,
+          connector::hiveV2::HiveConfig::kMaxPartitionsPerWritersSession,
           "400")
       .copyResults(pool_.get());
 }

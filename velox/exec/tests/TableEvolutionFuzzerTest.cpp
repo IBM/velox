@@ -13,11 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 #include "velox/exec/tests/TableEvolutionFuzzer.h"
-#include "velox/connectors/hive/HiveConnector.h"
+
+#include "velox/connectors/hiveV2/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/dwio/dwrf/RegisterDwrfWriter.h"
+#include "velox/exec/Cursor.h"
+#include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/exec/tests/utils/TempDirectoryPath.h"
+#include "velox/vector/fuzzer/VectorFuzzer.h"
 
 #include <folly/init/Init.h>
 #include <gflags/gflags.h>

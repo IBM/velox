@@ -14,12 +14,14 @@
  * limitations under the License.
  */
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
 namespace facebook::velox::exec::test {
+
+using namespace facebook::velox::connector::hiveV2::test;
 
 class AssertQueryBuilderTest : public HiveConnectorTestBase {};
 
@@ -94,14 +96,14 @@ TEST_F(AssertQueryBuilderTest, hiveSplits) {
 
   // Split with partition key.
   ColumnHandleMap assignments = {
-      {"ds", partitionKey("ds", VARCHAR())},
-      {"c0", regularColumn("c0", BIGINT())}};
+      {"ds", hivePartitionKey("ds", VARCHAR())},
+      {"c0", regularHiveColumn("c0", BIGINT())}};
 
   AssertQueryBuilder(
       PlanBuilder()
           .startTableScan()
           .outputType(ROW({"c0", "ds"}, {INTEGER(), VARCHAR()}))
-          .tableHandle(makeTableHandle())
+          .tableHandle(makeHiveTableHandle())
           .assignments(assignments)
           .endTableScan()
           .planNode(),

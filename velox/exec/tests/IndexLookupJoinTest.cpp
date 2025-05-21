@@ -24,7 +24,7 @@
 #include "velox/core/PlanNode.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/IndexLookupJoinTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TestIndexStorageConnector.h"
@@ -77,7 +77,7 @@ class IndexLookupJoinTest : public IndexLookupJoinTestBase,
   void SetUp() override {
     HiveConnectorTestBase::SetUp();
     core::PlanNode::registerSerDe();
-    connector::hive::HiveColumnHandle::registerSerDe();
+    connector::hiveV2::HiveColumnHandle::registerSerDe();
     Type::registerSerDe();
     core::ITypedExpr::registerSerDe();
     connector::registerConnectorFactory(

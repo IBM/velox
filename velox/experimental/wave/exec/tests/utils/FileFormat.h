@@ -17,7 +17,7 @@
 
 #include "velox/common/file/Region.h"
 #include "velox/connectors/Connector.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/dwio/common/TypeWithId.h"
 #include "velox/type/StringView.h"
 #include "velox/vector/ComplexVector.h"
@@ -285,7 +285,7 @@ class Table {
     SplitVector result;
     std::lock_guard<std::mutex> l(mutex_);
     for (auto& stripe : stripes_) {
-      result.push_back(std::make_shared<connector::hive::HiveConnectorSplit>(
+      result.push_back(std::make_shared<connector::hiveV2::HiveConnectorSplit>(
           "test-hive", stripe->name, dwio::common::FileFormat::UNKNOWN));
     }
     return result;

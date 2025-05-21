@@ -28,7 +28,8 @@
 #include "velox/common/memory/MallocAllocator.h"
 #include "velox/common/memory/SharedArbitrator.h"
 #include "velox/common/testutil/TestValue.h"
-#include "velox/connectors/hive/HiveConfig.h"
+#include "velox/connectors/hiveV2/HiveConfig.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/core/PlanNode.h"
 #include "velox/exec/Driver.h"
 #include "velox/exec/HashAggregation.h"
@@ -36,7 +37,6 @@
 #include "velox/exec/TableWriter.h"
 #include "velox/exec/Values.h"
 #include "velox/exec/tests/utils/ArbitratorTestUtil.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/SumNonPODAggregate.h"
 
 DECLARE_bool(velox_memory_leak_check_enabled);
@@ -45,7 +45,8 @@ DECLARE_bool(velox_suppress_memory_capacity_exceeding_error_message);
 using namespace ::testing;
 using namespace facebook::velox::common::testutil;
 using namespace facebook::velox::exec;
-using namespace facebook::velox::exec::test;
+//using namespace facebook::velox::exec::test;
+using namespace facebook::velox::connector::hiveV2::test;
 
 namespace facebook::velox::memory {
 // Custom node for the custom factory.
@@ -235,12 +236,13 @@ struct TestParam {
 };
 } // namespace
 
-class SharedArbitrationTest : public testing::WithParamInterface<TestParam>,
-                              public exec::test::HiveConnectorTestBase {
+class SharedArbitrationTest
+    : public testing::WithParamInterface<TestParam>,
+      public connector::hiveV2::test::HiveConnectorTestBase {
  public:
  protected:
   static void SetUpTestCase() {
-    exec::test::HiveConnectorTestBase::SetUpTestCase();
+    HiveConnectorTestBase::SetUpTestCase();
     auto fakeOperatorFactory = std::make_unique<FakeMemoryOperatorFactory>();
     fakeOperatorFactory_ = fakeOperatorFactory.get();
     Operator::registerOperator(std::move(fakeOperatorFactory));
@@ -365,11 +367,12 @@ DEBUG_ONLY_TEST_P(
       .queryCtx(queryCtx)
       .spillDirectory(spillDirectory->getPath())
       .config(core::QueryConfig::kSpillEnabled, "true")
-      .plan(PlanBuilder()
-                .values(vectors)
-                .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
-                .capturePlanNodeId(aggregationNodeId)
-                .planNode())
+      .plan(
+          PlanBuilder()
+              .values(vectors)
+              .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
+              .capturePlanNodeId(aggregationNodeId)
+              .planNode())
       .assertResults("SELECT c0, c1, array_agg(c2) FROM tmp GROUP BY c0, c1");
   ASSERT_TRUE(queryCtxStateChecked);
   ASSERT_FALSE(queryCtx->testingUnderArbitration());
@@ -590,11 +593,12 @@ DEBUG_ONLY_TEST_P(SharedArbitrationTestWithThreadingModes, reclaimToOrderBy) {
           newQueryBuilder()
               .queryCtx(orderByQueryCtx)
               .serialExecution(isSerialExecutionMode_)
-              .plan(PlanBuilder()
-                        .values(vectors)
-                        .orderBy({"c0 ASC NULLS LAST"}, false)
-                        .capturePlanNodeId(orderByNodeId)
-                        .planNode())
+              .plan(
+                  PlanBuilder()
+                      .values(vectors)
+                      .orderBy({"c0 ASC NULLS LAST"}, false)
+                      .capturePlanNodeId(orderByNodeId)
+                      .planNode())
               .assertResults("SELECT * FROM tmp ORDER BY c0 ASC NULLS LAST");
       auto taskStats = exec::toPlanStats(task->taskStats());
       auto& stats = taskStats.at(orderByNodeId);
@@ -607,12 +611,13 @@ DEBUG_ONLY_TEST_P(SharedArbitrationTestWithThreadingModes, reclaimToOrderBy) {
           newQueryBuilder()
               .queryCtx(fakeMemoryQueryCtx)
               .serialExecution(isSerialExecutionMode_)
-              .plan(PlanBuilder()
-                        .values(vectors)
-                        .addNode([&](std::string id, core::PlanNodePtr input) {
-                          return std::make_shared<FakeMemoryNode>(id, input);
-                        })
-                        .planNode())
+              .plan(
+                  PlanBuilder()
+                      .values(vectors)
+                      .addNode([&](std::string id, core::PlanNodePtr input) {
+                        return std::make_shared<FakeMemoryNode>(id, input);
+                      })
+                      .planNode())
               .assertResults("SELECT * FROM tmp");
     });
 
@@ -691,11 +696,12 @@ DEBUG_ONLY_TEST_P(
           newQueryBuilder()
               .queryCtx(aggregationQueryCtx)
               .serialExecution(isSerialExecutionMode_)
-              .plan(PlanBuilder()
-                        .values(vectors)
-                        .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
-                        .capturePlanNodeId(aggregationNodeId)
-                        .planNode())
+              .plan(
+                  PlanBuilder()
+                      .values(vectors)
+                      .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
+                      .capturePlanNodeId(aggregationNodeId)
+                      .planNode())
               .assertResults(
                   "SELECT c0, c1, array_agg(c2) FROM tmp GROUP BY c0, c1");
       auto taskStats = exec::toPlanStats(task->taskStats());
@@ -709,12 +715,13 @@ DEBUG_ONLY_TEST_P(
           newQueryBuilder()
               .queryCtx(fakeMemoryQueryCtx)
               .serialExecution(isSerialExecutionMode_)
-              .plan(PlanBuilder()
-                        .values(vectors)
-                        .addNode([&](std::string id, core::PlanNodePtr input) {
-                          return std::make_shared<FakeMemoryNode>(id, input);
-                        })
-                        .planNode())
+              .plan(
+                  PlanBuilder()
+                      .values(vectors)
+                      .addNode([&](std::string id, core::PlanNodePtr input) {
+                        return std::make_shared<FakeMemoryNode>(id, input);
+                      })
+                      .planNode())
               .assertResults("SELECT * FROM tmp");
     });
 
@@ -822,12 +829,13 @@ DEBUG_ONLY_TEST_P(
           newQueryBuilder()
               .queryCtx(fakeMemoryQueryCtx)
               .serialExecution(isSerialExecutionMode_)
-              .plan(PlanBuilder()
-                        .values(vectors)
-                        .addNode([&](std::string id, core::PlanNodePtr input) {
-                          return std::make_shared<FakeMemoryNode>(id, input);
-                        })
-                        .planNode())
+              .plan(
+                  PlanBuilder()
+                      .values(vectors)
+                      .addNode([&](std::string id, core::PlanNodePtr input) {
+                        return std::make_shared<FakeMemoryNode>(id, input);
+                      })
+                      .planNode())
               .assertResults("SELECT * FROM tmp");
     });
 
@@ -950,12 +958,13 @@ DEBUG_ONLY_TEST_P(
             .config(core::QueryConfig::kJoinSpillEnabled, "true")
             .config(core::QueryConfig::kSpillNumPartitionBits, "2")
             .maxDrivers(numDrivers)
-            .plan(PlanBuilder()
-                      .values(vectors)
-                      .localPartition({"c0", "c1"})
-                      .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
-                      .localPartition(std::vector<std::string>{})
-                      .planNode())
+            .plan(
+                PlanBuilder()
+                    .values(vectors)
+                    .localPartition({"c0", "c1"})
+                    .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
+                    .localPartition(std::vector<std::string>{})
+                    .planNode())
             .assertResults(
                 "SELECT c0, c1, array_agg(c2) FROM tmp GROUP BY c0, c1"),
         "Aborted for external error");
@@ -1022,12 +1031,13 @@ DEBUG_ONLY_TEST_P(
                .config(core::QueryConfig::kSpillEnabled, "true")
                .config(core::QueryConfig::kJoinSpillEnabled, "true")
                .config(core::QueryConfig::kSpillNumPartitionBits, "2")
-               .plan(PlanBuilder()
-                         .values(vectors)
-                         .localPartition({"c0", "c1"})
-                         .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
-                         .localPartition(std::vector<std::string>{})
-                         .planNode())
+               .plan(
+                   PlanBuilder()
+                       .values(vectors)
+                       .localPartition({"c0", "c1"})
+                       .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
+                       .localPartition(std::vector<std::string>{})
+                       .planNode())
                .assertResults(
                    "SELECT c0, c1, array_agg(c2) FROM tmp GROUP BY c0, c1");
   });
@@ -1109,11 +1119,11 @@ DEBUG_ONLY_TEST_P(SharedArbitrationTestWithThreadingModes, runtimeStats) {
             // Set stripe size to extreme large to avoid writer internal
             // triggered flush.
             .connectorSessionProperty(
-                kHiveConnectorId,
+                connector::hiveV2::test::kHiveConnectorId,
                 dwrf::Config::kOrcWriterMaxStripeSizeSession,
                 "1GB")
             .connectorSessionProperty(
-                kHiveConnectorId,
+                connector::hiveV2::test::kHiveConnectorId,
                 dwrf::Config::kOrcWriterMaxDictionaryMemorySession,
                 "1GB")
             .plan(std::move(writerPlan))
@@ -1194,23 +1204,25 @@ DEBUG_ONLY_TEST_P(
       if (sameDriver) {
         task = newQueryBuilder()
                    .queryCtx(queryCtx)
-                   .plan(PlanBuilder()
-                             .values(vectors)
-                             .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
-                             .capturePlanNodeId(aggregationNodeId)
-                             .localPartition(std::vector<std::string>{})
-                             .planNode())
+                   .plan(
+                       PlanBuilder()
+                           .values(vectors)
+                           .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
+                           .capturePlanNodeId(aggregationNodeId)
+                           .localPartition(std::vector<std::string>{})
+                           .planNode())
                    .assertResults(
                        "SELECT c0, c1, array_agg(c2) FROM tmp GROUP BY c0, c1");
       } else {
         task = newQueryBuilder()
                    .queryCtx(queryCtx)
-                   .plan(PlanBuilder()
-                             .values(vectors)
-                             .localPartition({"c0", "c1"})
-                             .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
-                             .capturePlanNodeId(aggregationNodeId)
-                             .planNode())
+                   .plan(
+                       PlanBuilder()
+                           .values(vectors)
+                           .localPartition({"c0", "c1"})
+                           .singleAggregation({"c0", "c1"}, {"array_agg(c2)"})
+                           .capturePlanNodeId(aggregationNodeId)
+                           .planNode())
                    .assertResults(
                        "SELECT c0, c1, array_agg(c2) FROM tmp GROUP BY c0, c1");
       }
@@ -1250,15 +1262,16 @@ TEST_P(
     vectors.push_back(makeRowVector(rowType_, fuzzerOpts_));
   }
   const int numDrivers = 4;
-  const auto expectedWriteResult = runWriteTask(
-                                       vectors,
-                                       nullptr,
-                                       isSerialExecutionMode_,
-                                       numDrivers,
-                                       pool(),
-                                       kHiveConnectorId,
-                                       false)
-                                       .data;
+  const auto expectedWriteResult =
+      runWriteTask(
+          vectors,
+          nullptr,
+          isSerialExecutionMode_,
+          numDrivers,
+          pool(),
+          connector::hiveV2::test::kHiveConnectorId,
+          false)
+          .data;
   const auto expectedJoinResult =
       runHashJoinTask(
           vectors, nullptr, isSerialExecutionMode_, numDrivers, pool(), false)
@@ -1320,7 +1333,7 @@ TEST_P(
                        isSerialExecutionMode_,
                        numDrivers,
                        pool(),
-                       kHiveConnectorId,
+                       connector::hiveV2::test::kHiveConnectorId,
                        true,
                        expectedWriteResult)
                        .task;

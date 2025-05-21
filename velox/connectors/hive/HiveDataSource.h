@@ -159,12 +159,11 @@ class HiveDataSource : public DataSource {
   std::unordered_map<std::string, std::shared_ptr<HiveColumnHandle>>
       infoColumns_;
   SpecialColumnNames specialColumns_{};
-  std::vector<common::Subfield> remainingFilterSubfields_;
   folly::F14FastMap<std::string, std::vector<const common::Subfield*>>
       subfields_;
   common::SubfieldFilters filters_;
   std::shared_ptr<common::MetadataFilter> metadataFilter_;
-  std::unique_ptr<exec::ExprSet> remainingFilterExprSet_;
+  std::shared_ptr<exec::ExprSet> remainingFilterExprSet_;
   RowVectorPtr emptyOutput_;
   dwio::common::RuntimeStatistics runtimeStats_;
   std::atomic<uint64_t> totalRemainingFilterTime_{0};

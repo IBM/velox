@@ -19,7 +19,7 @@
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/dwio/common/tests/utils/DataFiles.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/substrait/SubstraitToVeloxPlan.h"
@@ -27,11 +27,11 @@
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
-using namespace facebook::velox::connector::hive;
+using namespace facebook::velox::connector::hiveV2;
 using namespace facebook::velox::exec;
 
 class Substrait2VeloxPlanConversionTest
-    : public exec::test::HiveConnectorTestBase {
+    : public connector::hiveV2::test::HiveConnectorTestBase {
  protected:
   static void SetUpTestCase() {
     memory::MemoryManager::testingSetInstance(memory::MemoryManager::Options{});
@@ -60,7 +60,7 @@ class Substrait2VeloxPlanConversionTest
       auto path = fmt::format("{}{}", tmpDir_->getPath(), paths[i]);
       auto start = starts[i];
       auto length = lengths[i];
-      auto split = facebook::velox::exec::test::HiveConnectorSplitBuilder(path)
+      auto split = facebook::velox::HiveConnectorSplitBuilder(path)
                        .fileFormat(fileFormat)
                        .start(start)
                        .length(length)

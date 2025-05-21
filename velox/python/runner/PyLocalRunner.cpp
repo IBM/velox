@@ -17,7 +17,7 @@
 #include "velox/python/runner/PyLocalRunner.h"
 
 #include <pybind11/stl.h>
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/core/PlanNode.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
@@ -70,7 +70,7 @@ void PyLocalRunner::addFileSplit(
     const std::string& planId,
     const std::string& connectorId) {
   scanFiles_[planId].emplace_back(
-      std::make_shared<connector::hive::HiveConnectorSplit>(
+      std::make_shared<connector::hiveV2::HiveConnectorSplit>(
           connectorId, pyFile.filePath(), pyFile.fileFormat()));
 }
 

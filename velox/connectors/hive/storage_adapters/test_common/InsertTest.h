@@ -22,11 +22,13 @@
 #include "velox/dwio/parquet/RegisterParquetWriter.h"
 #include "velox/exec/TableWriter.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
 namespace facebook::velox::test {
+
+using namespace
 
 class InsertTest : public velox::test::VectorTestBase {
  public:
@@ -80,7 +82,7 @@ class InsertTest : public velox::test::VectorTestBase {
 
     auto filePath = fmt::format("{}{}", outputDirectory, writeFileName);
     const int64_t fileSize = fileWriteInfos[0]["fileSize"].asInt();
-    auto split = exec::test::HiveConnectorSplitBuilder(filePath)
+    auto split = HiveConnectorSplitBuilder(filePath)
                      .fileFormat(dwio::common::FileFormat::PARQUET)
                      .length(fileSize)
                      .build();

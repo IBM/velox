@@ -15,10 +15,10 @@
  */
 #pragma once
 
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/connectors/hive/HiveDataSink.h"
-#include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveDataSink.h"
+#include "velox/connectors/hiveV2/TableHandle.h"
 #include "velox/dwio/dwrf/common/Config.h"
 #include "velox/dwio/dwrf/writer/FlushPolicy.h"
 #include "velox/exec/Operator.h"
@@ -131,7 +131,7 @@ class HiveConnectorTestBase : public OperatorTestBase {
       const std::optional<std::unordered_map<std::string, std::string>>&
           infoColumns = {});
 
-  static std::shared_ptr<connector::hive::HiveTableHandle> makeTableHandle(
+  static std::shared_ptr<connector::hive::HiveTableHandle> makeHiveTableHandle(
       common::SubfieldFilters subfieldFilters = {},
       const core::TypedExprPtr& remainingFilter = nullptr,
       const std::string& tableName = "hive_table",
@@ -152,7 +152,8 @@ class HiveConnectorTestBase : public OperatorTestBase {
   /// @param name Column name.
   /// @param type Column type.
   /// @param Required subfields of this column.
-  static std::unique_ptr<connector::hive::HiveColumnHandle> makeColumnHandle(
+  static std::unique_ptr<connector::hive::HiveColumnHandle>
+  makeHiveColumnHandle(
       const std::string& name,
       const TypePtr& type,
       const std::vector<std::string>& requiredSubfields);
@@ -161,7 +162,8 @@ class HiveConnectorTestBase : public OperatorTestBase {
   /// @param type Column type.
   /// @param type Hive type.
   /// @param Required subfields of this column.
-  static std::unique_ptr<connector::hive::HiveColumnHandle> makeColumnHandle(
+  static std::unique_ptr<connector::hive::HiveColumnHandle>
+  makeHiveColumnHandle(
       const std::string& name,
       const TypePtr& dataType,
       const TypePtr& hiveType,
@@ -174,7 +176,8 @@ class HiveConnectorTestBase : public OperatorTestBase {
   /// @param tableType Whether to create a new table, insert into an existing
   /// table, or write a temporary table.
   /// @param writeMode How to write to the target directory.
-  static std::shared_ptr<connector::hive::LocationHandle> makeLocationHandle(
+  static std::shared_ptr<connector::hive::LocationHandle>
+  makeHiveLocationHandle(
       std::string targetDirectory,
       std::optional<std::string> writeDirectory = std::nullopt,
       connector::hive::LocationHandle::TableType tableType =
@@ -224,24 +227,23 @@ class HiveConnectorTestBase : public OperatorTestBase {
           nullptr,
       const bool ensureFiles = false);
 
-  static std::shared_ptr<connector::hive::HiveColumnHandle> regularColumn(
+  static std::shared_ptr<connector::hive::HiveColumnHandle> regularHiveColumn(
       const std::string& name,
       const TypePtr& type);
 
-  static std::shared_ptr<connector::hive::HiveColumnHandle> partitionKey(
+  static std::shared_ptr<connector::hive::HiveColumnHandle> hivePartitionKey(
       const std::string& name,
       const TypePtr& type);
 
-  static std::shared_ptr<connector::hive::HiveColumnHandle> synthesizedColumn(
-      const std::string& name,
-      const TypePtr& type);
+  static std::shared_ptr<connector::hive::HiveColumnHandle>
+  synthesizedHiveColumn(const std::string& name, const TypePtr& type);
 
   static ColumnHandleMap allRegularColumns(const RowTypePtr& rowType) {
     ColumnHandleMap assignments;
     assignments.reserve(rowType->size());
     for (uint32_t i = 0; i < rowType->size(); ++i) {
       const auto& name = rowType->nameOf(i);
-      assignments[name] = regularColumn(name, rowType->childAt(i));
+      assignments[name] = regularHiveColumn(name, rowType->childAt(i));
     }
     return assignments;
   }

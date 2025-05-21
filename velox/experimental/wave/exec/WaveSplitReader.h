@@ -18,9 +18,9 @@
 
 #include "velox/common/io/IoStatistics.h"
 #include "velox/common/time/Timer.h"
-#include "velox/connectors/hive/FileHandle.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hiveV2/FileHandle.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveTableHandle.h"
 #include "velox/dwio/common/ScanSpec.h"
 #include "velox/dwio/common/Statistics.h"
 #include "velox/exec/Task.h"
@@ -30,16 +30,16 @@ namespace facebook::velox::wave {
 
 /// Parameters for a Wave Hive SplitReaderFactory.
 struct SplitReaderParams {
-  std ::shared_ptr<connector::hive::HiveTableHandle> hiveTableHandle;
+  std ::shared_ptr<connector::hiveV2::HiveTableHandle> hiveTableHandle;
   std::shared_ptr<common::ScanSpec> scanSpec;
   RowTypePtr readerOutputType;
   std::unordered_map<
       std::string,
-      std::shared_ptr<connector::hive::HiveColumnHandle>>* partitionKeys;
+      std::shared_ptr<connector::hiveV2::HiveColumnHandle>>* partitionKeys;
   FileHandleFactory* fileHandleFactory;
   folly::Executor* executor;
   const connector::ConnectorQueryCtx* connectorQueryCtx;
-  std::shared_ptr<connector::hive::HiveConfig> hiveConfig;
+  std::shared_ptr<connector::hiveV2::HiveConfig> hiveConfig;
   std::shared_ptr<io::IoStatistics> ioStats;
 };
 

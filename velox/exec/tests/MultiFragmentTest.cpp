@@ -16,7 +16,7 @@
 #include "folly/experimental/EventCount.h"
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/testutil/TestValue.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/OutputBufferManager.h"
@@ -24,12 +24,13 @@
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/RoundRobinPartitionFunction.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/SerializedPageUtil.h"
 
 using namespace facebook::velox::exec::test;
+using namespace facebook::velox::connector::hiveV2::test;
 
 using facebook::velox::common::testutil::TestValue;
 using facebook::velox::test::BatchMaker;
@@ -133,7 +134,7 @@ class MultiFragmentTest : public HiveConnectorTestBase,
       const std::vector<std::shared_ptr<TempFilePath>>& filePaths) {
     for (auto& filePath : filePaths) {
       auto split = exec::Split(
-          std::make_shared<connector::hive::HiveConnectorSplit>(
+          std::make_shared<connector::hiveV2::HiveConnectorSplit>(
               kHiveConnectorId,
               "file:" + filePath->getPath(),
               facebook::velox::dwio::common::FileFormat::DWRF),
@@ -896,7 +897,7 @@ TEST_P(MultiFragmentTest, noHivePartitionSkew) {
               {"c0"},
               numPartitions,
               false,
-              std::make_shared<connector::hive::HivePartitionFunctionSpec>(
+              std::make_shared<connector::hiveV2::HivePartitionFunctionSpec>(
                   numBuckets,
                   std::vector<column_index_t>{0},
                   std::vector<VectorPtr>{}),

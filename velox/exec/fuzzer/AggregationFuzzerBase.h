@@ -16,7 +16,7 @@
 #pragma once
 
 #include "velox/common/file/FileSystems.h"
-#include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
 #include "velox/dwio/dwrf/RegisterDwrfReader.h"
 #include "velox/dwio/dwrf/RegisterDwrfWriter.h"
 #include "velox/exec/Aggregate.h"
@@ -82,7 +82,7 @@ class AggregationFuzzerBase {
             pool_.get()} {
     filesystems::registerLocalFileSystem();
     connector::registerConnectorFactory(
-        std::make_shared<connector::hive::HiveConnectorFactory>());
+        std::make_shared<connector::hiveV2::HiveConnectorFactory>());
     registerHiveConnector(hiveConfigs);
     dwrf::registerDwrfReaderFactory();
     dwrf::registerDwrfWriterFactory();

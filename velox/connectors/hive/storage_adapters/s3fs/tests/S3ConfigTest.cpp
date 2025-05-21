@@ -36,7 +36,6 @@ TEST(S3ConfigTest, defaultConfig) {
   ASSERT_EQ(s3Config.iamRoleSessionName(), "velox-session");
   ASSERT_EQ(s3Config.payloadSigningPolicy(), "Never");
   ASSERT_EQ(s3Config.cacheKey("foo", config), "foo");
-  ASSERT_EQ(s3Config.bucket(), "");
 }
 
 TEST(S3ConfigTest, overrideConfig) {
@@ -51,12 +50,10 @@ TEST(S3ConfigTest, overrideConfig) {
       {S3Config::baseConfigKey(S3Config::Keys::kAccessKey), "access"},
       {S3Config::baseConfigKey(S3Config::Keys::kSecretKey), "secret"},
       {S3Config::baseConfigKey(S3Config::Keys::kIamRole), "iam"},
-      {S3Config::baseConfigKey(S3Config::Keys::kIamRoleSessionName), "velox"},
-      {S3Config::baseConfigKey(S3Config::Keys::kCredentialsProvider),
-       "my-credentials-provider"}};
+      {S3Config::baseConfigKey(S3Config::Keys::kIamRoleSessionName), "velox"}};
   auto configBase =
       std::make_shared<config::ConfigBase>(std::move(configFromFile));
-  auto s3Config = S3Config("bucket", configBase);
+  auto s3Config = S3Config("", configBase);
   ASSERT_EQ(s3Config.useVirtualAddressing(), false);
   ASSERT_EQ(s3Config.useSSL(), false);
   ASSERT_EQ(s3Config.useInstanceCredentials(), true);
@@ -69,8 +66,6 @@ TEST(S3ConfigTest, overrideConfig) {
   ASSERT_EQ(s3Config.payloadSigningPolicy(), "RequestDependent");
   ASSERT_EQ(s3Config.cacheKey("foo", configBase), "endpoint-foo");
   ASSERT_EQ(s3Config.cacheKey("bar", configBase), "endpoint-bar");
-  ASSERT_EQ(s3Config.bucket(), "bucket");
-  ASSERT_EQ(s3Config.credentialsProvider(), "my-credentials-provider");
 }
 
 TEST(S3ConfigTest, overrideBucketConfig) {
@@ -91,11 +86,7 @@ TEST(S3ConfigTest, overrideBucketConfig) {
       {S3Config::bucketConfigKey(S3Config::Keys::kSecretKey, bucket),
        "bucket-secret"},
       {S3Config::baseConfigKey(S3Config::Keys::kIamRole), "iam"},
-      {S3Config::baseConfigKey(S3Config::Keys::kIamRoleSessionName), "velox"},
-      {S3Config::baseConfigKey(S3Config::Keys::kCredentialsProvider),
-       "my-credentials-provider"},
-      {S3Config::bucketConfigKey(S3Config::Keys::kCredentialsProvider, bucket),
-       "override-credentials-provider"}};
+      {S3Config::baseConfigKey(S3Config::Keys::kIamRoleSessionName), "velox"}};
   auto configBase =
       std::make_shared<config::ConfigBase>(std::move(bucketConfigFromFile));
   auto s3Config = S3Config(bucket, configBase);
@@ -114,7 +105,6 @@ TEST(S3ConfigTest, overrideBucketConfig) {
       s3Config.cacheKey(bucket, configBase),
       "bucket.s3-region.amazonaws.com-bucket");
   ASSERT_EQ(s3Config.cacheKey("foo", configBase), "endpoint-foo");
-  ASSERT_EQ(s3Config.credentialsProvider(), "override-credentials-provider");
 }
 
 } // namespace

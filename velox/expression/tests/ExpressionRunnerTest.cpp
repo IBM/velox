@@ -20,7 +20,7 @@
 #include <gtest/gtest.h>
 #include "velox/common/base/Fs.h"
 #include "velox/common/file/FileSystems.h"
-#include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
 #include "velox/dwio/dwrf/RegisterDwrfWriter.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
 #include "velox/exec/fuzzer/PrestoQueryRunner.h"
@@ -286,7 +286,7 @@ int main(int argc, char** argv) {
 
   filesystems::registerLocalFileSystem();
   connector::registerConnectorFactory(
-      std::make_shared<connector::hive::HiveConnectorFactory>());
+      std::make_shared<connector::hiveV2::HiveConnectorFactory>());
   exec::test::registerHiveConnector({});
   dwrf::registerDwrfWriterFactory();
 

@@ -15,10 +15,18 @@ velox_add_library(velox_connector Connector.cpp)
 
 velox_link_libraries(velox_connector velox_common_config velox_vector)
 
+add_subdirectory(hive_common)
 add_subdirectory(fuzzer)
 
+message(STATUS "VELOX_ENABLE_HIVE_CONNECTOR ${VELOX_ENABLE_HIVE_CONNECTOR}")
+# hive and hiveV2 cannot be added at the same time
 if(${VELOX_ENABLE_HIVE_CONNECTOR})
-  add_subdirectory(hive)
+  add_subdirectory(hiveV2)
+#  add_subdirectory(hive)
+endif()
+
+if(${VELOX_ENABLE_ICEBERG_CONNECTOR})
+  add_subdirectory(iceberg)
 endif()
 
 if(${VELOX_ENABLE_TPCH_CONNECTOR})

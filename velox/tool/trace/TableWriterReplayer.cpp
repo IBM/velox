@@ -28,12 +28,12 @@ using namespace facebook::velox::exec::test;
 namespace facebook::velox::tool::trace {
 namespace {
 
-std::shared_ptr<connector::hive::HiveInsertTableHandle>
+std::shared_ptr<connector::hiveV2::HiveInsertTableHandle>
 makeHiveInsertTableHandle(
     const core::TableWriteNode* node,
     std::string targetDir) {
   const auto tracedHandle =
-      std::dynamic_pointer_cast<connector::hive::HiveInsertTableHandle>(
+      std::dynamic_pointer_cast<connector::hiveV2::HiveInsertTableHandle>(
           node->insertTableHandle()->connectorInsertTableHandle());
   const auto inputColumns = tracedHandle->inputColumns();
   const auto compressionKind =
@@ -41,16 +41,16 @@ makeHiveInsertTableHandle(
   const auto storageFormat = tracedHandle->storageFormat();
   const auto serdeParameters = tracedHandle->serdeParameters();
   const auto writerOptions = tracedHandle->writerOptions();
-  return std::make_shared<connector::hive::HiveInsertTableHandle>(
+  return std::make_shared<connector::hiveV2::HiveInsertTableHandle>(
       inputColumns,
-      std::make_shared<connector::hive::LocationHandle>(
+      std::make_shared<connector::hiveV2::LocationHandle>(
           targetDir,
           targetDir,
-          connector::hive::LocationHandle::TableType::kNew),
+          connector::hiveV2::LocationHandle::TableType::kNew),
       storageFormat,
       tracedHandle->bucketProperty() == nullptr
           ? nullptr
-          : std::make_shared<connector::hive::HiveBucketProperty>(
+          : std::make_shared<connector::hiveV2::HiveBucketProperty>(
                 *tracedHandle->bucketProperty()),
       compressionKind,
       std::unordered_map<std::string, std::string>{},

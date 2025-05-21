@@ -14,14 +14,16 @@
  * limitations under the License.
  */
 #include "velox/exec/OutputBufferManager.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
+//using namespace facebook::velox::exec::test::OperatorTestBase;
+using namespace facebook::velox::connector::hiveV2::test;
 
-class LimitTest : public HiveConnectorTestBase {};
+class LimitTest : public connector::hiveV2::test::HiveConnectorTestBase {};
 
 TEST_F(LimitTest, basic) {
   vector_size_t batchSize = 1'000;

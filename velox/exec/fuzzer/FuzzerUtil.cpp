@@ -17,8 +17,8 @@
 #include <re2/re2.h>
 #include <filesystem>
 #include "velox/common/memory/SharedArbitrator.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/dwio/catalog/fbhive/FileUtils.h"
 #include "velox/dwio/dwrf/writer/Writer.h"
 #include "velox/exec/fuzzer/DuckQueryRunner.h"
@@ -136,7 +136,7 @@ std::shared_ptr<connector::ConnectorSplit> makeConnectorSplit(
   if (tableBucketNumber.has_value()) {
     infoColumns["$bucket"] = std::to_string(*tableBucketNumber);
   }
-  return std::make_shared<connector::hive::HiveConnectorSplit>(
+  return std::make_shared<connector::hiveV2::HiveConnectorSplit>(
       kHiveConnectorId,
       filePath,
       dwio::common::FileFormat::DWRF,
@@ -367,13 +367,13 @@ void registerHiveConnector(
     const std::unordered_map<std::string, std::string>& hiveConfigs) {
   auto configs = hiveConfigs;
   if (!connector::hasConnectorFactory(
-          connector::hive::HiveConnectorFactory::kHiveConnectorName)) {
+          connector::hiveV2::HiveConnectorFactory::kHiveConnectorName)) {
     connector::registerConnectorFactory(
-        std::make_shared<connector::hive::HiveConnectorFactory>());
+        std::make_shared<connector::hiveV2::HiveConnectorFactory>());
   }
   auto hiveConnector =
       connector::getConnectorFactory(
-          connector::hive::HiveConnectorFactory::kHiveConnectorName)
+          connector::hiveV2::HiveConnectorFactory::kHiveConnectorName)
           ->newConnector(
               kHiveConnectorId,
               std::make_shared<config::ConfigBase>(std::move(configs)));

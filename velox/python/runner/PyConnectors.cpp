@@ -15,7 +15,7 @@
  */
 
 #include "velox/python/runner/PyConnectors.h"
-#include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
 #include "velox/connectors/tpch/TpchConnector.h"
 
 namespace facebook::velox::py {
@@ -48,7 +48,7 @@ void registerConnector(
 void registerHive(
     const std::string& connectorId,
     std::unordered_map<std::string, std::string> configs) {
-  registerConnector<connector::hive::HiveConnectorFactory>(
+  registerConnector<connector::hiveV2::HiveConnectorFactory>(
       connectorId, std::move(configs));
 }
 

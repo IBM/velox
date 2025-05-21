@@ -19,14 +19,14 @@
 
 #include "velox/exec/Cursor.h"
 #include "velox/exec/PlanNodeStats.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 
 DEFINE_int64(fuzzer_seed, 99887766, "Seed for random input dataset generator");
 
 using namespace facebook::velox;
-using namespace facebook::velox::connector::hive;
+using namespace facebook::velox::connector::hiveV2;
 using namespace facebook::velox::exec::test;
 
 static constexpr int32_t kNumVectors = 7'000;
@@ -35,7 +35,7 @@ static constexpr int32_t kRowsPerVector = 4'000;
 namespace {
 
 // Compare performance of sum(x) with equivalent reduce_agg(x,..).
-class TwoStringKeysBenchmark : public HiveConnectorTestBase {
+class TwoStringKeysBenchmark : public connector::hiveV2::test::HiveConnectorTestBase {
  public:
   TwoStringKeysBenchmark() {
     HiveConnectorTestBase::SetUp();

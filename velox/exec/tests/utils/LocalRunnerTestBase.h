@@ -16,11 +16,13 @@
 
 #pragma once
 
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/runner/LocalRunner.h"
 
 namespace facebook::velox::exec::test {
+
+using namespace facebook::velox::connector::hiveV2::test;
 
 struct TableSpec {
   std::string name;

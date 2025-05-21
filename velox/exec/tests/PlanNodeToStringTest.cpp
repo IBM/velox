@@ -15,7 +15,7 @@
  */
 
 #include "velox/exec/WindowFunction.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
@@ -646,7 +646,7 @@ TEST_F(PlanNodeToStringTest, partitionedOutput) {
         plan->toString(true, false));
 
     auto hiveSpec =
-        std::make_shared<connector::hive::HivePartitionFunctionSpec>(
+        std::make_shared<connector::hiveV2::HivePartitionFunctionSpec>(
             4,
             std::vector<int>{0, 1, 0, 1},
             std::vector<column_index_t>{1, 2},

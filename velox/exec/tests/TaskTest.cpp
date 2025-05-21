@@ -23,13 +23,13 @@
 #include "velox/common/memory/SharedArbitrator.h"
 #include "velox/common/memory/tests/SharedArbitratorTestUtil.h"
 #include "velox/common/testutil/TestValue.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/exec/Cursor.h"
 #include "velox/exec/OutputBufferManager.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/Values.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
@@ -461,7 +461,7 @@ class TestBadMemoryTranslator : public exec::Operator::PlanNodeTranslator {
 };
 } // namespace
 
-class TaskTest : public HiveConnectorTestBase {
+class TaskTest : public connector::hiveV2::test::HiveConnectorTestBase {
  protected:
   static std::pair<std::shared_ptr<exec::Task>, std::vector<RowVectorPtr>>
   executeSerial(
@@ -552,7 +552,7 @@ TEST_F(TaskTest, toJson) {
 }
 
 TEST_F(TaskTest, wrongPlanNodeForSplit) {
-  auto connectorSplit = std::make_shared<connector::hive::HiveConnectorSplit>(
+  auto connectorSplit = std::make_shared<connector::hiveV2::HiveConnectorSplit>(
       "test",
       "file:/tmp/abc",
       facebook::velox::dwio::common::FileFormat::DWRF,

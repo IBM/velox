@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 #include "velox/exec/PartitionFunction.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
@@ -38,12 +38,12 @@ class PlanNodeSerdeTest : public testing::Test,
 
     Type::registerSerDe();
     common::Filter::registerSerDe();
-    connector::hive::HiveTableHandle::registerSerDe();
-    connector::hive::LocationHandle::registerSerDe();
-    connector::hive::HiveColumnHandle::registerSerDe();
-    connector::hive::HiveInsertTableHandle::registerSerDe();
-    connector::hive::HiveInsertFileNameGenerator::registerSerDe();
-    connector::hive::registerHivePartitionFunctionSerDe();
+    connector::hiveV2::HiveTableHandle::registerSerDe();
+    connector::hiveV2::LocationHandle::registerSerDe();
+    connector::hiveV2::HiveColumnHandle::registerSerDe();
+    connector::hiveV2::HiveInsertTableHandle::registerSerDe();
+    connector::hiveV2::HiveInsertFileNameGenerator::registerSerDe();
+    connector::hiveV2::registerHivePartitionFunctionSerDe();
     core::PlanNode::registerSerDe();
     core::ITypedExpr::registerSerDe();
     registerPartitionFunctionSerDe();

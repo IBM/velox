@@ -142,6 +142,7 @@ HiveDataSource::HiveDataSource(
     randomSkip_ = std::make_shared<random::RandomSkipTracker>(sampleRate);
   }
 
+  std::vector<common::Subfield> remainingFilterSubfields;
   if (remainingFilter) {
     remainingFilterExprSet_ = expressionEvaluator_->compile(remainingFilter);
     auto& remainingFilterExpr = remainingFilterExprSet_->expr(0);
@@ -163,13 +164,13 @@ HiveDataSource::HiveDataSource(
       readColumnNames.push_back(input->field());
       readColumnTypes.push_back(input->type());
     }
-    remainingFilterSubfields_ = remainingFilterExpr->extractSubfields();
+    remainingFilterSubfields = remainingFilterExpr->extractSubfields();
     if (VLOG_IS_ON(1)) {
       VLOG(1) << fmt::format(
           "Extracted subfields from remaining filter: [{}]",
-          fmt::join(remainingFilterSubfields_, ", "));
+          fmt::join(remainingFilterSubfields, ", "));
     }
-    for (auto& subfield : remainingFilterSubfields_) {
+    for (auto& subfield : remainingFilterSubfields) {
       const auto& name = getColumnName(subfield);
       auto it = subfields_.find(name);
       if (it != subfields_.end()) {
@@ -218,7 +219,9 @@ std::unique_ptr<SplitReader> HiveDataSource::createSplitReader() {
       fsStats_,
       fileHandleFactory_,
       executor_,
-      scanSpec_);
+      scanSpec_,
+      expressionEvaluator_,
+      totalRemainingFilterTime_);
 }
 
 std::unique_ptr<HivePartitionFunction> HiveDataSource::setupBucketConversion() {
@@ -320,8 +323,10 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   }
 
   splitReader_ = createSplitReader();
+
   // Split reader subclasses may need to use the reader options in prepareSplit
   // so we initialize it beforehand.
+
   splitReader_->configureReaderOptions(randomSkip_);
   splitReader_->prepareSplit(metadataFilter_, runtimeStats_);
   readerOutputType_ = splitReader_->readerOutputType();
@@ -615,6 +620,7 @@ std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
 void HiveDataSource::registerWaveDelegateHook(WaveDelegateHookFunction hook) {
   waveDelegateHook_ = hook;
 }
+
 std::shared_ptr<wave::WaveDataSource> toWaveDataSource();
 
 } // namespace facebook::velox::connector::hive

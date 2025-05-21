@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
+#include "velox/connectors/hiveV2/HiveTableHandle.h"
 #include "velox/core/PlanNode.h"
 #include "velox/dwio/common/Options.h"
 #include "velox/substrait/SubstraitToVeloxExpr.h"

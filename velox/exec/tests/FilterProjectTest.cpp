@@ -13,10 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/OperatorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/parse/Expressions.h"
@@ -24,10 +24,11 @@
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::exec::test;
+//using namespace facebook::velox::connector::hiveV2::test;
 
 using facebook::velox::test::BatchMaker;
 
-class FilterProjectTest : public HiveConnectorTestBase {
+class FilterProjectTest : public connector::hiveV2::test::HiveConnectorTestBase {
  protected:
   void SetUp() override {
     HiveConnectorTestBase::SetUp();
@@ -44,7 +45,7 @@ class FilterProjectTest : public HiveConnectorTestBase {
                     .planNode();
     ASSERT_TRUE(filterNode->supportsBarrier());
 
-    assertQuery(plan, "SELECT * FROM tmp WHERE " + filter);
+    OperatorTestBase::assertQuery(plan, "SELECT * FROM tmp WHERE " + filter);
   }
 
   void assertProject(const std::vector<RowVectorPtr>& vectors) {
@@ -56,7 +57,7 @@ class FilterProjectTest : public HiveConnectorTestBase {
                     .planNode();
     ASSERT_TRUE(projectNode->supportsBarrier());
 
-    auto task = assertQuery(plan, "SELECT c0, c1, c0 + c1 FROM tmp");
+    auto task = OperatorTestBase::assertQuery(plan, "SELECT c0, c1, c0 + c1 FROM tmp");
 
     // A quick sanity check for memory usage reporting. Check that peak total
     // memory usage for the project node is > 0.
@@ -100,13 +101,14 @@ TEST_F(FilterProjectTest, filterOverDictionary) {
     std::vector<VectorPtr> newChildren = vector->children();
     newChildren[1] = BaseVector::wrapInDictionary(
         BufferPtr(nullptr), indices, vector->size(), vector->childAt(1));
-    vectors.push_back(std::make_shared<RowVector>(
-        pool_.get(),
-        rowType_,
-        BufferPtr(nullptr),
-        vector->size(),
-        newChildren,
-        0 /*nullCount*/));
+    vectors.push_back(
+        std::make_shared<RowVector>(
+            pool_.get(),
+            rowType_,
+            BufferPtr(nullptr),
+            vector->size(),
+            newChildren,
+            0 /*nullCount*/));
   }
   createDuckDbTable(vectors);
 
@@ -122,13 +124,14 @@ TEST_F(FilterProjectTest, filterOverConstant) {
     std::vector<VectorPtr> newChildren = vector->children();
     newChildren[1] =
         BaseVector::wrapInConstant(vector->size(), 7, vector->childAt(1));
-    vectors.push_back(std::make_shared<RowVector>(
-        pool_.get(),
-        rowType_,
-        BufferPtr(nullptr),
-        vector->size(),
-        newChildren,
-        0 /*nullCount*/));
+    vectors.push_back(
+        std::make_shared<RowVector>(
+            pool_.get(),
+            rowType_,
+            BufferPtr(nullptr),
+            vector->size(),
+            newChildren,
+            0 /*nullCount*/));
   }
   createDuckDbTable(vectors);
 
@@ -163,13 +166,14 @@ TEST_F(FilterProjectTest, projectOverDictionary) {
     std::vector<VectorPtr> newChildren = vector->children();
     newChildren[1] = BaseVector::wrapInDictionary(
         BufferPtr(nullptr), indices, vector->size(), vector->childAt(1));
-    vectors.push_back(std::make_shared<RowVector>(
-        pool_.get(),
-        rowType_,
-        BufferPtr(nullptr),
-        vector->size(),
-        newChildren,
-        0 /*nullCount*/));
+    vectors.push_back(
+        std::make_shared<RowVector>(
+            pool_.get(),
+            rowType_,
+            BufferPtr(nullptr),
+            vector->size(),
+            newChildren,
+            0 /*nullCount*/));
   }
   createDuckDbTable(vectors);
 
@@ -185,13 +189,14 @@ TEST_F(FilterProjectTest, projectOverConstant) {
     std::vector<VectorPtr> newChildren = vector->children();
     newChildren[1] =
         BaseVector::wrapInConstant(vector->size(), 7, vector->childAt(1));
-    vectors.push_back(std::make_shared<RowVector>(
-        pool_.get(),
-        rowType_,
-        BufferPtr(nullptr),
-        vector->size(),
-        newChildren,
-        0 /*nullCount*/));
+    vectors.push_back(
+        std::make_shared<RowVector>(
+            pool_.get(),
+            rowType_,
+            BufferPtr(nullptr),
+            vector->size(),
+            newChildren,
+            0 /*nullCount*/));
   }
   createDuckDbTable(vectors);
 
@@ -222,7 +227,7 @@ TEST_F(FilterProjectTest, projectOverLazy) {
                   .values({lazyVectors})
                   .project({"c0 > 0 AND c1 > 0.0", "c1 + 5.2"})
                   .planNode();
-  assertQuery(plan, "SELECT c0 > 0 AND c1 > 0, c1 + 5.2 FROM tmp");
+  OperatorTestBase::assertQuery(plan, "SELECT c0 > 0 AND c1 > 0, c1 + 5.2 FROM tmp");
 }
 
 TEST_F(FilterProjectTest, filterProject) {
@@ -240,7 +245,7 @@ TEST_F(FilterProjectTest, filterProject) {
                   .project({"c0", "c1", "c0 + c1"})
                   .planNode();
 
-  assertQuery(plan, "SELECT c0, c1, c0 + c1 FROM tmp WHERE c1 % 10 > 0");
+  OperatorTestBase::assertQuery(plan, "SELECT c0, c1, c0 + c1 FROM tmp WHERE c1 % 10 > 0");
 }
 
 TEST_F(FilterProjectTest, dereference) {
@@ -257,7 +262,7 @@ TEST_F(FilterProjectTest, dereference) {
                   .project({"row_constructor(c1, c2) AS c1_c2"})
                   .project({"c1_c2.c1", "c1_c2.c2"})
                   .planNode();
-  assertQuery(plan, "SELECT c1, c2 FROM tmp");
+  OperatorTestBase::assertQuery(plan, "SELECT c1, c2 FROM tmp");
 
   plan = PlanBuilder()
              .values(vectors)
@@ -265,7 +270,7 @@ TEST_F(FilterProjectTest, dereference) {
              .filter("c1_c2.c1 % 10 = 5")
              .project({"c1_c2.c1", "c1_c2.c2"})
              .planNode();
-  assertQuery(plan, "SELECT c1, c2 FROM tmp WHERE c1 % 10 = 5");
+  OperatorTestBase::assertQuery(plan, "SELECT c1, c2 FROM tmp WHERE c1 % 10 = 5");
 }
 
 TEST_F(FilterProjectTest, allFailedOrPassed) {
@@ -309,7 +314,7 @@ TEST_F(FilterProjectTest, filterProjectFused) {
                   .project({"c0", "c1", "e1", "e2"})
                   .planNode();
 
-  assertQuery(
+  OperatorTestBase::assertQuery(
       plan,
       "SELECT c0, c1, c0 %100 + c1 % 50, c0 % 100 FROM tmp WHERE c0 % 10 < 5");
 }
@@ -336,7 +341,7 @@ TEST_F(FilterProjectTest, projectAndIdentityOverLazy) {
                   .values({lazyVectors})
                   .project({"c0 < 10 AND c1 < 10", "c1"})
                   .planNode();
-  assertQuery(plan, "SELECT c0 < 10 AND c1 < 10, c1 FROM tmp");
+  OperatorTestBase::assertQuery(plan, "SELECT c0 < 10 AND c1 < 10, c1 FROM tmp");
 }
 
 // Verify the optimization of avoiding copy in null propagation does not break

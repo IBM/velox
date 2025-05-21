@@ -21,7 +21,7 @@
 
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/file/FileSystems.h"
-#include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hiveV2/HiveConnectorSplit.h"
 #include "velox/exec/OperatorTraceReader.h"
 #include "velox/exec/OperatorTraceWriter.h"
 #include "velox/exec/PartitionFunction.h"
@@ -31,12 +31,13 @@
 #include "velox/exec/TraceUtil.h"
 #include "velox/exec/tests/utils/ArbitratorTestUtil.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/serializers/PrestoSerializer.h"
 
 using namespace facebook::velox::exec::test;
+using namespace facebook::velox::connector::hiveV2::test;
 
 namespace facebook::velox::exec::trace::test {
 class OperatorTraceTest : public HiveConnectorTestBase {
@@ -50,12 +51,12 @@ class OperatorTraceTest : public HiveConnectorTestBase {
     }
     Type::registerSerDe();
     common::Filter::registerSerDe();
-    connector::hive::HiveTableHandle::registerSerDe();
-    connector::hive::LocationHandle::registerSerDe();
-    connector::hive::HiveColumnHandle::registerSerDe();
-    connector::hive::HiveInsertTableHandle::registerSerDe();
-    connector::hive::HiveConnectorSplit::registerSerDe();
-    connector::hive::HiveInsertFileNameGenerator::registerSerDe();
+    connector::hiveV2::HiveTableHandle::registerSerDe();
+    connector::hiveV2::LocationHandle::registerSerDe();
+    connector::hiveV2::HiveColumnHandle::registerSerDe();
+    connector::hiveV2::HiveInsertTableHandle::registerSerDe();
+    connector::hiveV2::HiveConnectorSplit::registerSerDe();
+    connector::hiveV2::HiveInsertFileNameGenerator::registerSerDe();
     core::PlanNode::registerSerDe();
     core::ITypedExpr::registerSerDe();
     registerPartitionFunctionSerDe();
@@ -793,8 +794,8 @@ TEST_F(OperatorTraceTest, traceSplitRoundTrip) {
   for (int i = 0; i < numSplits; ++i) {
     folly::dynamic splitInfoObj = folly::parseJson(actualSplits[i]);
     const auto actualSplit = exec::Split{
-        std::const_pointer_cast<connector::hive::HiveConnectorSplit>(
-            ISerializable::deserialize<connector::hive::HiveConnectorSplit>(
+        std::const_pointer_cast<connector::hiveV2::HiveConnectorSplit>(
+            ISerializable::deserialize<connector::hiveV2::HiveConnectorSplit>(
                 splitInfoObj))};
     ASSERT_FALSE(actualSplit.hasGroup());
     ASSERT_TRUE(actualSplit.hasConnectorSplit());
@@ -882,8 +883,8 @@ TEST_F(OperatorTraceTest, traceSplitPartial) {
   for (int i = 0; i < numSplits; ++i) {
     folly::dynamic splitInfoObj = folly::parseJson(actualSplits[i]);
     const auto actualSplit = exec::Split{
-        std::const_pointer_cast<connector::hive::HiveConnectorSplit>(
-            ISerializable::deserialize<connector::hive::HiveConnectorSplit>(
+        std::const_pointer_cast<connector::hiveV2::HiveConnectorSplit>(
+            ISerializable::deserialize<connector::hiveV2::HiveConnectorSplit>(
                 splitInfoObj))};
     ASSERT_FALSE(actualSplit.hasGroup());
     ASSERT_TRUE(actualSplit.hasConnectorSplit());
@@ -972,8 +973,8 @@ TEST_F(OperatorTraceTest, traceSplitCorrupted) {
   for (int i = 0; i < numSplits; ++i) {
     folly::dynamic splitInfoObj = folly::parseJson(actualSplits[i]);
     const auto actualSplit = exec::Split{
-        std::const_pointer_cast<connector::hive::HiveConnectorSplit>(
-            ISerializable::deserialize<connector::hive::HiveConnectorSplit>(
+        std::const_pointer_cast<connector::hiveV2::HiveConnectorSplit>(
+            ISerializable::deserialize<connector::hiveV2::HiveConnectorSplit>(
                 splitInfoObj))};
     ASSERT_FALSE(actualSplit.hasGroup());
     ASSERT_TRUE(actualSplit.hasConnectorSplit());

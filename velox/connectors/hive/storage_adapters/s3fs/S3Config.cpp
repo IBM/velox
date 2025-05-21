@@ -39,8 +39,7 @@ std::string S3Config::cacheKey(
 
 S3Config::S3Config(
     std::string_view bucket,
-    const std::shared_ptr<const config::ConfigBase> properties)
-    : bucket_(bucket) {
+    const std::shared_ptr<const config::ConfigBase> properties) {
   for (int key = static_cast<int>(Keys::kBegin);
        key < static_cast<int>(Keys::kEnd);
        key++) {

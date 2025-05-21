@@ -17,7 +17,7 @@
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 
@@ -29,7 +29,7 @@ using namespace facebook::velox::exec::test;
 
 using facebook::velox::exec::test::PlanBuilder;
 
-class PrintPlanWithStatsTest : public HiveConnectorTestBase {};
+class PrintPlanWithStatsTest : public connector::hiveV2::test::HiveConnectorTestBase {};
 
 struct ExpectedLine {
   std::string line;

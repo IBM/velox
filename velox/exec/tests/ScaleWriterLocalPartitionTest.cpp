@@ -19,7 +19,7 @@
 #include "velox/core/PlanNode.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
-#include "velox/exec/tests/utils/HiveConnectorTestBase.h"
+#include "velox/connectors/hiveV2/tests/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
 
@@ -436,7 +436,7 @@ class FakeWriteNodeFactory : public Operator::PlanNodeTranslator {
   const std::shared_ptr<TestExchangeController> testController_;
 };
 
-class ScaleWriterLocalPartitionTest : public HiveConnectorTestBase {
+class ScaleWriterLocalPartitionTest : public connector::hiveV2::test::HiveConnectorTestBase {
  protected:
   void SetUp() override {
     HiveConnectorTestBase::SetUp();

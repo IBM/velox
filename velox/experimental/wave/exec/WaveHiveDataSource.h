@@ -15,7 +15,7 @@
  */
 
 #pragma once
-#include "velox/connectors/hive/HiveDataSource.h"
+#include "velox/connectors/hiveV2/HiveDataSource.h"
 #include "velox/experimental/wave/exec/WaveDataSource.h"
 #include "velox/experimental/wave/exec/WaveSplitReader.h"
 
@@ -24,16 +24,16 @@ namespace facebook::velox::wave {
 class WaveHiveDataSource : public WaveDataSource {
  public:
   WaveHiveDataSource(
-      const std::shared_ptr<connector::hive::HiveTableHandle>& hiveTableHandle,
+      const std::shared_ptr<connector::hiveV2::HiveTableHandle>& hiveTableHandle,
       const std::shared_ptr<common::ScanSpec>& scanSpec,
       const RowTypePtr& readerOutputType,
       std::unordered_map<
           std::string,
-          std::shared_ptr<connector::hive::HiveColumnHandle>>* partitionKeys,
+          std::shared_ptr<connector::hiveV2::HiveColumnHandle>>* partitionKeys,
       FileHandleFactory* fileHandleFactory,
       folly::Executor* executor,
       const connector::ConnectorQueryCtx* connectorQueryCtx,
-      const std::shared_ptr<connector::hive::HiveConfig>& hiveConfig,
+      const std::shared_ptr<connector::hiveV2::HiveConfig>& hiveConfig,
       const std::shared_ptr<io::IoStatistics>& ioStats,
       const exec::ExprSet* remainingFilter,
       std::shared_ptr<common::MetadataFilter> metadataFilter);

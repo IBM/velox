@@ -15,8 +15,8 @@
  */
 
 #include "velox/exec/tests/utils/PlanBuilder.h"
-#include "velox/connectors/hive/HiveConnector.h"
-#include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hiveV2/HiveConnector.h"
+#include "velox/connectors/hiveV2/TableHandle.h"
 #include "velox/connectors/tpch/TpchConnector.h"
 #include "velox/duckdb/conversion/DuckParser.h"
 #include "velox/exec/Aggregate.h"
@@ -34,7 +34,8 @@
 
 using namespace facebook::velox;
 using namespace facebook::velox::connector;
-using namespace facebook::velox::connector::hive;
+using namespace facebook::velox::connector::hiveV2;
+
 
 namespace facebook::velox::exec::test {
 namespace {
@@ -82,6 +83,7 @@ PlanBuilder& PlanBuilder::tableScan(
       .subfieldFilters(subfieldFilters)
       .remainingFilter(remainingFilter)
       .dataColumns(dataColumns)
+      .assignments(assignments)
       .endTableScan();
 }
 
@@ -271,7 +273,7 @@ core::PlanNodePtr PlanBuilder::TableWriterBuilder::build(core::PlanNodeId id) {
   // columnHandles, bucketProperty and locationHandle.
   if (!insertHandle_) {
     // Create column handles.
-    std::vector<std::shared_ptr<const connector::hive::HiveColumnHandle>>
+    std::vector<std::shared_ptr<const connector::hiveV2::HiveColumnHandle>>
         columnHandles;
     for (auto i = 0; i < outputType->size(); ++i) {
       const auto column = outputType->nameOf(i);
@@ -279,19 +281,19 @@ core::PlanNodePtr PlanBuilder::TableWriterBuilder::build(core::PlanNodeId id) {
           std::find(partitionBy_.begin(), partitionBy_.end(), column) !=
           partitionBy_.end();
       columnHandles.push_back(
-          std::make_shared<connector::hive::HiveColumnHandle>(
+          std::make_shared<connector::hiveV2::HiveColumnHandle>(
               column,
               isPartitionKey
-                  ? connector::hive::HiveColumnHandle::ColumnType::kPartitionKey
-                  : connector::hive::HiveColumnHandle::ColumnType::kRegular,
+                  ? connector::hiveV2::HiveColumnHandle::ColumnType::kPartitionKey
+                  : connector::hiveV2::HiveColumnHandle::ColumnType::kRegular,
               outputType->childAt(i),
               outputType->childAt(i)));
     }
 
-    auto locationHandle = std::make_shared<connector::hive::LocationHandle>(
+    auto locationHandle = std::make_shared<connector::hiveV2::LocationHandle>(
         outputDirectoryPath_,
         outputDirectoryPath_,
-        connector::hive::LocationHandle::TableType::kNew,
+        connector::hiveV2::LocationHandle::TableType::kNew,
         outputFileName_);
 
     std::shared_ptr<HiveBucketProperty> bucketProperty;
@@ -300,7 +302,7 @@ core::PlanNodePtr PlanBuilder::TableWriterBuilder::build(core::PlanNodeId id) {
           outputType, bucketCount_, bucketedBy_, sortBy_);
     }
 
-    auto hiveHandle = std::make_shared<connector::hive::HiveInsertTableHandle>(
+    auto hiveHandle = std::make_shared<connector::hiveV2::HiveInsertTableHandle>(
         columnHandles,
         locationHandle,
         fileFormat_,
@@ -327,8 +329,7 @@ core::PlanNodePtr PlanBuilder::TableWriterBuilder::build(core::PlanNodeId id) {
         aggregatesAndNames.aggregates,
         false,
         upstreamNode);
-    VELOX_CHECK_EQ(
-        aggregationNode->supportsBarrier(), aggregationNode->isPreGrouped());
+    VELOX_CHECK(!aggregationNode->supportsBarrier());
   }
 
   const auto writeNode = std::make_shared<core::TableWriteNode>(
@@ -786,8 +787,7 @@ core::PlanNodePtr PlanBuilder::createIntermediateOrFinalAggregation(
       aggregates,
       partialAggNode->ignoreNullKeys(),
       planNode_);
-  VELOX_CHECK_EQ(
-      aggregationNode->supportsBarrier(), aggregationNode->isPreGrouped());
+  VELOX_CHECK(!aggregationNode->supportsBarrier());
   return aggregationNode;
 }
 
@@ -980,7 +980,7 @@ PlanBuilder& PlanBuilder::aggregation(
     }
   }
 
-  auto aggregationNode = std::make_shared<core::AggregationNode>(
+  planNode_ = std::make_shared<core::AggregationNode>(
       nextPlanNodeId(),
       step,
       fields(groupingKeys),
@@ -991,9 +991,7 @@ PlanBuilder& PlanBuilder::aggregation(
       groupId,
       ignoreNullKeys,
       planNode_);
-  VELOX_CHECK_EQ(
-      aggregationNode->supportsBarrier(), aggregationNode->isPreGrouped());
-  planNode_ = std::move(aggregationNode);
+  VELOX_CHECK(!planNode_->supportsBarrier());
   return *this;
 }
 
@@ -1005,7 +1003,7 @@ PlanBuilder& PlanBuilder::streamingAggregation(
     bool ignoreNullKeys) {
   auto aggregatesAndNames =
       createAggregateExpressionsAndNames(aggregates, masks, step);
-  auto aggregationNode = std::make_shared<core::AggregationNode>(
+  planNode_ = std::make_shared<core::AggregationNode>(
       nextPlanNodeId(),
       step,
       fields(groupingKeys),
@@ -1014,9 +1012,7 @@ PlanBuilder& PlanBuilder::streamingAggregation(
       aggregatesAndNames.aggregates,
       ignoreNullKeys,
       planNode_);
-  VELOX_CHECK_EQ(
-      aggregationNode->supportsBarrier(), aggregationNode->isPreGrouped());
-  planNode_ = std::move(aggregationNode);
+  VELOX_CHECK(!planNode_->supportsBarrier());
   return *this;
 }
 
@@ -1429,7 +1425,7 @@ PlanBuilder& PlanBuilder::localPartition(
 }
 
 PlanBuilder& PlanBuilder::localPartitionByBucket(
-    const std::shared_ptr<connector::hive::HiveBucketProperty>&
+    const std::shared_ptr<connector::hiveV2::HiveBucketProperty>&
         bucketProperty) {
   VELOX_CHECK_NOT_NULL(planNode_, "LocalPartition cannot be the source node");
   std::vector<column_index_t> bucketChannels;
@@ -1651,10 +1647,6 @@ PlanBuilder& PlanBuilder::nestedLoopJoin(
     core::JoinType joinType) {
   VELOX_CHECK_NOT_NULL(planNode_, "NestedLoopJoin cannot be the source node");
   auto resultType = concat(planNode_->outputType(), right->outputType());
-  if (isLeftSemiProjectJoin(joinType)) {
-    resultType = concat(resultType, ROW({"match"}, {BOOLEAN()}));
-  }
-
   auto outputType = extract(resultType, outputLayout);
 
   core::TypedExprPtr joinConditionExpr{};
@@ -1888,7 +1880,7 @@ PlanBuilder& PlanBuilder::indexLookupJoin(
       std::move(planNode_),
       right,
       std::move(outputType));
-  VELOX_CHECK(planNode_->supportsBarrier());
+  VELOX_CHECK(!planNode_->supportsBarrier());
   return *this;
 }
 
@@ -1932,7 +1924,7 @@ PlanBuilder& PlanBuilder::unnest(
       unnestNames,
       ordinalColumn,
       planNode_);
-  VELOX_CHECK(planNode_->supportsBarrier());
+  VELOX_CHECK(!planNode_->supportsBarrier());
   return *this;
 }
 
