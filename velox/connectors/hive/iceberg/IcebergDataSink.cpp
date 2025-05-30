@@ -17,16 +17,18 @@
 #include "velox/connectors/hive/iceberg/IcebergDataSink.h"
 #include "velox/common/base/Fs.h"
 #include "velox/connectors/hive/HiveConnectorUtil.h"
+#include "velox/connectors/hive/iceberg/DataFileStatsCollector.h"
 #include "velox/connectors/hive/iceberg/IcebergPartitionIdGenerator.h"
+#include "velox/dwio/common/SortingWriter.h"
 #ifdef VELOX_ENABLE_PARQUET
 #include "velox/dwio/parquet/writer/Writer.h"
 #endif
 #include "velox/exec/OperatorUtils.h"
+#include "velox/exec/SortBuffer.h"
 
 namespace facebook::velox::connector::hive::iceberg {
 
 namespace {
-
 
 #define WRITER_NON_RECLAIMABLE_SECTION_GUARD(index)       \
   memory::NonReclaimableSectionGuard nonReclaimableGuard( \
@@ -120,7 +122,7 @@ IcebergInsertTableHandle::IcebergInsertTableHandle(
     std::shared_ptr<const IcebergPartitionSpec> partitionSpec,
     memory::MemoryPool* pool,
     dwio::common::FileFormat tableStorageFormat,
-    std::shared_ptr<HiveBucketProperty> bucketProperty,
+    const std::vector<IcebergSortingColumn>& sortedBy,
     std::optional<common::CompressionKind> compressionKind,
     const std::unordered_map<std::string, std::string>& serdeParameters)
     : HiveInsertTableHandle(
@@ -129,7 +131,7 @@ IcebergInsertTableHandle::IcebergInsertTableHandle(
               inputColumns.end()),
           std::move(locationHandle),
           tableStorageFormat,
-          std::move(bucketProperty),
+          nullptr,
           compressionKind,
           serdeParameters,
           nullptr,
@@ -137,7 +139,8 @@ IcebergInsertTableHandle::IcebergInsertTableHandle(
           std::make_shared<const IcebergFileNameGenerator>()),
       partitionSpec_(std::move(partitionSpec)),
       columnTransforms_(
-          parsePartitionTransformSpecs(partitionSpec_->fields, pool)) {
+          parsePartitionTransformSpecs(partitionSpec_->fields, pool)),
+      sortedBy_(sortedBy) {
   VELOX_USER_CHECK(
       !inputColumns_.empty(),
       "Input columns cannot be empty for Iceberg tables.");
@@ -151,37 +154,37 @@ IcebergDataSink::IcebergDataSink(
     const ConnectorQueryCtx* connectorQueryCtx,
     CommitStrategy commitStrategy,
     const std::shared_ptr<const HiveConfig>& hiveConfig)
-: IcebergDataSink(
-     std::move(inputType),
-     insertTableHandle,
-     connectorQueryCtx,
-     commitStrategy,
-     hiveConfig,
-     [&insertTableHandle]() {
-       const auto& inputColumns = insertTableHandle->inputColumns();
-       const auto& partitionSpec = insertTableHandle->partitionSpec();
-       std::unordered_map<std::string, column_index_t> partitionKeyMap;
-       for (auto i = 0; i < inputColumns.size(); ++i) {
-         if (inputColumns[i]->isPartitionKey()) {
-           partitionKeyMap[inputColumns[i]->name()] = i;
-         }
-       }
-       std::vector<column_index_t> channels;
-       channels.reserve(partitionSpec->fields.size());
-       for (const auto& field : partitionSpec->fields) {
-         if (auto it = partitionKeyMap.find(field.name);
-             it != partitionKeyMap.end()) {
-           channels.push_back(it->second);
-         }
-       }
-       return channels;
-     }(),
-     [&insertTableHandle]() {
-       std::vector<column_index_t> channels(
-           insertTableHandle->inputColumns().size());
-       std::iota(channels.begin(), channels.end(), 0);
-       return channels;
-     }()) {}
+    : IcebergDataSink(
+          std::move(inputType),
+          insertTableHandle,
+          connectorQueryCtx,
+          commitStrategy,
+          hiveConfig,
+          [&insertTableHandle]() {
+            const auto& inputColumns = insertTableHandle->inputColumns();
+            const auto& partitionSpec = insertTableHandle->partitionSpec();
+            std::unordered_map<std::string, column_index_t> partitionKeyMap;
+            for (auto i = 0; i < inputColumns.size(); ++i) {
+              if (inputColumns[i]->isPartitionKey()) {
+                partitionKeyMap[inputColumns[i]->name()] = i;
+              }
+            }
+            std::vector<column_index_t> channels;
+            channels.reserve(partitionSpec->fields.size());
+            for (const auto& field : partitionSpec->fields) {
+              if (auto it = partitionKeyMap.find(field.name);
+                  it != partitionKeyMap.end()) {
+                channels.push_back(it->second);
+              }
+            }
+            return channels;
+          }(),
+          [&insertTableHandle]() {
+            std::vector<column_index_t> channels(
+                insertTableHandle->inputColumns().size());
+            std::iota(channels.begin(), channels.end(), 0);
+            return channels;
+          }()) {}
 
 IcebergDataSink::IcebergDataSink(
     RowTypePtr inputType,
@@ -266,6 +269,24 @@ IcebergDataSink::IcebergDataSink(
 
   icebergStatsCollector_ =
       std::make_unique<DataFileStatsCollector>(statsSettings_);
+
+  const auto& sortedBy = insertTableHandle->sortedBy();
+  if (!sortedBy.empty()) {
+    sortColumnIndices_.reserve(sortedBy.size());
+    sortCompareFlags_.reserve(sortedBy.size());
+    for (auto i = 0; i < sortedBy.size(); ++i) {
+      auto columnIndex =
+          inputType_->getChildIdxIfExists(sortedBy[i].sortColumn());
+      if (columnIndex.has_value()) {
+        sortColumnIndices_.push_back(columnIndex.value());
+        sortCompareFlags_.push_back(
+            {sortedBy[i].sortOrder().isNullsFirst(),
+             sortedBy[i].sortOrder().isAscending(),
+             false,
+             CompareFlags::NullHandlingMode::kNullAsValue});
+      }
+    }
+  }
 }
 
 std::vector<std::string> IcebergDataSink::commitMessage() const {
@@ -287,17 +308,19 @@ std::vector<std::string> IcebergDataSink::commitMessage() const {
     // TODO: Complete metrics is missing now and this could lead to suboptimal
     // query plan, will collect full iceberg metrics in following PR.
     // clang-format off
-    folly::dynamic commitData = folly::dynamic::object(
-        "path", info->writerParameters.writeDirectory() + "/" +
-        info->writerParameters.writeFileName())
-      ("fileSizeInBytes", ioStats_.at(i)->rawBytesWritten())
-      ("metrics", dataFileStats_[i]->toJson())
-      ("splitOffsets", dataFileStats_[i]->splitOffsetsAsJson())
-      ("partitionSpecJson", icebergInsertTableHandle->partitionSpec()->specId)
-      // Sort order evolution is not supported. Set default id to 1.
-      ("sortOrderId", 1)
-      ("fileFormat", "PARQUET")
-      ("content", "DATA");
+    folly::dynamic commitData =
+      folly::dynamic::object
+        ("path",
+          (fs::path(info->writerParameters.writeDirectory()) /
+                        info->writerParameters.writeFileName()).string())
+        ("fileSizeInBytes", ioStats_.at(i)->rawBytesWritten())
+        ("metrics", dataFileStats_[i]->toJson())
+        ("splitOffsets", dataFileStats_[i]->splitOffsetsAsJson())
+        // Sort order evolution is not supported. Set default id to 1.
+        ("sortOrderId", 1)
+        ("partitionSpecJson", icebergInsertTableHandle->partitionSpec()->specId)
+        ("fileFormat", fileFormat)
+        ("content", "DATA");
     // clang-format on
     if (!(partitionData_.empty() || partitionData_[i].empty())) {
       commitData["partitionDataJson"] = toJson(partitionData_[i]);
@@ -457,6 +480,52 @@ void IcebergDataSink::closeInternal() {
       writers_[i]->abort();
     }
   }
+}
+
+std::unique_ptr<facebook::velox::dwio::common::Writer>
+IcebergDataSink::maybeCreateBucketSortWriter(
+    std::unique_ptr<facebook::velox::dwio::common::Writer> writer) {
+  if (!sortWrite()) {
+    return writer;
+  }
+  auto sortPool = writerInfo_.back()->sortPool.get();
+  VELOX_CHECK_NOT_NULL(sortPool);
+  auto sortBuffer = std::make_unique<exec::SortBuffer>(
+      inputType_,
+      sortColumnIndices_,
+      sortCompareFlags_,
+      sortPool,
+      writerInfo_.back()->nonReclaimableSectionHolder.get(),
+      connectorQueryCtx_->prefixSortConfig(),
+      spillConfig_,
+      writerInfo_.back()->spillStats.get());
+  return std::make_unique<dwio::common::SortingWriter>(
+      std::move(writer),
+      std::move(sortBuffer),
+      hiveConfig_->sortWriterMaxOutputRows(
+          connectorQueryCtx_->sessionProperties()),
+      hiveConfig_->sortWriterMaxOutputBytes(
+          connectorQueryCtx_->sessionProperties()),
+      sortWriterFinishTimeSliceLimitMs_);
+}
+
+IcebergSortingColumn::IcebergSortingColumn(
+    const std::string& sortColumn,
+    const core::SortOrder& sortOrder)
+    : sortColumn_(sortColumn), sortOrder_(sortOrder) {
+  VELOX_USER_CHECK(!sortColumn_.empty(), "iceberg sort column must be set.");
+}
+
+const std::string& IcebergSortingColumn::sortColumn() const {
+  return sortColumn_;
+}
+
+const core::SortOrder& IcebergSortingColumn::sortOrder() const {
+  return sortOrder_;
+}
+
+folly::dynamic IcebergSortingColumn::serialize() const {
+  VELOX_UNREACHABLE("Unexpected code path, implement serialize() first.");
 }
 
 } // namespace facebook::velox::connector::hive::iceberg
