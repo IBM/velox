@@ -66,6 +66,7 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
           ColumnTransformTest.cpp
           IcebergInsertTest.cpp
           IcebergPartitionIdGeneratorTest.cpp
+          IcebergSortOrderTest.cpp
           IcebergStatsTest.cpp
           IcebergTestBase.cpp
           IcebergTransformE2ETest.cpp
