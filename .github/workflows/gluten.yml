@@ -42,7 +42,7 @@ jobs:
           git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
           BRANCH=$(echo ${GITHUB_REF#refs/heads/})
           sed -i 's/oap-project/IBM/g' ep/build-velox/src/get_velox.sh
-          sed -i 's/VELOX_BRANCH=2025.*/VELOX_BRANCH=main/g' ep/build-velox/src/get_velox.sh
+          sed -i 's/VELOX_BRANCH=2025.*/VELOX_BRANCH=${BRANCH}/g' ep/build-velox/src/get_velox.sh
       - name: Build Gluten native libraries
         run: |
           docker pull apache/gluten:vcpkg-centos-7
