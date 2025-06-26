@@ -41,18 +41,21 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
           BRANCH=$(echo ${GITHUB_REF#refs/heads/})
-          sed -i 's/oap-project/IBM/g' ep/build-velox/src/get_velox.sh
-          sed -i 's/VELOX_BRANCH=2025.*/VELOX_BRANCH=${BRANCH}/g' ep/build-velox/src/get_velox.sh
+          # sed -i 's/oap-project/IBM/g' ep/build-velox/src/get_velox.sh
+          # sed -i 's/VELOX_BRANCH=2025.*/VELOX_BRANCH=${BRANCH}/g' ep/build-velox/src/get_velox.sh
       - name: Build Gluten native libraries
         run: |
           docker pull apache/gluten:vcpkg-centos-7
           docker run -v $GITHUB_WORKSPACE:/work -w /work apache/gluten:vcpkg-centos-7 bash -c "
+            git config --global --add safe.directory /work
             set -e
             df -a
             cd /work/gluten
             export CCACHE_DIR=/work/.ccache
             mkdir -p /work/.ccache
-            bash dev/ci-velox-buildstatic-centos-7.sh
+            source /opt/rh/devtoolset-11/enable
+            ./dev/builddeps-veloxbe.sh --enable_vcpkg=ON --build_arrow=OFF --build_tests=OFF --build_benchmarks=OFF \
+                           --build_examples=OFF --enable_s3=ON --enable_gcs=ON --enable_hdfs=ON --enable_abfs=ON --velox_home=/work
             ccache -s
             mkdir -p /work/.m2/repository/org/apache/arrow/
             cp -r /root/.m2/repository/org/apache/arrow/* /work/.m2/repository/org/apache/arrow/
