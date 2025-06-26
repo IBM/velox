@@ -60,12 +60,6 @@ jobs:
             mkdir -p /work/.m2/repository/org/apache/arrow/
             cp -r /root/.m2/repository/org/apache/arrow/* /work/.m2/repository/org/apache/arrow/
           "
-      - name: "Save ccache"
-        uses: actions/cache/save@v4
-        id: ccache
-        with:
-          path: '${{ env.CCACHE_DIR }}'
-          key: ccache-centos7-release-default-${{github.sha}}
       - uses: actions/upload-artifact@v4
         with:
           name: velox-native-lib-centos-7-${{github.sha}}
