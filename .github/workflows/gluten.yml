@@ -37,6 +37,8 @@ jobs:
         with:
           path: '${{ env.CCACHE_DIR }}'
           key: ccache-centos7-release-default-${{github.sha}}
+          restore-keys: |
+            ccache-centos7-release-default
       - name: Setup Gluten
         run: |
           git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
