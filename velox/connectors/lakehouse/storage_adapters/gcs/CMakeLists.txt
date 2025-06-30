@@ -11,22 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-velox_add_library(velox_connector Connector.cpp)
 
-velox_link_libraries(velox_connector velox_common_config velox_vector)
+# for generated headers
 
-add_subdirectory(fuzzer)
+velox_add_library(velox_gcs RegisterGcsFileSystem.cpp)
 
-add_subdirectory(lakehouse)
+if(VELOX_ENABLE_GCS)
+  velox_sources(velox_gcs PRIVATE GcsFileSystem.cpp GcsUtil.cpp)
+  velox_link_libraries(velox_gcs velox_dwio_common Folly::folly
+                       google-cloud-cpp::storage)
 
-if(${VELOX_ENABLE_HIVE_CONNECTOR})
-  add_subdirectory(hive)
-endif()
+  if(${VELOX_BUILD_TESTING})
+    add_subdirectory(tests)
+  endif()
 
-if(${VELOX_ENABLE_TPCH_CONNECTOR})
-  add_subdirectory(tpch)
-endif()
-
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
+  if(${VELOX_ENABLE_EXAMPLES})
+    add_subdirectory(examples)
+  endif()
 endif()

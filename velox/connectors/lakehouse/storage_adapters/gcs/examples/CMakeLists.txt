@@ -11,22 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-velox_add_library(velox_connector Connector.cpp)
 
-velox_link_libraries(velox_connector velox_common_config velox_vector)
-
-add_subdirectory(fuzzer)
-
-add_subdirectory(lakehouse)
-
-if(${VELOX_ENABLE_HIVE_CONNECTOR})
-  add_subdirectory(hive)
-endif()
-
-if(${VELOX_ENABLE_TPCH_CONNECTOR})
-  add_subdirectory(tpch)
-endif()
-
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
-endif()
+add_executable(velox_gcsfile_example GcsFileSystemExample.cpp)
+target_link_libraries(
+  velox_gcsfile_example
+  Folly::folly
+  velox_file
+  velox_gcs
+  velox_core
+  velox_hiveV2_connector
+  velox_dwio_common_exception
+  velox_exec)

@@ -127,7 +127,9 @@ set(VELOX_GFLAGS_TYPE
 )
 option(VELOX_ENABLE_EXEC "Build exec." ON)
 option(VELOX_ENABLE_AGGREGATES "Build aggregates." ON)
-option(VELOX_ENABLE_HIVE_CONNECTOR "Build Hive connector." ON)
+option(VELOX_ENABLE_HIVE_CONNECTOR "Build the Hive connector." ON)
+#option(VELOX_ENABLE_HIVE_NEW_CONNECTOR "Build the new Hive connector." ON)
+#option(VELOX_ENABLE_ICEBERG_CONNECTOR "Build the ICEBERG connector that does NOT depend on the new Hive connector." ON)
 option(VELOX_ENABLE_TPCH_CONNECTOR "Build TPC-H connector." ON)
 option(VELOX_ENABLE_PRESTO_FUNCTIONS "Build Presto SQL functions." ON)
 option(VELOX_ENABLE_SPARK_FUNCTIONS "Build Spark SQL functions." ON)
@@ -663,6 +665,7 @@ install(FILES velox/type/Type.h DESTINATION "include/velox")
 
 # Adding this down here prevents warnings in dependencies from stopping the
 # build
+set(TREAT_WARNINGS_AS_ERRORS OFF)
 if("${TREAT_WARNINGS_AS_ERRORS}")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
 endif()

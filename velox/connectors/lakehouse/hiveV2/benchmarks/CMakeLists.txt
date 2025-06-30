@@ -11,22 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-velox_add_library(velox_connector Connector.cpp)
+add_executable(velox_hiveV2_partition_function_benchmark
+        HivePartitionFunctionBenchmark.cpp)
 
-velox_link_libraries(velox_connector velox_common_config velox_vector)
-
-add_subdirectory(fuzzer)
-
-add_subdirectory(lakehouse)
-
-if(${VELOX_ENABLE_HIVE_CONNECTOR})
-  add_subdirectory(hive)
-endif()
-
-if(${VELOX_ENABLE_TPCH_CONNECTOR})
-  add_subdirectory(tpch)
-endif()
-
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
-endif()
+target_link_libraries(
+  velox_hiveV2_partition_function_benchmark
+  velox_type
+  velox_vector
+  velox_vector_test_lib
+  velox_vector_fuzzer
+  velox_expression
+  velox_parse_parser
+  velox_parse_utils
+  velox_parse_expression
+  velox_exec
+  velox_exec_test_lib
+  velox_hiveV2_connector
+  velox_hiveV2_partition_function
+  velox_memory
+  Folly::folly
+  Folly::follybenchmark
+  fmt::fmt)

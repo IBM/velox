@@ -11,22 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-velox_add_library(velox_connector Connector.cpp)
 
-velox_link_libraries(velox_connector velox_common_config velox_vector)
+add_executable(velox_abfs_test AbfsFileSystemTest.cpp AbfsCommonTest.cpp
+        AzuriteServer.cpp MockDataLakeFileClient.cpp)
 
-add_subdirectory(fuzzer)
+add_test(velox_abfs_test velox_abfs_test)
+target_link_libraries(
+  velox_abfs_test
+  PRIVATE velox_abfs velox_exec_test_lib GTest::gtest GTest::gtest_main)
 
-add_subdirectory(lakehouse)
-
-if(${VELOX_ENABLE_HIVE_CONNECTOR})
-  add_subdirectory(hive)
-endif()
-
-if(${VELOX_ENABLE_TPCH_CONNECTOR})
-  add_subdirectory(tpch)
-endif()
-
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
-endif()
+target_compile_options(velox_abfs_test PRIVATE -Wno-deprecated-declarations)

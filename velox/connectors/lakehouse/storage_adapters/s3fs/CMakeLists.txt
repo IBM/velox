@@ -11,22 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-velox_add_library(velox_connector Connector.cpp)
 
-velox_link_libraries(velox_connector velox_common_config velox_vector)
+# for generated headers
 
-add_subdirectory(fuzzer)
+velox_add_library(velox_s3fs RegisterS3FileSystem.cpp)
+if(VELOX_ENABLE_S3)
+  velox_sources(
+    velox_s3fs
+    PRIVATE
+          S3FileSystem.cpp
+          S3Util.cpp
+          S3Config.cpp)
 
-add_subdirectory(lakehouse)
+  velox_include_directories(velox_s3fs PRIVATE ${AWSSDK_INCLUDE_DIRS})
+  velox_link_libraries(velox_s3fs PRIVATE velox_dwio_common Folly::folly
+                                          ${AWSSDK_LIBRARIES})
 
-if(${VELOX_ENABLE_HIVE_CONNECTOR})
-  add_subdirectory(hive)
-endif()
-
-if(${VELOX_ENABLE_TPCH_CONNECTOR})
-  add_subdirectory(tpch)
-endif()
-
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
+  if(${VELOX_BUILD_TESTING})
+    add_subdirectory(tests)
+  endif()
 endif()
