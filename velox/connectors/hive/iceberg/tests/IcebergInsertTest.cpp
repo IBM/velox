@@ -89,35 +89,12 @@ TEST_F(IcebergInsertTest, testSingleColumnAsPartition) {
          VARCHAR()});
   for (auto colIndex = 0; colIndex < rowType->size() - 1; colIndex++) {
     const auto& colName = rowType->nameOf(colIndex);
-    const auto colType = rowType->childAt(colIndex);
-
-    const bool isDecimal = colType->isDecimal();
-    const bool isVarbinary = colType->isVarbinary();
+    const auto outputDirectory = exec::test::TempDirectoryPath::create();
     constexpr int32_t numBatches = 2;
     constexpr int32_t vectorSize = 50;
-    const auto outputDirectory = exec::test::TempDirectoryPath::create();
-
-    if (isDecimal || isVarbinary) {
-      const auto vectors = createTestData(rowType, numBatches, vectorSize, 0.5);
-      std::vector<std::string> partitionTransforms = {colName};
-      auto dataSink = createIcebergDataSink(
-          rowType, outputDirectory->getPath(), partitionTransforms);
-      for (const auto& vector : vectors) {
-        if (isDecimal) {
-          VELOX_ASSERT_THROW(
-              dataSink->appendData(vector),
-              "Partition on decimal column is not supported yet.");
-        } else if (isVarbinary) {
-          VELOX_ASSERT_THROW(
-              dataSink->appendData(vector),
-              "Partition on varbinary column is not supported yet.");
-        }
-      }
-      continue;
-    }
-    const auto dataPath = fmt::format("{}", outputDirectory->getPath());
     const auto vectors = createTestData(rowType, numBatches, vectorSize, 0.5);
-    std::vector<std::string> partitionTransforms = {colName};
+    std::vector<test::PartitionField> partitionTransforms = {
+        {colIndex, TransformType::kIdentity, std::nullopt}};
     auto dataSink = createIcebergDataSink(
         rowType, outputDirectory->getPath(), partitionTransforms);
 
@@ -128,7 +105,7 @@ TEST_F(IcebergInsertTest, testSingleColumnAsPartition) {
     ASSERT_TRUE(dataSink->finish());
     const auto commitTasks = dataSink->close();
     createDuckDbTable(vectors);
-    auto splits = createSplitsForDirectory(dataPath);
+    auto splits = createSplitsForDirectory(outputDirectory->getPath());
 
     ASSERT_GT(commitTasks.size(), 0);
     ASSERT_EQ(splits.size(), commitTasks.size());
@@ -183,33 +160,12 @@ TEST_F(IcebergInsertTest, testPartitionNullColumn) {
     const auto& colName = rowType->nameOf(colIndex);
     const auto colType = rowType->childAt(colIndex);
     const auto outputDirectory = exec::test::TempDirectoryPath::create();
-    const auto dataPath = fmt::format("{}", outputDirectory->getPath());
     constexpr int32_t numBatches = 2;
     constexpr int32_t vectorSize = 100;
-    const bool isDecimal = colType->isDecimal();
-    const bool isVarbinary = colType->isVarbinary();
-
-    if (isDecimal || isVarbinary) {
-      const auto vectors = createTestData(rowType, numBatches, vectorSize, 0.5);
-      std::vector<std::string> partitionTransforms = {colName};
-      auto dataSink = createIcebergDataSink(
-          rowType, outputDirectory->getPath(), partitionTransforms);
-      for (const auto& vector : vectors) {
-        if (isDecimal) {
-          VELOX_ASSERT_THROW(
-              dataSink->appendData(vector),
-              "Partition on decimal column is not supported yet.");
-        } else if (isVarbinary) {
-          VELOX_ASSERT_THROW(
-              dataSink->appendData(vector),
-              "Partition on varbinary column is not supported yet.");
-        }
-      }
-      continue;
-    }
 
     const auto vectors = createTestData(rowType, numBatches, vectorSize, 1.0);
-    std::vector<std::string> partitionTransforms = {colName};
+    std::vector<test::PartitionField> partitionTransforms = {
+        {colIndex, TransformType::kIdentity, std::nullopt}};
     auto dataSink = createIcebergDataSink(
         rowType, outputDirectory->getPath(), partitionTransforms);
 
@@ -219,8 +175,17 @@ TEST_F(IcebergInsertTest, testPartitionNullColumn) {
 
     ASSERT_TRUE(dataSink->finish());
     const auto commitTasks = dataSink->close();
+    ASSERT_EQ(1, commitTasks.size());
+    auto taskJson = folly::parseJson(commitTasks.at(0));
+    ASSERT_EQ(1, taskJson.count("partitionDataJson"));
+    auto partitionDataStr = taskJson["partitionDataJson"].asString();
+    auto partitionData = folly::parseJson(partitionDataStr);
+    ASSERT_EQ(1, partitionData.count("partitionValues"));
+    auto partitionValues = partitionData["partitionValues"];
+    ASSERT_TRUE(partitionValues.isArray());
+    ASSERT_TRUE(partitionValues[0].isNull());
 
-    auto files = listFiles(dataPath);
+    auto files = listFiles(outputDirectory->getPath());
     ASSERT_EQ(files.size(), 1);
 
     for (const auto& file : files) {
@@ -253,21 +218,21 @@ TEST_F(IcebergInsertTest, testColumnCombinationsAsPartition) {
        BOOLEAN(),
        VARCHAR()});
   std::vector<std::vector<int32_t>> columnCombinations = {
-    {0, 1}, // BIGINT, INTEGER.
-    {2, 1}, // SMALLINT, INTEGER.
-    {2, 0}, // SMALLINT, BIGINT.
-    {0, 2, 1} // BIGINT, SMALLINT, INTEGER.
+      {0, 1}, // BIGINT, INTEGER.
+      {2, 1}, // SMALLINT, INTEGER.
+      {2, 3}, // SMALLINT, DECIMAL.
+      {0, 2, 1} // BIGINT, SMALLINT, INTEGER.
   };
 
   for (const auto& combination : columnCombinations) {
     const auto outputDirectory = exec::test::TempDirectoryPath::create();
-    const auto dataPath = fmt::format("{}", outputDirectory->getPath());
     constexpr int32_t numBatches = 2;
     constexpr int32_t vectorSize = 50;
     const auto vectors = createTestData(rowType, numBatches, vectorSize);
-    std::vector<std::string> partitionTransforms;
+    std::vector<test::PartitionField> partitionTransforms;
     for (auto colIndex : combination) {
-      partitionTransforms.push_back(rowType->nameOf(colIndex));
+      partitionTransforms.push_back(
+          {colIndex, TransformType::kIdentity, std::nullopt});
     }
 
     auto dataSink = createIcebergDataSink(
@@ -280,7 +245,7 @@ TEST_F(IcebergInsertTest, testColumnCombinationsAsPartition) {
     ASSERT_TRUE(dataSink->finish());
     const auto commitTasks = dataSink->close();
     createDuckDbTable(vectors);
-    auto splits = createSplitsForDirectory(dataPath);
+    auto splits = createSplitsForDirectory(outputDirectory->getPath());
 
     ASSERT_GT(commitTasks.size(), 0);
     ASSERT_EQ(splits.size(), commitTasks.size());
