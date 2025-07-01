@@ -373,7 +373,18 @@ HiveDataSink::HiveDataSink(
                     *insertTableHandle->bucketProperty(),
                     inputType)
               : nullptr,
-          getNonPartitionChannels(insertTableHandle)) {}
+          getPartitionChannels(insertTableHandle),
+          getNonPartitionChannels(insertTableHandle),
+          !getPartitionChannels(insertTableHandle).empty()
+              ? std::make_unique<PartitionIdGenerator>(
+                    inputType,
+                    getPartitionChannels(insertTableHandle),
+                    hiveConfig->maxPartitionsPerWriters(
+                        connectorQueryCtx->sessionProperties()),
+                    connectorQueryCtx->memoryPool(),
+                    hiveConfig->isPartitionPathAsLowerCase(
+                        connectorQueryCtx->sessionProperties()))
+              : nullptr) {}
 
 HiveDataSink::HiveDataSink(
     RowTypePtr inputType,
@@ -383,7 +394,9 @@ HiveDataSink::HiveDataSink(
     const std::shared_ptr<const HiveConfig>& hiveConfig,
     uint32_t bucketCount,
     std::unique_ptr<core::PartitionFunction> bucketFunction,
-    const std::vector<column_index_t>& dataChannels)
+    const std::vector<column_index_t>& partitionChannels,
+    const std::vector<column_index_t>& dataChannels,
+    std::unique_ptr<PartitionIdGenerator> partitionIdGenerator)
     : inputType_(std::move(inputType)),
       insertTableHandle_(std::move(insertTableHandle)),
       connectorQueryCtx_(connectorQueryCtx),
@@ -392,17 +405,8 @@ HiveDataSink::HiveDataSink(
       updateMode_(getUpdateMode()),
       maxOpenWriters_(hiveConfig_->maxPartitionsPerWriters(
           connectorQueryCtx->sessionProperties())),
-      partitionChannels_(getPartitionChannels(insertTableHandle_)),
-      partitionIdGenerator_(
-          !partitionChannels_.empty()
-              ? std::make_unique<PartitionIdGenerator>(
-                    inputType_,
-                    partitionChannels_,
-                    maxOpenWriters_,
-                    connectorQueryCtx_->memoryPool(),
-                    hiveConfig_->isPartitionPathAsLowerCase(
-                        connectorQueryCtx->sessionProperties()))
-              : nullptr),
+      partitionChannels_(partitionChannels),
+      partitionIdGenerator_(std::move(partitionIdGenerator)),
       dataChannels_(dataChannels),
       bucketCount_(static_cast<int32_t>(bucketCount)),
       bucketFunction_(std::move(bucketFunction)),
@@ -769,6 +773,42 @@ uint32_t HiveDataSink::appendWriter(const HiveWriterId& id) {
 
   setMemoryReclaimers(writerInfo_.back().get(), ioStats_.back().get());
 
+  auto options = createWriterOptions();
+  // Prevents the memory allocation during the writer creation.
+  WRITER_NON_RECLAIMABLE_SECTION_GUARD(writerInfo_.size() - 1);
+  auto writer = writerFactory_->createWriter(
+      dwio::common::FileSink::create(
+          writePath,
+          {
+              .bufferWrite = false,
+              .connectorProperties = hiveConfig_->config(),
+              .fileCreateConfig = hiveConfig_->writeFileCreateConfig(),
+              .pool = writerInfo_.back()->sinkPool.get(),
+              .metricLogger = dwio::common::MetricsLog::voidLog(),
+              .stats = ioStats_.back().get(),
+              .fileSystemStats = fileSystemStats_.get(),
+          }),
+      options);
+  writer = maybeCreateBucketSortWriter(std::move(writer));
+  writers_.emplace_back(std::move(writer));
+
+  extendBuffersForPartitionedTables();
+  addThreadLocalRuntimeStat(
+      fmt::format(
+          "{}WriterCount",
+          dwio::common::toString(insertTableHandle_->storageFormat())),
+      RuntimeCounter(1));
+  // Extends the buffer used for partition rows calculations.
+  partitionSizes_.emplace_back(0);
+  partitionRows_.emplace_back(nullptr);
+  rawPartitionRows_.emplace_back(nullptr);
+
+  writerIndexMap_.emplace(id, writers_.size() - 1);
+  return writerIndexMap_[id];
+}
+
+std::shared_ptr<dwio::common::WriterOptions> HiveDataSink::createWriterOptions()
+    const {
   // Take the writer options provided by the user as a starting point, or
   // allocate a new one.
   auto options = insertTableHandle_->writerOptions();
@@ -819,38 +859,7 @@ uint32_t HiveDataSink::appendWriter(const HiveWriterId& id) {
   options->adjustTimestampToTimezone =
       connectorQueryCtx_->adjustTimestampToTimezone();
   options->processConfigs(*hiveConfig_->config(), *connectorSessionProperties);
-
-  // Prevents the memory allocation during the writer creation.
-  WRITER_NON_RECLAIMABLE_SECTION_GUARD(writerInfo_.size() - 1);
-  auto writer = writerFactory_->createWriter(
-      dwio::common::FileSink::create(
-          writePath,
-          {
-              .bufferWrite = false,
-              .connectorProperties = hiveConfig_->config(),
-              .fileCreateConfig = hiveConfig_->writeFileCreateConfig(),
-              .pool = writerInfo_.back()->sinkPool.get(),
-              .metricLogger = dwio::common::MetricsLog::voidLog(),
-              .stats = ioStats_.back().get(),
-              .fileSystemStats = fileSystemStats_.get(),
-          }),
-      options);
-  writer = maybeCreateBucketSortWriter(std::move(writer));
-  writers_.emplace_back(std::move(writer));
-
-  extendBuffersForPartitionedTables();
-  addThreadLocalRuntimeStat(
-      fmt::format(
-          "{}WriterCount",
-          dwio::common::toString(insertTableHandle_->storageFormat())),
-      RuntimeCounter(1));
-  // Extends the buffer used for partition rows calculations.
-  partitionSizes_.emplace_back(0);
-  partitionRows_.emplace_back(nullptr);
-  rawPartitionRows_.emplace_back(nullptr);
-
-  writerIndexMap_.emplace(id, writers_.size() - 1);
-  return writerIndexMap_[id];
+  return options;
 }
 
 std::optional<std::string> HiveDataSink::getPartitionName(
