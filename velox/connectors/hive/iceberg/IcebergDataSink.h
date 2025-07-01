@@ -17,7 +17,8 @@
 #pragma once
 
 #include "velox/connectors/hive/HiveDataSink.h"
-#include "velox/connectors/hive/iceberg/PartitionSpec.h"
+#include "velox/connectors/hive/iceberg/TransformFactory.h"
+#include "velox/connectors/hive/iceberg/Transforms.h"
 
 namespace facebook::velox::connector::hive::iceberg {
 
@@ -40,6 +41,7 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
       std::vector<HiveColumnHandlePtr> inputColumns,
       LocationHandlePtr locationHandle,
       std::shared_ptr<const IcebergPartitionSpec> partitionSpec,
+      memory::MemoryPool* pool,
       dwio::common::FileFormat tableStorageFormat =
           dwio::common::FileFormat::PARQUET,
       std::shared_ptr<HiveBucketProperty> bucketProperty = nullptr,
@@ -50,8 +52,13 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
     return partitionSpec_;
   }
 
-private:
-  std::shared_ptr<const IcebergPartitionSpec> partitionSpec_;
+  const std::vector<std::shared_ptr<Transform>>& columnTransforms() const {
+    return columnTransforms_;
+  }
+
+ private:
+  const std::shared_ptr<const IcebergPartitionSpec> partitionSpec_;
+  const std::vector<std::shared_ptr<Transform>> columnTransforms_;
 };
 
 using IcebergInsertTableHandlePtr =
@@ -65,6 +72,8 @@ class IcebergDataSink : public HiveDataSink {
       const ConnectorQueryCtx* connectorQueryCtx,
       CommitStrategy commitStrategy,
       const std::shared_ptr<const HiveConfig>& hiveConfig);
+
+  void appendData(RowVectorPtr input) override;
 
   /// Generates Iceberg-specific commit messages for all writers containing
   /// metadata about written files. Creates a JSON object for each writer
@@ -91,15 +100,19 @@ class IcebergDataSink : public HiveDataSink {
 private:
     IcebergDataSink(
         RowTypePtr inputType,
-        std::shared_ptr<const HiveInsertTableHandle> insertTableHandle,
+        IcebergInsertTableHandlePtr insertTableHandle,
         const ConnectorQueryCtx* connectorQueryCtx,
         CommitStrategy commitStrategy,
         const std::shared_ptr<const HiveConfig>& hiveConfig,
+        const std::vector<column_index_t>& partitionChannels,
         const std::vector<column_index_t>& dataChannels);
 
     void splitInputRowsAndEnsureWriters(RowVectorPtr input) override;
 
   HiveWriterId getIcebergWriterId(size_t row) const;
+
+  std::shared_ptr<dwio::common::WriterOptions> createWriterOptions()
+      const override;
 
   std::optional<std::string> getPartitionName(
       const HiveWriterId& id) const override;
