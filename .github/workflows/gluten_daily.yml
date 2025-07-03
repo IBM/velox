@@ -1,0 +1,176 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Gluten Daily Build
+
+on:
+  schedule:
+    - cron: 0 0 * * *
+
+jobs:
+
+  gluten-cpp-build:
+    name: gluten cpp build
+    # prevent errors when forks ff their main branch
+    if: ${{ github.repository == 'IBM/velox' }}
+    runs-on: ubuntu-22.04
+    env:
+      CCACHE_DIR: "${{ github.workspace }}/.ccache"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get Ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-centos7-release-default-${{github.sha}}
+      - name: Setup Gluten
+        run: |
+          git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
+          BRANCH=$(echo ${GITHUB_REF#refs/heads/})
+          sed -i 's/oap-project/IBM/g' ep/build-velox/src/get_velox.sh
+          #sed -i 's/VELOX_BRANCH=2025.*/VELOX_BRANCH=main/g' ep/build-velox/src/get_velox.sh
+      - name: Build Gluten native libraries
+        run: |
+          docker pull apache/gluten:vcpkg-centos-7
+          docker run -v $GITHUB_WORKSPACE:/work -w /work apache/gluten:vcpkg-centos-7 bash -c "
+            set -e
+            df -a
+            cd /work/gluten
+            export CCACHE_DIR=/work/.ccache
+            mkdir -p /work/.ccache
+            source /opt/rh/devtoolset-11/enable
+            ./dev/builddeps-veloxbe.sh --enable_vcpkg=ON --build_arrow=OFF --build_tests=OFF --build_benchmarks=OFF \
+                           --build_examples=OFF --enable_s3=ON --enable_gcs=ON --enable_hdfs=ON --enable_abfs=ON --velox_home=/work
+            ccache -s
+            mkdir -p /work/.m2/repository/org/apache/arrow/
+            cp -r /root/.m2/repository/org/apache/arrow/* /work/.m2/repository/org/apache/arrow/
+          "
+      - name: Save ccache
+        uses: actions/cache/save@v4
+        id: ccache
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-centos7-release-default-${{github.sha}}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velox-native-lib-centos-7-${{github.sha}}
+          path: ./gluten/cpp/build/releases/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arrow-jars-centos-7-${{github.sha}}
+          path: .m2/repository/org/apache/arrow/
+          if-no-files-found: error
+
+  linux-gcc:
+    name: Build with GCC
+    if: ${{ github.repository == 'IBM/velox' }}
+    runs-on: ubuntu-22.04
+    container: ghcr.io/facebookincubator/velox-dev:adapters
+    defaults:
+      run:
+        shell: bash
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/ccache
+      VELOX_DEPENDENCY_SOURCE: SYSTEM
+      GTest_SOURCE: BUNDLED
+      cudf_SOURCE: BUNDLED
+      CUDA_VERSION: '12.8'
+      faiss_SOURCE: BUNDLED
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Fix git permissions
+        # Usually actions/checkout does this but as we run in a container
+        # it doesn't work
+        run: git config --global --add safe.directory ${GITHUB_WORKSPACE}
+
+      - name: Install Dependencies
+        run: |
+          if git diff --name-only HEAD^1 HEAD | grep -q "scripts/setup-"; then
+            # Overwrite old setup scripts with changed versions
+            cp scripts/setup-* /
+
+            mkdir /tmp/build
+            cd /tmp/build
+            source /opt/rh/gcc-toolset-12/enable
+            # install basic deps
+            bash /setup-centos9.sh
+
+            source /setup-centos9.sh
+            install_adapters
+            install_cuda $CUDA_VERSION
+
+            cd /
+            rm -rf /tmp/build # cleanup to avoid issues with disk space
+          fi
+
+      - name: Install Minio
+        run: |
+          MINIO_BINARY="minio-2022-05-26"
+          if [ ! -f /usr/local/bin/${MINIO_BINARY} ]; then
+            wget https://dl.min.io/server/minio/release/linux-amd64/archive/minio.RELEASE.2022-05-26T05-48-41Z -O ${MINIO_BINARY}
+            chmod +x ./${MINIO_BINARY}
+            mv ./${MINIO_BINARY} /usr/local/bin/
+          fi
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}-${{github.sha}}
+          restore-keys: |
+            ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
+
+      - name: Zero Ccache Statistics
+        run: |
+          ccache -sz
+
+      - name: Make Release Build
+        env:
+          #MAKEFLAGS: 'NUM_THREADS=8 MAX_HIGH_MEM_JOBS=4 MAX_LINK_JOBS=4'
+          CUDA_ARCHITECTURES: 70
+          CUDA_COMPILER: /usr/local/cuda-${CUDA_VERSION}/bin/nvcc
+          # Set compiler to GCC 12
+          CUDA_FLAGS: -ccbin /opt/rh/gcc-toolset-12/root/usr/bin
+        run: |
+          EXTRA_CMAKE_FLAGS=(
+            "-DVELOX_ENABLE_BENCHMARKS=ON"
+            "-DVELOX_ENABLE_EXAMPLES=ON"
+            "-DVELOX_ENABLE_ARROW=ON"
+            "-DVELOX_ENABLE_GEO=ON"
+            "-DVELOX_ENABLE_FAISS=ON"
+            "-DVELOX_ENABLE_PARQUET=ON"
+            "-DVELOX_ENABLE_HDFS=ON"
+            "-DVELOX_ENABLE_S3=ON"
+            "-DVELOX_ENABLE_GCS=ON"
+            "-DVELOX_ENABLE_ABFS=ON"
+            "-DVELOX_ENABLE_REMOTE_FUNCTIONS=ON"
+            "-DVELOX_ENABLE_CUDF=ON"
+            "-DVELOX_ENABLE_WAVE=ON"
+            "-DVELOX_MONO_LIBRARY=ON"
+            "-DVELOX_BUILD_SHARED=ON"
+          )
+          if [[ "${USE_CLANG}" = "true" ]]; then scripts/setup-centos9.sh install_clang15; export CC=/usr/bin/clang-15; export CXX=/usr/bin/clang++-15; CUDA_FLAGS="-ccbin /usr/lib64/llvm15/bin/clang++-15"; fi
+          make release EXTRA_CMAKE_FLAGS="${EXTRA_CMAKE_FLAGS[*]}"
+
+      - name: Ccache after
+        run: ccache -s
+
+      - uses: actions/cache/save@v4
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-linux-adapters-gcc-${{github.sha}}
