@@ -42,8 +42,8 @@ concurrency:
 
 jobs:
   macos-build:
-    if: ${{ github.repository == 'facebookincubator/velox' }}
-    name: ${{ matrix.os }}
+    if: ${{ github.repository == 'IBM/velox' }}
+    name: "${{ matrix.os }}"
     strategy:
       fail-fast: false
       matrix:
@@ -82,7 +82,7 @@ jobs:
           fi
 
       - name: Cache ccache
-        uses: apache/infrastructure-actions/stash/restore@3354c1565d4b0e335b78a76aedd82153a9e144d4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-macos-1-${{ matrix.os }}
@@ -110,7 +110,7 @@ jobs:
           cmake --build _build/$BUILD_TYPE -j $NJOBS
           ccache -s
 
-      - uses: apache/infrastructure-actions/stash/save@3354c1565d4b0e335b78a76aedd82153a9e144d4
+      - uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-macos-1-${{ matrix.os }}
