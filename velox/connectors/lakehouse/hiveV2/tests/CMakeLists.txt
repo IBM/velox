@@ -1,0 +1,57 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+#add_library(velox_hiveV2_connector_test_lib
+#        HiveConnectorTestBase.cpp
+#)
+
+#target_link_libraries(
+#        velox_hiveV2_connector_test_lib PRIVATE velox_connector_base_test_lib)
+
+add_executable(
+  velox_hiveV2_connector_test
+        HiveConnectorTestBase.cpp
+        HiveConfigTest.cpp
+        HiveDataSinkTest.cpp
+        HiveConnectorTest.cpp
+        HiveConnectorUtilTest.cpp
+        HiveConnectorSerDeTest.cpp
+        HivePartitionFunctionTest.cpp
+        HivePartitionUtilTest.cpp
+        HiveSplitTest.cpp
+        PartitionIdGeneratorTest.cpp
+        TableHandleTest.cpp)
+add_test(velox_hiveV2_connector_test velox_hiveV2_connector_test)
+
+target_link_libraries(
+        velox_hiveV2_connector_test
+  velox_connector_base_test_lib
+  velox_hiveV2_connector
+  velox_hiveV2_partition_function
+  velox_dwio_common_exception
+  velox_vector_fuzzer
+  velox_vector_test_lib
+  velox_exec
+  velox_exec_test_lib
+  GTest::gtest
+  GTest::gtest_main)
+
+if(VELOX_ENABLE_PARQUET)
+
+  target_include_directories(velox_hiveV2_connector_test
+                             PUBLIC ${ARROW_PREFIX}/install/include)
+  target_link_libraries(velox_hiveV2_connector_test velox_dwio_parquet_writer
+                        velox_dwio_parquet_reader)
+
+endif()
