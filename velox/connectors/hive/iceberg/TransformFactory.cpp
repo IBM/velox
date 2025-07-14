@@ -46,11 +46,22 @@ int32_t epochDay(int32_t daysSinceEpoch) {
 }
 
 int32_t epochDay(Timestamp ts) {
-  return ts.getSeconds() / Timestamp::kSecondsInDay;
+  const auto seconds = ts.getSeconds();
+  return (seconds >= 0) ? seconds / Timestamp::kSecondsInDay
+                        : ((seconds + 1) / Timestamp::kSecondsInDay) - 1;
 }
 
 int32_t epochHour(Timestamp ts) {
-  return static_cast<int32_t>(ts.getSeconds() / 3600);
+  const auto seconds = ts.getSeconds();
+  return (seconds >= 0) ? seconds / 3600 : ((seconds + 1) / 3600) - 1;
+}
+
+bool isValidPartitionType(TypePtr type) {
+  if (type->isRow() || type->isArray() || type->isMap() ||
+      !strcasecmp("TIMESTAMP WITH TIME ZONE", type->name())) {
+    return false;
+  }
+  return true;
 }
 
 template <TypeKind Kind>
@@ -108,6 +119,10 @@ ColumnTransform createTruncateTransform(
 ColumnTransform buildColumnTransform(
     const IcebergPartitionSpec::Field& field,
     memory::MemoryPool* pool) {
+  if (!isValidPartitionType(field.type)) {
+    VELOX_USER_FAIL(fmt::format(
+        "Type not supported as partition column: {}.", field.type->name()));
+  }
   switch (field.transformType) {
     // Identity transform.
     case TransformType::kIdentity: {
