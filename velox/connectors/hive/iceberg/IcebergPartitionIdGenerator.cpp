@@ -61,6 +61,7 @@ IcebergPartitionIdGenerator::IcebergPartitionIdGenerator(
     : PartitionIdGenerator(
           partitionChannels,
           maxPartitions,
+          pool,
           partitionPathAsLowerCase),
       pool_(pool),
       columnTransforms_(columnTransforms) {

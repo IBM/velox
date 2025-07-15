@@ -67,6 +67,7 @@ class PartitionIdGenerator {
   PartitionIdGenerator(
       std::vector<column_index_t> partitionChannels,
       uint32_t maxPartitions,
+      memory::MemoryPool* pool,
       bool partitionPathAsLowerCase);
 
   // Computes value IDs using VectorHashers for all rows in 'input'.
