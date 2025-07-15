@@ -510,7 +510,8 @@ TEST_F(IcebergTransformUnitTest, testTransformOnTimestamp) {
       {"year(c_timestamp)",
        "month(c_timestamp)",
        "day(c_timestamp)",
-       "hour(c_timestamp)"},
+       "hour(c_timestamp)",
+       "c_timestamp"},
       rowType_);
 
   auto& yearTransform = partitionSpec->fields[0];
@@ -560,6 +561,19 @@ TEST_F(IcebergTransformUnitTest, testTransformOnTimestamp) {
        Timestamp(1609459200, 0),
        Timestamp(1612224000, 0)},
       {0, 8760, 447072, 447840});
+
+  auto& identityTransform = partitionSpec->fields[4];
+  EXPECT_EQ(identityTransform.transformType, TransformType::kIdentity);
+  testTransform<Timestamp, Timestamp>(
+      identityTransform,
+      {Timestamp(0, 0),
+       Timestamp(31536000, 0),
+       Timestamp(1609459200, 0),
+       Timestamp(1612224000, 0)},
+      {Timestamp(0, 0),
+       Timestamp(31536000, 0),
+       Timestamp(1609459200, 0),
+       Timestamp(1612224000, 0)});
 }
 
 TEST_F(IcebergTransformUnitTest, testTransformsWithNulls) {

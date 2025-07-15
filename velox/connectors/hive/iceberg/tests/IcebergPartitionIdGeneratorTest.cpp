@@ -130,6 +130,70 @@ TEST_F(IcebergPartitionIdGeneratorTest, partitionNameWithIdentityTransforms) {
   verifyPartitionComponents(partitionName, expectedComponents);
 }
 
+TEST_F(
+    IcebergPartitionIdGeneratorTest,
+    partitionNameWithTimestampIdentitySpecialValues) {
+  std::vector<Timestamp> timestamps = {
+      Timestamp(253402300800, 100000000), // +10000-01-01T00:00:00.1.
+      Timestamp(-62170000000, 0), // -0001-11-29T19:33:20.
+      Timestamp(-62135577748, 999000000), // 0001-01-01T05:17:32.999.
+      Timestamp(0, 0), // 1970-01-01T00:00.
+      Timestamp(1609459200, 999000000), // 2021-01-01T00:00.
+      Timestamp(1640995200, 500000000), // 2022-01-01T00:00:00.5.
+      Timestamp(1672531200, 123000000), // 2023-01-01T00:00:00.123.
+      Timestamp(-1, 999000000), // 1969-12-31T23:59:59.999.
+      Timestamp(1, 1000000), // 1970-01-01T00:00:01.001.
+      Timestamp(-62167219199, 0), // 0000-01-01T00:00:01.
+      Timestamp(-377716279140, 321000000), // -10000-01-01T01:01:00.321.
+      Timestamp(253402304660, 321000000), // +10000-01-01T01:01:00.321.
+      Timestamp(951782400, 0), // 2000-02-29T00:00:00 (leap year).
+      Timestamp(4107456000, 0), // 2100-02-28T00:00:00 (not leap year).
+      Timestamp(86400, 0), // 1970-01-02T00:00:00.
+      Timestamp(-86400, 0), // 1969-12-31T00:00:00.
+      Timestamp(1672531200, 456000000), // 2023-01-01T00:00:00.456.
+      Timestamp(1672531200, 789000000), // 2023-01-01T00:00:00.789.
+  };
+
+  std::vector<std::string> expectedPartitionNames = {
+      "c_timestamp=%2B10000-01-01T00%3A00%3A00.1",
+      "c_timestamp=-0001-11-29T19%3A33%3A20",
+      "c_timestamp=0001-01-01T05%3A17%3A32.999",
+      "c_timestamp=1970-01-01T00%3A00",
+      "c_timestamp=2021-01-01T00%3A00%3A00.999",
+      "c_timestamp=2022-01-01T00%3A00%3A00.5",
+      "c_timestamp=2023-01-01T00%3A00%3A00.123",
+      "c_timestamp=1969-12-31T23%3A59%3A59.999",
+      "c_timestamp=1970-01-01T00%3A00%3A01.001",
+      "c_timestamp=0000-01-01T00%3A00%3A01",
+      "c_timestamp=-10000-08-24T19%3A21%3A00.321",
+      "c_timestamp=%2B10000-01-01T01%3A04%3A20.321",
+      "c_timestamp=2000-02-29T00%3A00",
+      "c_timestamp=2100-02-28T00%3A00",
+      "c_timestamp=1970-01-02T00%3A00",
+      "c_timestamp=1969-12-31T00%3A00",
+      "c_timestamp=2023-01-01T00%3A00%3A00.456",
+      "c_timestamp=2023-01-01T00%3A00%3A00.789",
+  };
+
+  auto timestampVector = makeFlatVector<Timestamp>(timestamps);
+  std::vector<std::string> columnNames = {"c_timestamp"};
+  std::vector<VectorPtr> columns = {timestampVector};
+  std::vector<TypePtr> types = {TIMESTAMP()};
+  auto rowVector = createRowVector(columnNames, columns);
+
+  std::vector<TransformType> transformTypes = {TransformType::kIdentity};
+  auto transforms = createColumnTransforms(columnNames, types, transformTypes);
+  auto generator = createGenerator(transforms);
+  raw_vector<uint64_t> partitionIds(timestamps.size());
+  generator->run(rowVector, partitionIds);
+
+  for (size_t i = 0; i < timestamps.size(); ++i) {
+    std::string partitionName =
+        generator->partitionName(partitionIds[i], "null");
+    ASSERT_EQ(partitionName, expectedPartitionNames[i]);
+  }
+}
+
 TEST_F(IcebergPartitionIdGeneratorTest, partitionNameWithMixedTransforms) {
   auto intVector = makeFlatVector<int32_t>(1, [](auto) { return 42; });
   auto bigintVector =
