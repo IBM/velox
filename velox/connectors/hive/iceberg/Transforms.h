@@ -49,6 +49,7 @@ class Transform {
 
   virtual const TypePtr resultType() const = 0;
 
+  // Convert the transformed value to partition name
   template <typename T>
   std::string toHumanString(T value) const {
     return folly::to<std::string>(value);
@@ -78,6 +79,18 @@ class Transform {
 
   std::string toHumanString(bool value) const {
     return value ? "true" : "false";
+  }
+
+  // Match Iceberg spec Java implementation
+  // DateTimeFormatter.ISO_LOCAL_DATE_TIME
+  std::string toHumanString(Timestamp value) const {
+    TimestampToStringOptions options;
+    options.precision = TimestampPrecision::kMilliseconds;
+    options.zeroPaddingYear = true;
+    options.skipTrailingZeros = true;
+    options.leadingPositiveSign = true;
+    options.skipTrailingZeroSeconds = true;
+    return UrlEncode(value.toString(options).data());
   }
 
   std::optional<int32_t> parameter() const {

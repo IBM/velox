@@ -57,6 +57,14 @@ folly::dynamic extractPartitionValue<TypeKind::VARBINARY>(
   return block->toString(row);
 }
 
+template <>
+folly::dynamic extractPartitionValue<TypeKind::TIMESTAMP>(
+    const DecodedVector* block,
+    vector_size_t row) {
+  auto timestamp = block->valueAt<Timestamp>(row);
+  return timestamp.toMicros();
+}
+
 } // namespace
 
 std::pair<std::string, std::string> IcebergInsertFileNameGenerator::gen(
