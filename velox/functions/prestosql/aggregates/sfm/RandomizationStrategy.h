@@ -13,15 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
-#include "velox/vector/ComplexVector.h"
+namespace facebook::velox::functions::aggregate {
 
-namespace facebook::velox::connector::hive {
+/// Interface for randomization strategy. We will implement different
+/// randomization strategies in merging, enable-privacy and testing.
+class RandomizationStrategy {
+ public:
+  virtual bool nextBoolean(double probability) = 0;
 
-std::vector<std::pair<std::string, std::string>> extractPartitionKeyValues(
-    const RowVectorPtr& partitionsVector,
-    vector_size_t row,
-    const std::string& nullValueName = "");
+  virtual ~RandomizationStrategy() = default;
+};
 
-} // namespace facebook::velox::connector::hive
+} // namespace facebook::velox::functions::aggregate

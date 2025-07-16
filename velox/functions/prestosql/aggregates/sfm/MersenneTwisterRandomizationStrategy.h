@@ -14,26 +14,30 @@
  * limitations under the License.
  */
 
-#include "velox/functions/lib/aggregates/AverageAggregateBase.h"
+#pragma once
+
+#include <optional>
+#include <random>
+#include "velox/functions/prestosql/aggregates/sfm/RandomizationStrategy.h"
 
 namespace facebook::velox::functions::aggregate {
 
-void checkAvgIntermediateType(const TypePtr& type) {
-  VELOX_USER_CHECK(
-      type->isRow() || type->isVarbinary(),
-      "Input type for final average must be row type or varbinary type, find {}",
-      type->toString());
-  if (type->kind() == TypeKind::VARBINARY) {
-    return;
+/// A pseudorandomness strategy used to merge SfmSketches.
+class MersenneTwisterRandomizationStrategy : public RandomizationStrategy {
+ public:
+  explicit MersenneTwisterRandomizationStrategy(
+      std::optional<int32_t> seed = {}) {
+    if (seed.has_value()) {
+      rng_.seed(seed.value());
+    }
   }
-  VELOX_USER_CHECK(
-      type->childAt(0)->kind() == TypeKind::DOUBLE ||
-          type->childAt(0)->isLongDecimal(),
-      "Input type for sum in final average must be double or long decimal type.");
-  VELOX_USER_CHECK_EQ(
-      type->childAt(1)->kind(),
-      TypeKind::BIGINT,
-      "Input type for count in final average must be bigint type.");
-}
 
+  bool nextBoolean(double probability) override {
+    std::uniform_real_distribution<double> dist(0.0, 1.0);
+    return dist(rng_) < probability;
+  }
+
+ private:
+  std::mt19937_64 rng_;
+};
 } // namespace facebook::velox::functions::aggregate

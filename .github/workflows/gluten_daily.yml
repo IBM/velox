@@ -12,21 +12,69 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Linux Build
+name: Gluten Daily Build
 
 on:
-  workflow_call:
-    inputs:
-      use-clang:
-        description: Use Clang to compile the project.
-        default: false
-        required: false
-        type: boolean
+  schedule:
+    - cron: 0 0 * * *
 
 jobs:
-  adapters:
-    name: Linux release with adapters
+
+  gluten-cpp-build:
+    name: gluten cpp build
     # prevent errors when forks ff their main branch
+    if: ${{ github.repository == 'IBM/velox' }}
+    runs-on: ubuntu-22.04
+    env:
+      CCACHE_DIR: "${{ github.workspace }}/.ccache"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get Ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-centos7-release-default-${{github.sha}}
+      - name: Setup Gluten
+        run: |
+          git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
+          BRANCH=$(echo ${GITHUB_REF#refs/heads/})
+          sed -i 's/oap-project/IBM/g' ep/build-velox/src/get_velox.sh
+          #sed -i 's/VELOX_BRANCH=2025.*/VELOX_BRANCH=main/g' ep/build-velox/src/get_velox.sh
+      - name: Build Gluten native libraries
+        run: |
+          docker pull apache/gluten:vcpkg-centos-7
+          docker run -v $GITHUB_WORKSPACE:/work -w /work apache/gluten:vcpkg-centos-7 bash -c "
+            set -e
+            df -a
+            cd /work/gluten
+            export CCACHE_DIR=/work/.ccache
+            mkdir -p /work/.ccache
+            source /opt/rh/devtoolset-11/enable
+            ./dev/builddeps-veloxbe.sh --enable_vcpkg=ON --build_arrow=OFF --build_tests=OFF --build_benchmarks=OFF \
+                           --build_examples=OFF --enable_s3=ON --enable_gcs=ON --enable_hdfs=ON --enable_abfs=ON --velox_home=/work
+            ccache -s
+            mkdir -p /work/.m2/repository/org/apache/arrow/
+            cp -r /root/.m2/repository/org/apache/arrow/* /work/.m2/repository/org/apache/arrow/
+          "
+      - name: Save ccache
+        uses: actions/cache/save@v4
+        id: ccache
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-centos7-release-default-${{github.sha}}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: velox-native-lib-centos-7-${{github.sha}}
+          path: ./gluten/cpp/build/releases/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arrow-jars-centos-7-${{github.sha}}
+          path: .m2/repository/org/apache/arrow/
+          if-no-files-found: error
+
+  linux-gcc:
+    name: Build with GCC
     if: ${{ github.repository == 'IBM/velox' }}
     runs-on: ubuntu-22.04
     container: ghcr.io/facebookincubator/velox-dev:adapters
@@ -40,7 +88,6 @@ jobs:
       cudf_SOURCE: BUNDLED
       CUDA_VERSION: '12.8'
       faiss_SOURCE: BUNDLED
-      USE_CLANG: "${{ inputs.use-clang && 'true' || 'false' }}"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,9 +100,6 @@ jobs:
         run: git config --global --add safe.directory ${GITHUB_WORKSPACE}
 
       - name: Install Dependencies
-        env:
-          # Remove after image is rebuild for 14016
-          VELOX_ARROW_CMAKE_PATCH: "${{ github.workspace }}/CMake/resolve_dependency_modules/arrow/cmake-compatibility.patch"
         run: |
           if git diff --name-only HEAD^1 HEAD | grep -q "scripts/setup-"; then
             # Overwrite old setup scripts with changed versions
@@ -126,15 +170,7 @@ jobs:
       - name: Ccache after
         run: ccache -s
 
-      - name: Run Tests
-        # Some of the adapters dependencies are in the 'adapters' conda env
-        shell: mamba run --no-capture-output -n adapters /usr/bin/bash -e {0}
-        env:
-          LIBHDFS3_CONF: ${{ github.workspace }}/scripts/ci/hdfs-client.xml
-        working-directory: _build/release
-        run: |
-          export CLASSPATH=`/usr/local/hadoop/bin/hdfs classpath --glob`
-          ctest -VV -E velox_exec_test --label-exclude cuda_driver --output-on-failure --no-tests=error
-          cd ../../velox/exec/tests/
-          ../../../_build/release/velox/exec/tests/velox_exec_test --gtest_filter=-ScaleWriterLocalPartitionTest*:HashJoinBridgeTest*:MergeJoinTest*
-
+      - uses: actions/cache/save@v4
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-linux-adapters-gcc-${{github.sha}}

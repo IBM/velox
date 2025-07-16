@@ -13,15 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
-#include "velox/vector/ComplexVector.h"
+#include <folly/Random.h>
+#include "velox/functions/prestosql/aggregates/sfm/RandomizationStrategy.h"
 
-namespace facebook::velox::connector::hive {
+namespace facebook::velox::functions::aggregate {
 
-std::vector<std::pair<std::string, std::string>> extractPartitionKeyValues(
-    const RowVectorPtr& partitionsVector,
-    vector_size_t row,
-    const std::string& nullValueName = "");
+/// A secure randomization strategy used to enable differential privacy for
+/// SfmSketch.
+class SecureRandomizationStrategy : public RandomizationStrategy {
+ public:
+  bool nextBoolean(double probability) override {
+    // folly random generate random number in [0, 1)
+    return folly::Random::secureRandDouble01() < probability;
+  }
+};
 
-} // namespace facebook::velox::connector::hive
+} // namespace facebook::velox::functions::aggregate
