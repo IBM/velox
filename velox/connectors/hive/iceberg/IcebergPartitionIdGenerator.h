@@ -42,6 +42,11 @@ class IcebergPartitionIdGenerator : public PartitionIdGenerator {
       uint64_t partitionId,
       const std::string& nullValueName = "") const override;
 
+  /// Return the partition values for all partitions.
+  RowVectorPtr partitionValues() const {
+    return partitionValues_;
+  }
+
  private:
   void savePartitionValues(
       uint64_t partitionId,

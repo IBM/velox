@@ -207,8 +207,12 @@ void IcebergDataSink::splitInputRowsAndEnsureWriters(RowVectorPtr input) {
     }
 
     std::vector<folly::dynamic> partitionValues(partitionChannels_.size());
+    auto icebergPartitionIdGenerator =
+        dynamic_cast<const IcebergPartitionIdGenerator*>(
+            partitionIdGenerator_.get());
+    VELOX_CHECK_NOT_NULL(icebergPartitionIdGenerator);
     const RowVectorPtr transformedValues =
-        partitionIdGenerator_->partitionValues();
+        icebergPartitionIdGenerator->partitionValues();
     for (auto i = 0; i < partitionChannels_.size(); ++i) {
       auto block = transformedValues->childAt(i);
       if (block->isNullAt(row)) {

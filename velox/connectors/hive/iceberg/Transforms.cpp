@@ -84,14 +84,12 @@ VectorPtr IdentityTransform<T>::apply(const VectorPtr& block) const {
   DecodedVector decoded(*block);
 
   for (auto i = 0; i < block->size(); ++i) {
-    if (!decoded.isNullAt(i)) {
-      if constexpr (std::is_same_v<T, StringView>) {
-        T value = decoded.valueAt<T>(i);
-        std::string encodedValue =
-            encoding::Base64::encode(value.data(), value.size());
-        auto flatResult = result->template as<FlatVector<T>>();
-        flatResult->set(i, StringView(encodedValue));
-      }
+    if constexpr (std::is_same_v<T, StringView>) {
+      T value = decoded.valueAt<T>(i);
+      std::string encodedValue =
+          encoding::Base64::encode(value.data(), value.size());
+      auto flatResult = result->template as<FlatVector<T>>();
+      flatResult->set(i, StringView(encodedValue));
     }
   }
   return result;
@@ -107,18 +105,18 @@ VectorPtr BucketTransform<T>::apply(const VectorPtr& block) const {
   DecodedVector decoded(*block);
   auto buckets = parameter_.value();
   for (auto i = 0; i < decoded.size(); ++i) {
-    if (!decoded.isNullAt(i)) {
-      T value = decoded.valueAt<T>(i);
-      if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, int128_t>) {
-        if (sourceType_->isDecimal()) {
-          result->set(i, Murmur3_32::hashDecimal(value) & 0x7FFFFFFF % buckets);
-        } else {
-          result->set(i, Murmur3_32::hash(value) & 0x7FFFFFFF % buckets);
-        }
+    T value = decoded.valueAt<T>(i);
+    int32_t hashValue;
+    if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, int128_t>) {
+      if (sourceType_->isDecimal()) {
+        hashValue = Murmur3_32::hashDecimal(value);
       } else {
-        result->set(i, Murmur3_32::hash(value) & 0x7FFFFFFF % buckets);
+        hashValue = Murmur3_32::hash(value);
       }
+    } else {
+      hashValue = Murmur3_32::hash(value);
     }
+    result->set(i, (hashValue & 0x7FFFFFFF) % buckets);
   }
   return result;
 }
@@ -148,34 +146,32 @@ VectorPtr TruncateTransform<T>::apply(const VectorPtr& block) const {
   }
 
   for (auto i = 0; i < block->size(); ++i) {
-    if (!decoded.isNullAt(i)) {
-      T value = decoded.valueAt<T>(i);
-      if constexpr (
-          std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
-          std::is_same_v<T, int128_t>) {
-        flatResult->set(i, value - ((value % width) + width) % width);
-      } else if constexpr (std::is_same_v<T, StringView>) {
-        if (sourceType_->isVarchar()) {
-          auto length =
-              functions::stringImpl::cappedByteLength<false>(value, width);
-          if (StringView::isInline(length)) {
-            flatResult->set(i, StringView(value.data(), length));
-          } else {
-            memcpy(rawBuffer, value.data(), length);
-            flatResult->setNoCopy(i, StringView(rawBuffer, length));
-            rawBuffer += length;
-          }
-        } else if (sourceType_->isVarbinary()) {
-          std::string encoded = encoding::Base64::encode(
-              value.data(), width > value.size() ? value.size() : width);
-          auto length = encoded.length();
-          if (StringView::isInline(length)) {
-            flatResult->set(i, StringView(encoded));
-          } else {
-            memcpy(rawBuffer, encoded.data(), length);
-            flatResult->setNoCopy(i, StringView(rawBuffer, length));
-            rawBuffer += length;
-          }
+    T value = decoded.valueAt<T>(i);
+    if constexpr (
+        std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
+        std::is_same_v<T, int128_t>) {
+      flatResult->set(i, value - ((value % width) + width) % width);
+    } else if constexpr (std::is_same_v<T, StringView>) {
+      if (sourceType_->isVarchar()) {
+        auto length =
+            functions::stringImpl::cappedByteLength<false>(value, width);
+        if (StringView::isInline(length)) {
+          flatResult->set(i, StringView(value.data(), length));
+        } else {
+          memcpy(rawBuffer, value.data(), length);
+          flatResult->setNoCopy(i, StringView(rawBuffer, length));
+          rawBuffer += length;
+        }
+      } else if (sourceType_->isVarbinary()) {
+        std::string encoded = encoding::Base64::encode(
+            value.data(), width > value.size() ? value.size() : width);
+        auto length = encoded.length();
+        if (StringView::isInline(length)) {
+          flatResult->set(i, StringView(encoded));
+        } else {
+          memcpy(rawBuffer, encoded.data(), length);
+          flatResult->setNoCopy(i, StringView(rawBuffer, length));
+          rawBuffer += length;
         }
       }
     }
@@ -197,10 +193,8 @@ VectorPtr TemporalTransform<T>::apply(const VectorPtr& block) const {
 
   auto flatResult = result->template as<FlatVector<int32_t>>();
   for (auto i = 0; i < block->size(); ++i) {
-    if (!decoded.isNullAt(i)) {
-      T value = decoded.valueAt<T>(i);
-      flatResult->set(i, epochFunc_(value));
-    }
+    T value = decoded.valueAt<T>(i);
+    flatResult->set(i, epochFunc_(value));
   }
 
   return result;

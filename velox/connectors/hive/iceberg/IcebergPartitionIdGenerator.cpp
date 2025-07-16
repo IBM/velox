@@ -179,26 +179,20 @@ std::string IcebergPartitionIdGenerator::partitionName(
     uint64_t partitionId,
     const std::string& nullValueName) const {
   auto pairs = extractPartitionKeyValues(partitionValues_, partitionId);
-
-  size_t estimatedSize = 0;
-  for (const auto& pair : pairs) {
-    estimatedSize += pair.first.size() + pair.second.size() + 2;
-  }
-
-  std::string ret;
-  ret.reserve(estimatedSize * 1.1);
+  std::ostringstream ret;
 
   for (const auto& pair : pairs) {
-    if (!ret.empty()) {
-      ret.push_back('/');
+    if (ret.tellp() > 0) {
+      ret << '/';
     }
-    ret += partitionPathAsLowerCase_ ? UrlEncode(toLower(pair.first).data())
-                                     : UrlEncode(pair.first.data());
-    ret.push_back('=');
-    ret += pair.second;
+    ret << fmt::format(
+        "{}={}",
+        partitionPathAsLowerCase_ ? UrlEncode(toLower(pair.first).data())
+                                  : UrlEncode(pair.first.data()),
+        pair.second);
   }
 
-  return ret;
+  return ret.str();
 }
 
 } // namespace facebook::velox::connector::hive::iceberg

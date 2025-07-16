@@ -58,7 +58,8 @@ int32_t epochHour(Timestamp ts) {
 
 bool isValidPartitionType(TypePtr type) {
   if (type->isRow() || type->isArray() || type->isMap() ||
-      !strcasecmp("TIMESTAMP WITH TIME ZONE", type->name())) {
+      folly::StringPiece(type->name())
+          .equals("TIMESTAMP WITH TIME ZONE", folly::AsciiCaseInsensitive())) {
     return false;
   }
   return true;
@@ -257,7 +258,7 @@ ColumnTransform buildColumnTransform(
           field.type->name()));
     }
     default:
-      VELOX_FAIL(fmt::format("Unsupported transform."));
+      VELOX_UNREACHABLE("Unsupported transform.");
   }
 }
 

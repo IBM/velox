@@ -58,11 +58,6 @@ class PartitionIdGenerator {
       uint64_t partitionId,
       const std::string& nullValueName = "") const;
 
-  /// Return the partition values for all partitions.
-  RowVectorPtr partitionValues() const {
-    return partitionValues_;
-  }
-
  protected:
   PartitionIdGenerator(
       std::vector<column_index_t> partitionChannels,
