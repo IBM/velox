@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include "ColumnTransform.h"
 #include "velox/connectors/hive/HiveDataSink.h"
+#include "velox/connectors/hive/iceberg/ColumnTransform.h"
 #include "velox/connectors/hive/iceberg/TransformFactory.h"
 
 namespace facebook::velox::connector::hive::iceberg {
@@ -49,20 +49,7 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
           dwio::common::FileFormat::PARQUET,
       std::shared_ptr<HiveBucketProperty> bucketProperty = nullptr,
       std::optional<common::CompressionKind> compressionKind = {},
-      const std::unordered_map<std::string, std::string>& serdeParameters = {})
-      : HiveInsertTableHandle(
-            std::move(inputColumns),
-            std::move(locationHandle),
-            tableStorageFormat,
-            std::move(bucketProperty),
-            compressionKind,
-            serdeParameters,
-            nullptr,
-            false,
-            std::make_shared<const IcebergInsertFileNameGenerator>()),
-        partitionSpec_(std::move(partitionSpec)),
-        columnTransforms_(
-            parsePartitionTransformSpecs(partitionSpec_->fields, pool)) {}
+      const std::unordered_map<std::string, std::string>& serdeParameters = {});
 
   ~IcebergInsertTableHandle() = default;
 

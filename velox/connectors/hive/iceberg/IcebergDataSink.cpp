@@ -90,6 +90,29 @@ std::string IcebergInsertFileNameGenerator::toString() const {
   return "IcebergInsertFileNameGenerator";
 }
 
+IcebergInsertTableHandle::IcebergInsertTableHandle(
+    std::vector<std::shared_ptr<const HiveColumnHandle>> inputColumns,
+    std::shared_ptr<const LocationHandle> locationHandle,
+    std::shared_ptr<const IcebergPartitionSpec> partitionSpec,
+    memory::MemoryPool* pool,
+    dwio::common::FileFormat tableStorageFormat,
+    std::shared_ptr<HiveBucketProperty> bucketProperty,
+    std::optional<common::CompressionKind> compressionKind,
+    const std::unordered_map<std::string, std::string>& serdeParameters)
+    : HiveInsertTableHandle(
+          std::move(inputColumns),
+          std::move(locationHandle),
+          tableStorageFormat,
+          std::move(bucketProperty),
+          compressionKind,
+          serdeParameters,
+          nullptr,
+          false,
+          std::make_shared<const IcebergInsertFileNameGenerator>()),
+      partitionSpec_(std::move(partitionSpec)),
+      columnTransforms_(
+          parsePartitionTransformSpecs(partitionSpec_->fields, pool)) {}
+
 IcebergDataSink::IcebergDataSink(
     facebook::velox::RowTypePtr inputType,
     const std::shared_ptr<const IcebergInsertTableHandle>& insertTableHandle,

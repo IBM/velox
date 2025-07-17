@@ -181,19 +181,19 @@ IcebergPartitionIdGenerator::extractPartitionKeyValues(
 std::string IcebergPartitionIdGenerator::partitionName(
     uint64_t partitionId,
     const std::string& nullValueName) const {
-  auto pairs =
+  auto keyValues =
       extractPartitionKeyValues(partitionValues_, partitionId, nullValueName);
   std::ostringstream ret;
 
-  for (const auto& pair : pairs) {
+  for (auto& [key, value] : keyValues) {
     if (ret.tellp() > 0) {
       ret << '/';
     }
-    ret << fmt::format(
-        "{}={}",
-        partitionPathAsLowerCase_ ? urlEncode(toLower(pair.first).data())
-                                  : urlEncode(pair.first.data()),
-        pair.second);
+
+    if (partitionPathAsLowerCase_) {
+      folly::toLowerAscii(key);
+    }
+    ret << fmt::format("{}={}", urlEncode(key.data()), value);
   }
 
   return ret.str();
