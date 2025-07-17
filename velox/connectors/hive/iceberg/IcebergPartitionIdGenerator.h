@@ -40,7 +40,7 @@ class IcebergPartitionIdGenerator : public PartitionIdGenerator {
   /// schema.
   std::string partitionName(
       uint64_t partitionId,
-      const std::string& nullValueName = "") const override;
+      const std::string& nullValueName = "null") const override;
 
   /// Return the partition values for all partitions.
   RowVectorPtr partitionValues() const {
@@ -55,7 +55,8 @@ class IcebergPartitionIdGenerator : public PartitionIdGenerator {
 
   std::vector<std::pair<std::string, std::string>> extractPartitionKeyValues(
       const RowVectorPtr& partitionsVector,
-      vector_size_t row) const;
+      vector_size_t row,
+      const std::string& nullValueString) const;
 
   memory::MemoryPool* pool_;
   const std::vector<ColumnTransform> columnTransforms_;

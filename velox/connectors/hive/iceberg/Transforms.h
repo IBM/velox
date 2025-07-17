@@ -29,7 +29,7 @@ const TypePtr findChildTypeKind(
     const RowTypePtr& inputType,
     const std::string& fullName);
 
-std::string UrlEncode(const StringView& data);
+std::string urlEncode(const StringView& data);
 
 class Transform {
  public:
@@ -74,7 +74,7 @@ class Transform {
   }
 
   std::string toHumanString(const StringView& value) const {
-    return UrlEncode(value);
+    return urlEncode(value);
   }
 
   std::string toHumanString(bool value) const {
@@ -90,7 +90,7 @@ class Transform {
     options.skipTrailingZeros = true;
     options.leadingPositiveSign = true;
     options.skipTrailingZeroSeconds = true;
-    return UrlEncode(value.toString(options).data());
+    return urlEncode(value.toString(options).data());
   }
 
   std::optional<int32_t> parameter() const {

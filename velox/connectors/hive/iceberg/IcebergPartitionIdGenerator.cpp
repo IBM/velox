@@ -38,10 +38,11 @@ std::pair<std::string, std::string> makePartitionKeyValueString(
     const BaseVector* partitionVector,
     vector_size_t row,
     const std::string& name,
-    const ColumnTransform& columnTransform) {
+    const ColumnTransform& columnTransform,
+    const std::string& nullValueString) {
   using T = typename TypeTraits<Kind>::NativeType;
   if (partitionVector->as<SimpleVector<T>>()->isNullAt(row)) {
-    return std::make_pair(name, "null");
+    return std::make_pair(name, nullValueString);
   }
 
   return std::make_pair(
@@ -157,7 +158,8 @@ void IcebergPartitionIdGenerator::run(
 std::vector<std::pair<std::string, std::string>>
 IcebergPartitionIdGenerator::extractPartitionKeyValues(
     const RowVectorPtr& partitionsVector,
-    vector_size_t row) const {
+    vector_size_t row,
+    const std::string& nullValueString) const {
   std::vector<std::pair<std::string, std::string>> partitionKeyValues;
   VELOX_DCHECK_EQ(
       partitionsVector->childrenSize(),
@@ -170,7 +172,8 @@ IcebergPartitionIdGenerator::extractPartitionKeyValues(
         partitionsVector->childAt(i)->loadedVector(),
         row,
         asRowType(partitionsVector->type())->nameOf(i),
-        columnTransforms_[i]));
+        columnTransforms_[i],
+        nullValueString));
   }
   return partitionKeyValues;
 }
@@ -178,7 +181,8 @@ IcebergPartitionIdGenerator::extractPartitionKeyValues(
 std::string IcebergPartitionIdGenerator::partitionName(
     uint64_t partitionId,
     const std::string& nullValueName) const {
-  auto pairs = extractPartitionKeyValues(partitionValues_, partitionId);
+  auto pairs =
+      extractPartitionKeyValues(partitionValues_, partitionId, nullValueName);
   std::ostringstream ret;
 
   for (const auto& pair : pairs) {
@@ -187,8 +191,8 @@ std::string IcebergPartitionIdGenerator::partitionName(
     }
     ret << fmt::format(
         "{}={}",
-        partitionPathAsLowerCase_ ? UrlEncode(toLower(pair.first).data())
-                                  : UrlEncode(pair.first.data()),
+        partitionPathAsLowerCase_ ? urlEncode(toLower(pair.first).data())
+                                  : urlEncode(pair.first.data()),
         pair.second);
   }
 
