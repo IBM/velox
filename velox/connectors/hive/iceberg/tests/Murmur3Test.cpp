@@ -38,45 +38,6 @@ class Murmur3HashTest : public ::testing::Test {
     return bytes;
   }
 
-  static int32_t parseDateToEpochDays(const std::string& date) {
-    if (date.size() != 10 || date[4] != '-' || date[7] != '-') {
-      throw std::invalid_argument("Invalid date format, expected YYYY-MM-DD.");
-    }
-
-    const auto year = std::stoi(date.substr(0, 4));
-    const auto month = std::stoi(date.substr(5, 2));
-    const auto day = std::stoi(date.substr(8, 2));
-
-    auto result = util::daysSinceEpochFromDate(year, month, day);
-    if (result.hasError()) {
-      VELOX_FAIL("Date out of range: {}-{}-{}", year, month, day);
-    }
-    return result.value();
-  }
-
-  static int64_t parseDateTimeToEpochMicroSeconds(const std::string& dateTime) {
-    if (dateTime.size() != 19 || dateTime[4] != '-' || dateTime[7] != '-' ||
-        dateTime[10] != 'T' || dateTime[13] != ':' || dateTime[16] != ':') {
-      VELOX_FAIL("Invalid datetime format, expected YYYY-MM-DDTHH:MM:SS");
-    }
-
-    const auto year = std::stoi(dateTime.substr(0, 4));
-    const auto month = std::stoi(dateTime.substr(5, 2));
-    const auto day = std::stoi(dateTime.substr(8, 2));
-    const auto hour = std::stoi(dateTime.substr(11, 2));
-    const auto minute = std::stoi(dateTime.substr(14, 2));
-    const auto second = std::stoi(dateTime.substr(17, 2));
-    auto daysResult = util::daysSinceEpochFromDate(year, month, day);
-    if (daysResult.hasError()) {
-      VELOX_FAIL("Invalid date: {}-{}-{}", year, month, day);
-    }
-
-    const auto microsSinceMidnight = util::fromTime(hour, minute, second, 0);
-    const auto timestamp =
-        util::fromDatetime(daysResult.value(), microsSinceMidnight);
-    return timestamp.getSeconds() * 1'000'000L + timestamp.getNanos();
-  }
-
   template <typename T>
   void
   verifyHashBucket(T input, uint32_t bucketCount, uint32_t expectedBucket) {
@@ -96,15 +57,26 @@ TEST_F(Murmur3HashTest, testSpecValues) {
   auto hash = Murmur3_32::hash(34);
   EXPECT_EQ(hash, 2'017'239'379);
 
-  const auto days = parseDateToEpochDays("2017-11-16");
-  EXPECT_EQ(days, 17'486);
-  hash = Murmur3_32::hash(days);
+  const auto days =
+      util::fromDateString("2017-11-16", util::ParseMode::kIso8601);
+  EXPECT_EQ(days.value(), 17'486);
+  hash = Murmur3_32::hash(days.value());
   EXPECT_EQ(hash, -653'330'422);
 
-  const auto seconds = parseDateTimeToEpochMicroSeconds("2017-11-16T22:31:08");
-  EXPECT_EQ(seconds, 1'510'871'468'000'000L);
-  hash = Murmur3_32::hash(seconds);
+  auto timestampResult = util::fromTimestampString(
+      "2017-11-16T22:31:08", util::TimestampParseMode::kIso8601);
+  hash = Murmur3_32::hash(timestampResult.value().toMicros());
   EXPECT_EQ(hash, -2'047'944'441);
+
+  timestampResult = util::fromTimestampString(
+      "2017-11-16T22:31:08.000001", util::TimestampParseMode::kIso8601);
+  hash = Murmur3_32::hash(timestampResult.value().toMicros());
+  EXPECT_EQ(hash, -1'207'196'810);
+
+  timestampResult = util::fromTimestampString(
+      "2017-11-16T22:31:08.000001001", util::TimestampParseMode::kIso8601);
+  hash = Murmur3_32::hash(timestampResult.value().toMicros());
+  EXPECT_EQ(hash, -1'207'196'810);
 
   const auto bytes = new char[4]{0x00, 0x01, 0x02, 0x03};
   hash = Murmur3_32::hash(bytes, 4);
@@ -144,8 +116,12 @@ TEST_F(Murmur3HashTest, hashTrue) {
 
 TEST_F(Murmur3HashTest, hashDate) {
   const std::vector<std::tuple<int32_t, uint32_t, uint32_t>> testCases = {
-      {parseDateToEpochDays("1970-01-09"), 10, 3},
-      {parseDateToEpochDays("1970-02-04"), 100, 79}};
+      {util::fromDateString("1970-01-09", util::ParseMode::kIso8601).value(),
+       10,
+       3},
+      {util::fromDateString("1970-02-04", util::ParseMode::kIso8601).value(),
+       100,
+       79}};
 
   for (const auto& [input, bucketCount, expectedBucket] : testCases) {
     verifyHashBucket(input, bucketCount, expectedBucket);
