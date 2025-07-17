@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/common/Enums.h"
 #include "velox/type/Type.h"
 
 namespace facebook::velox::connector::hive::iceberg {
@@ -30,26 +31,7 @@ enum class TransformType {
   kTruncate
 };
 
-FOLLY_ALWAYS_INLINE std::string transformTypeToName(
-    TransformType transformType) {
-  switch (transformType) {
-    case TransformType::kIdentity:
-      return "identity";
-    case TransformType::kHour:
-      return "hour";
-    case TransformType::kDay:
-      return "day";
-    case TransformType::kMonth:
-      return "month";
-    case TransformType::kYear:
-      return "year";
-    case TransformType::kBucket:
-      return "bucket";
-    case TransformType::kTruncate:
-      return "trunc";
-  }
-  return "unknown";
-}
+VELOX_DECLARE_ENUM_NAME(TransformType);
 
 struct IcebergPartitionSpec {
   struct Field {

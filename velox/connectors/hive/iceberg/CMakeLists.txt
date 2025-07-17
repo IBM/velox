@@ -14,14 +14,15 @@
 
 velox_add_library(
   velox_hive_iceberg_connector
-  IcebergSplitReader.cpp
-  IcebergSplit.cpp
-  PositionalDeleteFileReader.cpp
   IcebergDataSink.cpp
   IcebergPartitionIdGenerator.cpp
-  Transforms.cpp
+  IcebergSplit.cpp
+  IcebergSplitReader.cpp
+  Murmur3.cpp
+  PartitionSpec.cpp
+  PositionalDeleteFileReader.cpp
   TransformFactory.cpp
-  Murmur3.cpp)
+  Transforms.cpp)
 
 velox_link_libraries(velox_hive_iceberg_connector velox_connector Folly::folly)
 

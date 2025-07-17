@@ -95,7 +95,7 @@ class Transform {
   }
 
   std::string name() const {
-    return transformTypeToName(transformType_);
+    return std::string(TransformTypeName::toName(transformType_));
   }
 
  private:

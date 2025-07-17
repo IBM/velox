@@ -79,7 +79,7 @@ ColumnTransform createDateTimeTransform(
       field.type->isDate() || field.type->isTimestamp(),
       "Unsupported column type {} for transform {}",
       field.type->name(),
-      transformTypeToName(transformType));
+      TransformTypeName::toName(transformType));
   return ColumnTransform(field.name, transform);
 }
 
