@@ -1146,4 +1146,74 @@ struct StDimensionFunction {
   }
 };
 
+template <typename T>
+struct StExteriorRingFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE bool call(
+      out_type<Geometry>& result,
+      const arg_type<Geometry>& geometry) {
+    std::unique_ptr<geos::geom::Geometry> geosGeometry =
+        geospatial::GeometryDeserializer::deserialize(geometry);
+
+    auto validate = geospatial::validateType(
+        *geosGeometry,
+        {geos::geom::GeometryTypeId::GEOS_POLYGON},
+        "ST_ExteriorRing");
+
+    if (!validate.ok()) {
+      VELOX_USER_FAIL(validate.message());
+    }
+
+    if (geosGeometry->isEmpty()) {
+      return false;
+    }
+
+    geos::geom::Polygon* polygon =
+        dynamic_cast<geos::geom::Polygon*>(geosGeometry.get());
+
+    VELOX_CHECK_NOT_NULL(
+        polygon, "Validation passed but type not recognized as Polygon");
+
+    geospatial::GeometrySerializer::serialize(
+        *(polygon->getExteriorRing()), result);
+
+    return true;
+  }
+};
+
+template <typename T>
+struct StEnvelopeFunction {
+  VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  StEnvelopeFunction() {
+    factory_ = geos::geom::GeometryFactory::create();
+  }
+
+  FOLLY_ALWAYS_INLINE Status
+  call(out_type<Geometry>& result, const arg_type<Geometry>& geometry) {
+    std::unique_ptr<const geos::geom::Geometry> geosGeometry =
+        geospatial::GeometryDeserializer::deserialize(geometry);
+
+    auto env = geosGeometry->getEnvelope();
+
+    if (env->isEmpty()) {
+      GEOS_TRY(
+          {
+            auto polygon =
+                std::unique_ptr<geos::geom::Polygon>(factory_->createPolygon());
+            geospatial::GeometrySerializer::serialize(*polygon, result);
+          },
+          "Failed to create empty polygon in ST_Envelope");
+    }
+
+    geospatial::GeometrySerializer::serialize(*env, result);
+
+    return Status::OK();
+  }
+
+ private:
+  geos::geom::GeometryFactory::Ptr factory_;
+};
+
 } // namespace facebook::velox::functions

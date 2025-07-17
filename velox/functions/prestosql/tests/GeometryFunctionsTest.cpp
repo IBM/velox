@@ -2142,3 +2142,71 @@ TEST_F(GeometryFunctionsTest, testStDimension) {
   testStDimensionFunc("LINESTRING EMPTY", 1);
   testStDimensionFunc("POINT (1 4))", 0);
 }
+
+TEST_F(GeometryFunctionsTest, testStExteriorRing) {
+  const auto testStExteriorRingFunc =
+      [&](const std::optional<std::string>& wkt,
+          const std::optional<std::string>& expected) {
+        std::optional<std::string> result = evaluateOnce<std::string>(
+            "ST_AsText(ST_ExteriorRing(ST_GeometryFromText(c0)))", wkt);
+
+        if (expected.has_value()) {
+          ASSERT_TRUE(result.has_value());
+          ASSERT_EQ(result.value(), expected.value());
+        } else {
+          ASSERT_FALSE(result.has_value());
+        }
+      };
+
+  testStExteriorRingFunc("POLYGON EMPTY", std::nullopt);
+  testStExteriorRingFunc(
+      "POLYGON ((1 1, 1 4, 4 1, 1 1))", "LINESTRING (1 1, 1 4, 4 1, 1 1)");
+
+  testStExteriorRingFunc(
+      "POLYGON ((0 0, 0 5, 5 5, 5 0, 0 0), (1 1, 1 2, 2 2, 2 1, 1 1))",
+      "LINESTRING (0 0, 0 5, 5 5, 5 0, 0 0)");
+
+  VELOX_ASSERT_USER_THROW(
+      testStExteriorRingFunc("LINESTRING (1 1, 2 2, 1 3)", std::nullopt),
+      "ST_ExteriorRing only applies to Polygon. Input type is: LineString");
+  VELOX_ASSERT_USER_THROW(
+      testStExteriorRingFunc(
+          "MULTIPOLYGON (((1 1, 2 2, 1 3, 1 1)), ((4 4, 5 5, 4 6, 4 4)))",
+          std::nullopt),
+      "ST_ExteriorRing only applies to Polygon. Input type is: MultiPolygon");
+}
+
+TEST_F(GeometryFunctionsTest, testStEnvelope) {
+  const auto testStEnvelopeFunc =
+      [&](const std::optional<std::string>& wkt,
+          const std::optional<std::string>& expected) {
+        std::optional<std::string> result = evaluateOnce<std::string>(
+            "ST_AsText(ST_Envelope(ST_GeometryFromText(c0)))", wkt);
+
+        if (expected.has_value()) {
+          ASSERT_TRUE(result.has_value());
+          ASSERT_EQ(result.value(), expected.value());
+        } else {
+          ASSERT_FALSE(result.has_value());
+        }
+      };
+
+  testStEnvelopeFunc(
+      "MULTIPOINT (1 2, 2 4, 3 6, 4 8)", "POLYGON ((1 2, 1 8, 4 8, 4 2, 1 2))");
+  testStEnvelopeFunc("LINESTRING EMPTY", "POLYGON EMPTY");
+  testStEnvelopeFunc(
+      "LINESTRING (1 1, 2 2, 1 3)", "POLYGON ((1 1, 1 3, 2 3, 2 1, 1 1))");
+  testStEnvelopeFunc(
+      "LINESTRING (8 4, 5 7)", "POLYGON ((5 4, 5 7, 8 7, 8 4, 5 4))");
+  testStEnvelopeFunc(
+      "MULTILINESTRING ((1 1, 5 1), (2 4, 4 4))",
+      "POLYGON ((1 1, 1 4, 5 4, 5 1, 1 1))");
+  testStEnvelopeFunc(
+      "POLYGON ((1 1, 4 1, 1 4, 1 1))", "POLYGON ((1 1, 1 4, 4 4, 4 1, 1 1))");
+  testStEnvelopeFunc(
+      "MULTIPOLYGON (((1 1, 1 3, 3 3, 3 1, 1 1)), ((0 0, 0 2, 2 2, 2 0, 0 0)))",
+      "POLYGON ((0 0, 0 3, 3 3, 3 0, 0 0))");
+  testStEnvelopeFunc(
+      "GEOMETRYCOLLECTION (POINT (5 1), LINESTRING (3 4, 4 4))",
+      "POLYGON ((3 1, 3 4, 5 4, 5 1, 3 1))");
+}
