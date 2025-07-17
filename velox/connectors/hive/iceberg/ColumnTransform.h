@@ -26,14 +26,10 @@ class ColumnTransform {
   /// Constructs a ColumnTransform.
   /// @param columnName The name of the column to transform.
   /// @param transform The transform to apply to the column.
-  /// @param parameter Optional parameter for the transform.
   ColumnTransform(
       const std::string& columnName,
-      const std::shared_ptr<Transform>& transform,
-      std::optional<int32_t> parameter)
-      : columnName_(std::move(columnName)),
-        transform_(transform),
-        parameter_(parameter) {}
+      const std::shared_ptr<Transform>& transform)
+      : columnName_(std::move(columnName)), transform_(transform) {}
 
   /// Returns the name of the transform, such as identity, bucket etc.
   /// @return The transform name.
@@ -90,7 +86,6 @@ class ColumnTransform {
  private:
   std::string columnName_;
   std::shared_ptr<Transform> transform_;
-  std::optional<int32_t> parameter_;
 };
 
 } // namespace facebook::velox::connector::hive::iceberg

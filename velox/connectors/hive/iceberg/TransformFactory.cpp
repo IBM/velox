@@ -80,7 +80,7 @@ ColumnTransform createDateTimeTransform(
       "Unsupported column type {} for transform {}",
       field.type->name(),
       transformTypeToName(transformType));
-  return ColumnTransform(field.name, transform, std::nullopt);
+  return ColumnTransform(field.name, transform);
 }
 
 template <TypeKind Kind>
@@ -90,7 +90,7 @@ ColumnTransform createIdentityTransform(
   using NativeType = typename TypeTraits<Kind>::NativeType;
   auto transform =
       std::make_shared<IdentityTransform<NativeType>>(field.type, pool);
-  return ColumnTransform(field.name, transform, std::nullopt);
+  return ColumnTransform(field.name, transform);
 }
 
 template <TypeKind Kind>
@@ -102,7 +102,7 @@ ColumnTransform createBucketTransform(
   using NativeType = typename TypeTraits<Kind>::NativeType;
   auto transform =
       std::make_shared<BucketTransform<NativeType>>(count, field.type, pool);
-  return ColumnTransform(field.name, transform, count);
+  return ColumnTransform(field.name, transform);
 }
 
 template <TypeKind Kind>
@@ -114,7 +114,7 @@ ColumnTransform createTruncateTransform(
   using NativeType = typename TypeTraits<Kind>::NativeType;
   auto transform =
       std::make_shared<TruncateTransform<NativeType>>(width, field.type, pool);
-  return ColumnTransform(field.name, transform, width);
+  return ColumnTransform(field.name, transform);
 }
 
 ColumnTransform buildColumnTransform(
