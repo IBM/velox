@@ -17,6 +17,8 @@ velox_link_libraries(velox_connector velox_common_config velox_vector)
 
 add_subdirectory(fuzzer)
 
+add_subdirectory(lakehouse)
+
 if(${VELOX_ENABLE_HIVE_CONNECTOR})
   add_subdirectory(hive)
 endif()
