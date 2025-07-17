@@ -23,7 +23,7 @@
 
 namespace facebook::velox::connector::hive::iceberg {
 
-constexpr int32_t kEpochYear = 1970;
+static constexpr int32_t kEpochYear = 1970;
 
 const TypePtr findChildTypeKind(
     const RowTypePtr& inputType,
@@ -61,16 +61,13 @@ class Transform {
 
   std::string toHumanString(int64_t value) const {
     if (sourceType_->isShortDecimal()) {
-      return DecimalUtil::toString(value, sourceType_);
+      return decimalToHumanString(value);
     }
     return folly::to<std::string>(value);
   }
 
   std::string toHumanString(int128_t value) const {
-    if (sourceType_->isLongDecimal()) {
-      return DecimalUtil::toString(value, sourceType_);
-    }
-    return folly::to<std::string>(value);
+    return decimalToHumanString(value);
   }
 
   std::string toHumanString(const StringView& value) const {
@@ -99,6 +96,18 @@ class Transform {
 
   std::string name() const {
     return transformTypeToName(transformType_);
+  }
+
+ private:
+  template <typename T>
+  std::string decimalToHumanString(T value) const {
+    const auto [p, s] = getDecimalPrecisionScale(*sourceType_);
+    const auto maxSize = DecimalUtil::maxStringViewSize(p, s);
+    std::string buffer(maxSize, '\0');
+    const auto actualSize =
+        DecimalUtil::castToString(value, s, maxSize, buffer.data());
+    buffer.resize(actualSize);
+    return buffer;
   }
 
  protected:
@@ -203,9 +212,11 @@ class TemporalTransform final : public Transform {
             tmValue.tm_mday,
             tmValue.tm_hour);
       }
-      case TransformType::kDay:
-      default: {
+      case TransformType::kDay: {
         return DATE()->toString(value);
+      }
+      default: {
+        VELOX_UNREACHABLE("Unsupported transform type.");
       }
     }
   }

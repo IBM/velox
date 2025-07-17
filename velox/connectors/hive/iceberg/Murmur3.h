@@ -21,8 +21,8 @@
 
 namespace facebook::velox::connector::hive::iceberg {
 constexpr uint32_t kDefaultSeed = 0;
-constexpr uint32_t C1 = 0xCC9E2D51;
-constexpr uint32_t C2 = 0x1B873593;
+constexpr uint32_t kC1 = 0xCC9E2D51;
+constexpr uint32_t kC2 = 0x1B873593;
 
 class Murmur3_32 final {
  public:
@@ -36,9 +36,9 @@ class Murmur3_32 final {
 
  private:
   FOLLY_ALWAYS_INLINE static uint32_t mixK1(uint32_t k1) {
-    k1 *= C1;
+    k1 *= kC1;
     k1 = ((k1) << (15)) | ((k1) >> (32 - (15)));
-    k1 *= C2;
+    k1 *= kC2;
     return k1;
   }
 

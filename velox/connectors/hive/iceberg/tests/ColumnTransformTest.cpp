@@ -22,6 +22,7 @@
 using namespace facebook::velox;
 using namespace facebook::velox::connector::hive::iceberg;
 using namespace facebook::velox::test;
+
 namespace facebook::velox::connector::hive::iceberg::test {
 
 class ColumnTransformTest : public IcebergTestBase {};

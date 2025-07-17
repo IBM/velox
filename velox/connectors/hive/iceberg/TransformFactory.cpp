@@ -66,7 +66,7 @@ bool isValidPartitionType(TypePtr type) {
 }
 
 template <TypeKind Kind>
-ColumnTransform createTemporalTransform(
+ColumnTransform createDateTimeTransform(
     TransformType transformType,
     const IcebergPartitionSpec::Field& field,
     std::function<int32_t(typename TypeTraits<Kind>::NativeType)> epochFunc,
@@ -133,7 +133,7 @@ ColumnTransform buildColumnTransform(
     // Year transform.
     case TransformType::kYear: {
       if (field.type->isDate()) {
-        return createTemporalTransform<TypeKind::INTEGER>(
+        return createDateTimeTransform<TypeKind::INTEGER>(
             TransformType::kYear,
             field,
             [](int32_t v) { return epochYear(v); },
@@ -141,7 +141,7 @@ ColumnTransform buildColumnTransform(
       }
 
       if (field.type->isTimestamp()) {
-        return createTemporalTransform<TypeKind::TIMESTAMP>(
+        return createDateTimeTransform<TypeKind::TIMESTAMP>(
             TransformType::kYear,
             field,
             [](Timestamp v) { return epochYear(v); },
@@ -155,7 +155,7 @@ ColumnTransform buildColumnTransform(
     // Month transform.
     case TransformType::kMonth: {
       if (field.type->isDate()) {
-        return createTemporalTransform<TypeKind::INTEGER>(
+        return createDateTimeTransform<TypeKind::INTEGER>(
             TransformType::kMonth,
             field,
             [](int32_t v) { return epochMonth(v); },
@@ -163,7 +163,7 @@ ColumnTransform buildColumnTransform(
       }
 
       if (field.type->isTimestamp()) {
-        return createTemporalTransform<TypeKind::TIMESTAMP>(
+        return createDateTimeTransform<TypeKind::TIMESTAMP>(
             TransformType::kMonth,
             field,
             [](Timestamp v) { return epochMonth(v); },
@@ -177,7 +177,7 @@ ColumnTransform buildColumnTransform(
     // Day transform.
     case TransformType::kDay: {
       if (field.type->isDate()) {
-        return createTemporalTransform<TypeKind::INTEGER>(
+        return createDateTimeTransform<TypeKind::INTEGER>(
             TransformType::kDay,
             field,
             [](int32_t v) { return epochDay(v); },
@@ -185,7 +185,7 @@ ColumnTransform buildColumnTransform(
       }
 
       if (field.type->isTimestamp()) {
-        return createTemporalTransform<TypeKind::TIMESTAMP>(
+        return createDateTimeTransform<TypeKind::TIMESTAMP>(
             TransformType::kDay,
             field,
             [](Timestamp v) { return epochDay(v); },
@@ -198,7 +198,7 @@ ColumnTransform buildColumnTransform(
     // Hour transform.
     case TransformType::kHour: {
       if (field.type->isTimestamp()) {
-        return createTemporalTransform<TypeKind::TIMESTAMP>(
+        return createDateTimeTransform<TypeKind::TIMESTAMP>(
             TransformType::kHour,
             field,
             [](Timestamp v) { return epochHour(v); },
@@ -214,22 +214,26 @@ ColumnTransform buildColumnTransform(
       VELOX_USER_CHECK(
           field.parameter.has_value() && field.parameter.value() > 0,
           "Bucket transform requires a positive parameter.");
-      auto count = field.parameter.value();
+      auto numBuckets = field.parameter.value();
 
-      if (field.type->isInteger() || field.type->isDate()) {
-        return createBucketTransform<TypeKind::INTEGER>(field, count, pool);
+      if (field.type->isInteger()) {
+        return createBucketTransform<TypeKind::INTEGER>(
+            field, numBuckets, pool);
       }
       if (field.type->isBigint() || field.type->isShortDecimal()) {
-        return createBucketTransform<TypeKind::BIGINT>(field, count, pool);
+        return createBucketTransform<TypeKind::BIGINT>(field, numBuckets, pool);
       }
-      if (field.type->isHugeint() || field.type->isLongDecimal()) {
-        return createBucketTransform<TypeKind::HUGEINT>(field, count, pool);
+      if (field.type->isLongDecimal()) {
+        return createBucketTransform<TypeKind::HUGEINT>(
+            field, numBuckets, pool);
       }
       if (field.type->isVarchar()) {
-        return createBucketTransform<TypeKind::VARCHAR>(field, count, pool);
+        return createBucketTransform<TypeKind::VARCHAR>(
+            field, numBuckets, pool);
       }
       if (field.type->isVarbinary()) {
-        return createBucketTransform<TypeKind::VARBINARY>(field, count, pool);
+        return createBucketTransform<TypeKind::VARBINARY>(
+            field, numBuckets, pool);
       }
       VELOX_UNREACHABLE(fmt::format(
           "Unsupported column type {} for transform bucket.",
@@ -268,6 +272,7 @@ std::vector<ColumnTransform> parsePartitionTransformSpecs(
     const std::vector<IcebergPartitionSpec::Field>& fields,
     memory::MemoryPool* pool) {
   std::vector<ColumnTransform> transforms;
+  transforms.reserve(fields.size());
   for (auto& field : fields) {
     transforms.emplace_back(buildColumnTransform(field, pool));
   }
