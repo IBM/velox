@@ -104,7 +104,7 @@ VectorPtr BucketTransform<T>::apply(const VectorPtr& block) const {
     result->setNulls(block->nulls());
   }
   DecodedVector decoded(*block);
-  auto buckets = parameter_.value();
+  auto numBuckets = parameter_.value();
   for (auto i = 0; i < decoded.size(); ++i) {
     if (!decoded.isNullAt(i)) {
       T value = decoded.valueAt<T>(i);
@@ -115,10 +115,12 @@ VectorPtr BucketTransform<T>::apply(const VectorPtr& block) const {
         } else {
           hashValue = Murmur3_32::hash(value);
         }
+      } else if constexpr (std::is_same_v<T, Timestamp>) {
+        hashValue = Murmur3_32::hash(value.toMicros());
       } else {
         hashValue = Murmur3_32::hash(value);
       }
-      result->set(i, (hashValue & 0x7FFFFFFF) % buckets);
+      result->set(i, (hashValue & 0x7FFFFFFF) % numBuckets);
     }
   }
   return result;

@@ -392,14 +392,15 @@ TEST_F(IcebergTransformUnitTest, testTruncateTransform) {
 
 TEST_F(IcebergTransformUnitTest, testBucketTransform) {
   rowType_ =
-      ROW({"c_int", "c_bigint", "c_varchar", "c_varbinary"},
-          {INTEGER(), BIGINT(), VARCHAR(), VARBINARY()});
+      ROW({"c_int", "c_bigint", "c_varchar", "c_varbinary", "c_date"},
+          {INTEGER(), BIGINT(), VARCHAR(), VARBINARY(), DATE()});
 
   const auto partitionSpec = createPartitionSpec(
       {"bucket(c_int, 4)",
        "bucket(c_bigint, 8)",
        "bucket(c_varchar, 16)",
-       "bucket(c_varbinary, 32)"},
+       "bucket(c_varbinary, 32)",
+       "bucket(c_date, 10)"},
       rowType_);
 
   auto& intBucketTransform = partitionSpec->fields[0];
@@ -463,6 +464,23 @@ TEST_F(IcebergTransformUnitTest, testBucketTransform) {
        StringView(std::string(100, 'x').c_str(), 100)},
       {11, 5, 15, 30, 10, 18},
       VARBINARY());
+
+  auto& dateBucketTransform = partitionSpec->fields[4];
+  EXPECT_EQ(dateBucketTransform.transformType, TransformType::kBucket);
+
+  testTransform<int32_t, int32_t>(
+      dateBucketTransform,
+      {
+          0, // 1970-01-01.
+          365, // 1971-01-01.
+          18'262, // 2020-01-01.
+          -365, // 1969-01-01.
+          -1, // 1969-12-31.
+          20'181, // 2025-04-03.
+          -36889, // 1869-01-01.
+          18'628 // 2021-01-01.
+      },
+      {6, 1, 3, 6, 2, 5, 9, 0});
 }
 
 TEST_F(IcebergTransformUnitTest, testTemporalTransforms) {
@@ -523,6 +541,7 @@ TEST_F(IcebergTransformUnitTest, testTransformOnTimestamp) {
        "month(c_timestamp)",
        "day(c_timestamp)",
        "hour(c_timestamp)",
+       "bucket(c_timestamp, 8)",
        "c_timestamp"},
       rowType_);
 
@@ -574,7 +593,20 @@ TEST_F(IcebergTransformUnitTest, testTransformOnTimestamp) {
        Timestamp(1612224000, 0)},
       {0, 8760, 447072, 447840});
 
-  auto& identityTransform = partitionSpec->fields[4];
+  auto& bucketTransform = partitionSpec->fields[4];
+  EXPECT_EQ(bucketTransform.transformType, TransformType::kBucket);
+  testTransform<Timestamp, int32_t>(
+      bucketTransform,
+      {
+          Timestamp(0, 0),
+          Timestamp(31536000, 0),
+          Timestamp(1609459200, 0),
+          Timestamp(1612224000, 0),
+          Timestamp(-31536000, 0),
+      },
+      {4, 4, 6, 5, 3});
+
+  auto& identityTransform = partitionSpec->fields[5];
   EXPECT_EQ(identityTransform.transformType, TransformType::kIdentity);
   testTransform<Timestamp, Timestamp>(
       identityTransform,

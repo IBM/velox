@@ -216,12 +216,16 @@ ColumnTransform buildColumnTransform(
           "Bucket transform requires a positive parameter.");
       auto numBuckets = field.parameter.value();
 
-      if (field.type->isInteger()) {
+      if (field.type->isInteger() || field.type->isDate()) {
         return createBucketTransform<TypeKind::INTEGER>(
             field, numBuckets, pool);
       }
       if (field.type->isBigint() || field.type->isShortDecimal()) {
         return createBucketTransform<TypeKind::BIGINT>(field, numBuckets, pool);
+      }
+      if (field.type->isTimestamp()) {
+        return createBucketTransform<TypeKind::TIMESTAMP>(
+            field, numBuckets, pool);
       }
       if (field.type->isLongDecimal()) {
         return createBucketTransform<TypeKind::HUGEINT>(
@@ -245,7 +249,7 @@ ColumnTransform buildColumnTransform(
           field.parameter.has_value() && field.parameter.value() > 0,
           "Truncate transform requires a positive parameter.");
       auto width = field.parameter.value();
-      if (field.type->isInteger() || field.type->isDate()) {
+      if (field.type->isInteger()) {
         return createTruncateTransform<TypeKind::INTEGER>(field, width, pool);
       }
       if (field.type->isBigint() || field.type->isShortDecimal()) {
