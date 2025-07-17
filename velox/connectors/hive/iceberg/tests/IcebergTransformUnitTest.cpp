@@ -477,6 +477,10 @@ TEST_F(IcebergTransformUnitTest, testTemporalTransforms) {
   testTransform<int32_t, int32_t>(
       yearTransform,
       {
+          -36889, // 1869-01-01.
+          -18628, // 1919-01-01.
+          -365, // 1969-01-01.
+          -1, // 1969-12-31.
           0, // 1970-01-01 (epoch).
           31, // 1970-02-01.
           365, // 1971-01-01.
@@ -484,6 +488,10 @@ TEST_F(IcebergTransformUnitTest, testTemporalTransforms) {
           20'181 // 2025-04-03.
       },
       {
+          -101, // 1869 - 1970 = -101.
+          -51, // 1919 - 1970 = -51.
+          -1, // 1969 - 1970 = -1.
+          -1, // 1969 - 1970 = -1.
           0, // 1970 - 1970 = 0.
           0, // 1970 - 1970 = 0.
           1, // 1971 - 1970 = 1.
@@ -495,12 +503,16 @@ TEST_F(IcebergTransformUnitTest, testTemporalTransforms) {
   EXPECT_EQ(monthTransform.transformType, TransformType::kMonth);
 
   testTransform<int32_t, int32_t>(
-      monthTransform, {0, 31, 365, 18'262, 20'181}, {0, 1, 12, 600, 663});
+      monthTransform,
+      {-36525, -18263, -365, -1, 0, 31, 365, 18'262, 20'181},
+      {-1201, -600, -12, -1, 0, 1, 12, 600, 663});
   // Test day transform.
   auto& dayTransform = partitionSpec->fields[2];
   EXPECT_EQ(dayTransform.transformType, TransformType::kDay);
   testTransform<int32_t, int32_t>(
-      dayTransform, {0, 31, 365, 18'262, 20'181}, {0, 31, 365, 18'262, 20'181});
+      dayTransform,
+      {-36525, -18263, -365, -1, 0, 31, 365, 18'262, 20'181},
+      {-36525, -18263, -365, -1, 0, 31, 365, 18'262, 20'181});
 }
 
 TEST_F(IcebergTransformUnitTest, testTransformOnTimestamp) {
