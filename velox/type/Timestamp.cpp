@@ -268,7 +268,6 @@ StringView Timestamp::tmToStringView(
   *writePosition++ = ':';
   writePosition += appendDigits(tmValue.tm_min, 2, writePosition);
 
-  // Second.
   if (options.precision == TimestampToStringOptions::Precision::kMilliseconds) {
     nanos /= 1'000'000;
   } else if (
