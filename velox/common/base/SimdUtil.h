@@ -439,6 +439,8 @@ xsimd::batch<T, A> setAll(T value, const A& = {}) {
 #if defined(__aarch64__)
     return xsimd::batch<T, A>(
         xsimd::broadcast<unsigned char, A>(value ? -1 : 0));
+#elif defined(__PPC64__)
+    return xsimd::batch<T, A>(value);
 #else
     return xsimd::batch<T, A>(xsimd::broadcast<int64_t, A>(value ? -1 : 0));
 #endif

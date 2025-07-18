@@ -111,6 +111,8 @@ function get_cxx_flags {
     elif [ "$OS" = "Linux" ]; then
       if [ "$MACHINE" = "aarch64" ]; then
         CPU_ARCH="aarch64"
+      elif [ "$MACHINE" = "ppc64le" ]; then
+        CPU_ARCH="ppc64le"
       else # x86_64
         local CPU_CAPABILITIES
         CPU_CAPABILITIES=$(cat /proc/cpuinfo | grep flags | head -n 1 | awk '{print tolower($0)}')
@@ -179,6 +181,11 @@ function get_cxx_flags {
       echo -n "-march=armv8-a+crc+crypto "
     fi
     ;;
+
+  "ppc64le")
+    echo -n "-mcpu=power10"
+    ;;
+
   *)
     echo -n "Architecture not supported!"
     ;;

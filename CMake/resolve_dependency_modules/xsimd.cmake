@@ -13,23 +13,40 @@
 # limitations under the License.
 include_guard(GLOBAL)
 
-set(VELOX_XSIMD_VERSION 10.0.0)
-set(
-  VELOX_XSIMD_BUILD_SHA256_CHECKSUM
-  73f818368b3a4dad92fab1b2933d93694241bd2365a6181747b2df1768f6afdd
-)
-set(
-  VELOX_XSIMD_SOURCE_URL
-  "https://github.com/xtensor-stack/xsimd/archive/refs/tags/${VELOX_XSIMD_VERSION}.tar.gz"
-)
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "ppc64le")
+  set(
+    VELOX_XSIMD_GIT_TAG
+    "main"
+  )
+  set(
+    VELOX_XSIMD_GIT_URL
+    "git@github.ibm.com:lakehouse/xsimd-ppc64le.git"
+  )
 
-velox_resolve_dependency_url(XSIMD)
+  message(STATUS "Building xsimd from git")
+  FetchContent_Declare(
+    xsimd
+    GIT_REPOSITORY ${VELOX_XSIMD_GIT_URL}
+    GIT_TAG  ${VELOX_XSIMD_GIT_TAG}
+  )
+else()
+  set(VELOX_XSIMD_VERSION 10.0.0)
+  set(
+    VELOX_XSIMD_BUILD_SHA256_CHECKSUM
+    73f818368b3a4dad92fab1b2933d93694241bd2365a6181747b2df1768f6afdd
+  )
+  set(
+    VELOX_XSIMD_SOURCE_URL
+    "https://github.com/xtensor-stack/xsimd/archive/refs/tags/${VELOX_XSIMD_VERSION}.tar.gz"
+  )
 
-message(STATUS "Building xsimd from source")
-FetchContent_Declare(
-  xsimd
-  URL ${VELOX_XSIMD_SOURCE_URL}
-  URL_HASH ${VELOX_XSIMD_BUILD_SHA256_CHECKSUM}
-)
+  velox_resolve_dependency_url(XSIMD)
 
+  message(STATUS "Building xsimd from source")
+  FetchContent_Declare(
+    xsimd
+    URL ${VELOX_XSIMD_SOURCE_URL}
+    URL_HASH ${VELOX_XSIMD_BUILD_SHA256_CHECKSUM}
+  )
+endif()
 FetchContent_MakeAvailable(xsimd)

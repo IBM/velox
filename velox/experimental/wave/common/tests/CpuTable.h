@@ -28,6 +28,8 @@ class CpuBucket {
   using TagVector = xsimd::batch<uint8_t, xsimd::sse2>;
 #elif XSIMD_WITH_NEON
   using TagVector = xsimd::batch<uint8_t, xsimd::neon>;
+#elif XSIMD_WITH_VSX
+  using TagVector = xsimd::batch<uint8_t, xsimd::vsx>;
 #endif
 
   auto loadTags() {
@@ -35,6 +37,8 @@ class CpuBucket {
     return TagVector(_mm_loadu_si128(reinterpret_cast<__m128i const*>(tags_)));
 #elif XSIMD_WITH_NEON
     return TagVector(vld1q_u8(tags_));
+#elif XSIMD_WITH_VSX
+    return TagVector(*reinterpret_cast<const __vector unsigned char*>(tags_));
 #endif
   }
 
