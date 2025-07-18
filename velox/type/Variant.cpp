@@ -24,15 +24,11 @@
 namespace facebook::velox {
 
 namespace {
-const folly::json::serialization_opts& getOpts() {
-  static const folly::json::serialization_opts opts_ = []() {
-    folly::json::serialization_opts opts;
-    opts.sort_keys = true;
-    return opts;
-  }();
-  return opts_;
-}
-} // namespace
+
+bool dispatchDynamicVariantEquality(
+    const Variant& a,
+    const Variant& b,
+    const bool& enableNullEqualsNull);
 
 template <bool nullEqualsNull>
 bool evaluateNullEquality(const Variant& a, const Variant& b) {
@@ -43,6 +39,9 @@ bool evaluateNullEquality(const Variant& a, const Variant& b) {
   }
   return false;
 }
+
+template <TypeKind KIND>
+struct VariantEquality;
 
 // scalars
 template <TypeKind KIND>
@@ -162,6 +161,7 @@ bool dispatchDynamicVariantEquality(
   return VELOX_DYNAMIC_TYPE_DISPATCH_METHOD(
       VariantEquality, equals<false>, a.kind(), a, b);
 }
+} // namespace
 
 std::string encloseWithQuote(std::string str) {
   constexpr auto kDoubleQuote = '"';
@@ -256,6 +256,13 @@ std::string Variant::toString(const TypePtr& type) const {
 
   folly::assume_unreachable();
 }
+
+namespace {
+const folly::json::serialization_opts& getOpts() {
+  static const folly::json::serialization_opts kOpts;
+  return kOpts;
+}
+} // namespace
 
 std::string Variant::toJson(const TypePtr& type) const {
   // todo(youknowjack): consistent story around std::stringifying, converting,
@@ -1025,44 +1032,55 @@ void Variant::verifyArrayElements(const std::vector<Variant>& inputs) {
   }
 }
 
+bool Variant::equalsWithNullEqualsNull(const Variant& other) const {
+  if (other.kind_ != this->kind_) {
+    return false;
+  }
+  return dispatchDynamicVariantEquality(*this, other, true);
+}
+
 TypePtr Variant::inferType() const {
   switch (kind_) {
     case TypeKind::MAP: {
       TypePtr keyType;
       TypePtr valueType;
-      auto& m = map();
-      for (auto& pair : m) {
-        if (keyType == nullptr && !pair.first.isNull()) {
-          keyType = pair.first.inferType();
-        }
-        if (valueType == nullptr && !pair.second.isNull()) {
-          valueType = pair.second.inferType();
-        }
-        if (keyType && valueType) {
-          break;
+      if (!isNull()) {
+        const auto& m = map();
+        for (const auto& [key, value] : m) {
+          if (keyType == nullptr && !key.isNull()) {
+            keyType = key.inferType();
+          }
+          if (valueType == nullptr && !value.isNull()) {
+            valueType = value.inferType();
+          }
+          if (keyType && valueType) {
+            break;
+          }
         }
       }
       return MAP(
           keyType ? keyType : UNKNOWN(), valueType ? valueType : UNKNOWN());
     }
     case TypeKind::ROW: {
-      auto& r = row();
-      std::vector<TypePtr> children{};
-      children.reserve(r.size());
-      for (auto& v : r) {
-        children.push_back(v.inferType());
+      std::vector<TypePtr> children;
+      if (!isNull()) {
+        const auto& r = row();
+        children.reserve(r.size());
+        for (auto& v : r) {
+          children.push_back(v.inferType());
+        }
       }
       return ROW(std::move(children));
     }
     case TypeKind::ARRAY: {
       TypePtr elementType = UNKNOWN();
       if (!isNull()) {
-        auto& a = array();
+        const auto& a = array();
         if (!a.empty()) {
           elementType = a.at(0).inferType();
         }
       }
-      return ARRAY(elementType);
+      return ARRAY(std::move(elementType));
     }
     case TypeKind::OPAQUE: {
       return value<TypeKind::OPAQUE>().type;
@@ -1072,6 +1090,77 @@ TypePtr Variant::inferType() const {
     }
     default:
       return createScalarType(kind_);
+  }
+}
+
+bool Variant::isTypeCompatible(const TypePtr& type) const {
+  if (kind_ == TypeKind::UNKNOWN) {
+    return true;
+  }
+
+  if (kind_ != type->kind()) {
+    return false;
+  }
+
+  switch (kind_) {
+    case TypeKind::ARRAY: {
+      if (!isNull()) {
+        const auto& a = array();
+        if (!a.empty()) {
+          if (!a[0].isTypeCompatible(type->childAt(0))) {
+            return false;
+          }
+        }
+      }
+
+      return true;
+    }
+    case TypeKind::MAP: {
+      if (!isNull()) {
+        bool keyTypeChecked = false;
+        bool valueTypeChecked = false;
+
+        const auto& m = map();
+        for (auto& [key, value] : m) {
+          if (!keyTypeChecked && !key.isNull()) {
+            if (!key.isTypeCompatible(type->childAt(0))) {
+              return false;
+            }
+            keyTypeChecked = true;
+          }
+          if (!valueTypeChecked && !value.isNull()) {
+            if (!value.isTypeCompatible(type->childAt(1))) {
+              return false;
+            }
+            valueTypeChecked = true;
+          }
+
+          if (keyTypeChecked && valueTypeChecked) {
+            break;
+          }
+        }
+      }
+
+      return true;
+    }
+    case TypeKind::ROW: {
+      if (!isNull()) {
+        const auto& r = row();
+        if (r.size() != type->size()) {
+          return false;
+        }
+
+        for (auto i = 0; i < r.size(); ++i) {
+          if (!r[i].isTypeCompatible(type->childAt(i))) {
+            return false;
+          }
+        }
+      }
+
+      return true;
+    }
+    default:
+      return true;
   }
 }
 
