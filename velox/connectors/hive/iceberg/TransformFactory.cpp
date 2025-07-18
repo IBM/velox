@@ -17,6 +17,7 @@
 #include "velox/connectors/hive/iceberg/TransformFactory.h"
 
 #include "velox/functions/lib/TimeUtils.h"
+#include "velox/functions/prestosql/types/TimestampWithTimeZoneType.h"
 #include "velox/vector/ComplexVector.h"
 
 namespace facebook::velox::connector::hive::iceberg {
@@ -58,8 +59,7 @@ int32_t epochHour(Timestamp ts) {
 
 bool isValidPartitionType(TypePtr type) {
   if (type->isRow() || type->isArray() || type->isMap() ||
-      folly::StringPiece(type->name())
-          .equals("TIMESTAMP WITH TIME ZONE", folly::AsciiCaseInsensitive())) {
+      isTimestampWithTimeZoneType(type)) {
     return false;
   }
   return true;

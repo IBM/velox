@@ -33,15 +33,8 @@ std::string urlEncode(const StringView& data);
 
 class Transform {
  public:
-  Transform(
-      TypePtr type,
-      TransformType transformType,
-      std::optional<int32_t> parameter,
-      memory::MemoryPool* pool)
-      : sourceType_(type),
-        transformType_(transformType),
-        parameter_(parameter),
-        pool_(pool) {}
+  Transform(TypePtr type, TransformType transformType, memory::MemoryPool* pool)
+      : sourceType_(type), transformType_(transformType), pool_(pool) {}
 
   virtual ~Transform() = default;
 
@@ -90,10 +83,6 @@ class Transform {
     return urlEncode(value.toString(options).data());
   }
 
-  std::optional<int32_t> parameter() const {
-    return parameter_;
-  }
-
   std::string name() const {
     return std::string(TransformTypeName::toName(transformType_));
   }
@@ -113,7 +102,6 @@ class Transform {
  protected:
   const TypePtr sourceType_;
   const TransformType transformType_;
-  const std::optional<int32_t> parameter_;
   memory::MemoryPool* pool_;
 };
 
@@ -121,7 +109,7 @@ template <typename T>
 class IdentityTransform final : public Transform {
  public:
   IdentityTransform(const TypePtr& type, memory::MemoryPool* pool)
-      : Transform(type, TransformType::kIdentity, std::nullopt, pool) {}
+      : Transform(type, TransformType::kIdentity, pool) {}
 
   VectorPtr apply(const VectorPtr& block) const override;
 
@@ -141,13 +129,16 @@ template <typename T>
 class BucketTransform final : public Transform {
  public:
   BucketTransform(int32_t count, const TypePtr& type, memory::MemoryPool* pool)
-      : Transform(type, TransformType::kBucket, count, pool) {}
+      : Transform(type, TransformType::kBucket, pool), numBuckets_(count) {}
 
   VectorPtr apply(const VectorPtr& block) const override;
 
   const TypePtr resultType() const override {
     return INTEGER();
   }
+
+ private:
+  const int32_t numBuckets_;
 };
 
 template <typename T>
@@ -157,13 +148,16 @@ class TruncateTransform final : public Transform {
       int32_t width,
       const TypePtr& type,
       memory::MemoryPool* pool)
-      : Transform(type, TransformType::kTruncate, width, pool) {}
+      : Transform(type, TransformType::kTruncate, pool), width_(width) {}
 
   VectorPtr apply(const VectorPtr& block) const override;
 
   const TypePtr resultType() const override {
     return sourceType_;
   }
+
+ private:
+  const int32_t width_;
 };
 
 template <typename T>
@@ -174,8 +168,7 @@ class TemporalTransform final : public Transform {
       TransformType transformType,
       memory::MemoryPool* pool,
       const std::function<int32_t(T)>& epochFunc)
-      : Transform(type, transformType, std::nullopt, pool),
-        epochFunc_(epochFunc) {}
+      : Transform(type, transformType, pool), epochFunc_(epochFunc) {}
 
   VectorPtr apply(const VectorPtr& block) const override;
 

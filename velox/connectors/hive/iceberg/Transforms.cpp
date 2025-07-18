@@ -46,6 +46,7 @@ const TypePtr findChildTypeKind(
 }
 
 // Iceberg spec requires URL encoding in the partition path.
+// This function matches java.net.URLEncoder.encode(string, "UTF-8").
 std::string urlEncode(const StringView& data) {
   std::ostringstream ret;
 
@@ -104,7 +105,6 @@ VectorPtr BucketTransform<T>::apply(const VectorPtr& block) const {
     result->setNulls(block->nulls());
   }
   DecodedVector decoded(*block);
-  auto numBuckets = parameter_.value();
   for (auto i = 0; i < decoded.size(); ++i) {
     if (!decoded.isNullAt(i)) {
       T value = decoded.valueAt<T>(i);
@@ -120,7 +120,7 @@ VectorPtr BucketTransform<T>::apply(const VectorPtr& block) const {
       } else {
         hashValue = Murmur3_32::hash(value);
       }
-      result->set(i, (hashValue & 0x7FFFFFFF) % numBuckets);
+      result->set(i, (hashValue & 0x7FFFFFFF) % numBuckets_);
     }
   }
   return result;
@@ -137,18 +137,21 @@ VectorPtr TruncateTransform<T>::apply(const VectorPtr& block) const {
   DecodedVector decoded(*block);
 
   auto flatResult = result->template as<FlatVector<T>>();
-  auto width = parameter_.value();
   char* rawBuffer = nullptr;
-
+  BufferPtr buffer;
   if (std::is_same_v<T, StringView>) {
     if (sourceType_->isVarchar()) {
-      rawBuffer =
-          flatResult->getRawStringBufferWithSpace(block->size() * width);
+      buffer = AlignedBuffer::allocate<char>(block->size() * width_, pool_);
     } else {
-      rawBuffer = flatResult->getRawStringBufferWithSpace(
-          block->size() * encoding::Base64::calculateEncodedSize(width));
+      buffer = AlignedBuffer::allocate<char>(
+          block->size() * encoding::Base64::calculateEncodedSize(width_),
+          pool_);
     }
+
+    rawBuffer = const_cast<char*>(buffer->as<char>());
   }
+
+  size_t actualSize = 0;
 
   for (auto i = 0; i < block->size(); ++i) {
     if (!decoded.isNullAt(i)) {
@@ -156,21 +159,22 @@ VectorPtr TruncateTransform<T>::apply(const VectorPtr& block) const {
       if constexpr (
           std::is_same_v<T, int32_t> || std::is_same_v<T, int64_t> ||
           std::is_same_v<T, int128_t>) {
-        flatResult->set(i, value - ((value % width) + width) % width);
+        flatResult->set(i, value - ((value % width_) + width_) % width_);
       } else if constexpr (std::is_same_v<T, StringView>) {
         if (sourceType_->isVarchar()) {
           auto length =
-              functions::stringImpl::cappedByteLength<false>(value, width);
+              functions::stringImpl::cappedByteLength<false>(value, width_);
           if (StringView::isInline(length)) {
             flatResult->set(i, StringView(value.data(), length));
           } else {
             memcpy(rawBuffer, value.data(), length);
             flatResult->setNoCopy(i, StringView(rawBuffer, length));
             rawBuffer += length;
+            actualSize += length;
           }
         } else if (sourceType_->isVarbinary()) {
           std::string encoded = encoding::Base64::encode(
-              value.data(), width > value.size() ? value.size() : width);
+              value.data(), width_ > value.size() ? value.size() : width_);
           auto length = encoded.length();
           if (StringView::isInline(length)) {
             flatResult->set(i, StringView(encoded));
@@ -178,12 +182,16 @@ VectorPtr TruncateTransform<T>::apply(const VectorPtr& block) const {
             memcpy(rawBuffer, encoded.data(), length);
             flatResult->setNoCopy(i, StringView(rawBuffer, length));
             rawBuffer += length;
+            actualSize += length;
           }
         }
       }
     }
   }
 
+  if constexpr (std::is_same_v<T, StringView>) {
+    buffer->setSize(actualSize);
+  }
   return result;
 }
 
