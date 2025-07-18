@@ -119,7 +119,7 @@ TEST_F(IcebergPartitionIdGeneratorTest, partitionNameWithIdentityTransforms) {
   raw_vector<uint64_t> partitionIds(1);
   generator->run(rowVector, partitionIds);
 
-  std::string partitionName = generator->partitionName(partitionIds[0], "null");
+  std::string partitionName = generator->partitionName(partitionIds[0]);
   std::vector<std::string> expectedComponents = {
       "c_int=42",
       "c_bigint=9876543210",
@@ -188,8 +188,7 @@ TEST_F(
   generator->run(rowVector, partitionIds);
 
   for (size_t i = 0; i < timestamps.size(); ++i) {
-    std::string partitionName =
-        generator->partitionName(partitionIds[i], "null");
+    std::string partitionName = generator->partitionName(partitionIds[i]);
     ASSERT_EQ(partitionName, expectedPartitionNames[i]);
   }
 }
@@ -259,7 +258,7 @@ TEST_F(IcebergPartitionIdGeneratorTest, partitionNameWithMixedTransforms) {
   raw_vector<uint64_t> partitionIds(1);
   generator->run(rowVector, partitionIds);
 
-  std::string partitionName = generator->partitionName(partitionIds[0], "null");
+  std::string partitionName = generator->partitionName(partitionIds[0]);
   std::vector<std::string> expectedComponents = {
       "c_int_bucket=2",
       "c_bigint_trunc=9876543000",
@@ -295,7 +294,7 @@ TEST_F(IcebergPartitionIdGeneratorTest, partitionNameWithNullValues) {
   raw_vector<uint64_t> partitionIds(1);
   generator->run(rowVector, partitionIds);
 
-  std::string partitionName = generator->partitionName(partitionIds[0], "null");
+  std::string partitionName = generator->partitionName(partitionIds[0]);
   std::vector<std::string> expectedComponents = {
       "c_int_bucket=null", "c_varchar_trunc=null", "c_decimal=null"};
   verifyPartitionComponents(partitionName, expectedComponents);
@@ -312,13 +311,13 @@ TEST_F(IcebergPartitionIdGeneratorTest, partitionNameWithLowerCase) {
   auto generator = createGenerator(transforms, true);
   raw_vector<uint64_t> partitionIds(1);
   generator->run(rowVector, partitionIds);
-  std::string partitionName = generator->partitionName(partitionIds[0], "null");
+  std::string partitionName = generator->partitionName(partitionIds[0]);
   std::vector<std::string> expectedComponents = {"mixed_column=MiXeD_CaSe"};
   verifyPartitionComponents(partitionName, expectedComponents);
 
   generator = createGenerator(transforms);
   generator->run(rowVector, partitionIds);
-  partitionName = generator->partitionName(partitionIds[0], "null");
+  partitionName = generator->partitionName(partitionIds[0]);
   expectedComponents = {"MiXeD_CoLuMn=MiXeD_CaSe"};
   verifyPartitionComponents(partitionName, expectedComponents);
 }
@@ -374,8 +373,7 @@ TEST_F(IcebergPartitionIdGeneratorTest, urlEncodingForSpecialChars) {
     raw_vector<uint64_t> partitionIds(1);
     generator->run(rowVector, partitionIds);
 
-    std::string partitionName =
-        generator->partitionName(partitionIds[0], "null");
+    std::string partitionName = generator->partitionName(partitionIds[0]);
     std::string expectedComponent =
         fmt::format("{}={}", columnNames[0], expectedEncoded);
     ASSERT_EQ(partitionName, expectedComponent);
@@ -403,8 +401,7 @@ TEST_F(IcebergPartitionIdGeneratorTest, multipleRows) {
       "c_int=30/c_varchar=value3"};
 
   for (size_t i = 0; i < 3; ++i) {
-    std::string partitionName =
-        generator->partitionName(partitionIds[i], "null");
+    std::string partitionName = generator->partitionName(partitionIds[i]);
     ASSERT_EQ(partitionName, expectedNames[i]);
   }
 }

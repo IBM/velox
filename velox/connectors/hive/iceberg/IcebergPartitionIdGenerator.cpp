@@ -38,11 +38,10 @@ std::pair<std::string, std::string> makePartitionKeyValueString(
     const BaseVector* partitionVector,
     vector_size_t row,
     const std::string& name,
-    const ColumnTransform& columnTransform,
-    const std::string& nullValueString) {
+    const ColumnTransform& columnTransform) {
   using T = typename TypeTraits<Kind>::NativeType;
   if (partitionVector->as<SimpleVector<T>>()->isNullAt(row)) {
-    return std::make_pair(name, nullValueString);
+    return std::make_pair(name, "null");
   }
 
   return std::make_pair(
@@ -158,8 +157,7 @@ void IcebergPartitionIdGenerator::run(
 std::vector<std::pair<std::string, std::string>>
 IcebergPartitionIdGenerator::extractPartitionKeyValues(
     const RowVectorPtr& partitionsVector,
-    vector_size_t row,
-    const std::string& nullValueString) const {
+    vector_size_t row) const {
   std::vector<std::pair<std::string, std::string>> partitionKeyValues;
   VELOX_DCHECK_EQ(
       partitionsVector->childrenSize(),
@@ -172,17 +170,14 @@ IcebergPartitionIdGenerator::extractPartitionKeyValues(
         partitionsVector->childAt(i)->loadedVector(),
         row,
         asRowType(partitionsVector->type())->nameOf(i),
-        columnTransforms_[i],
-        nullValueString));
+        columnTransforms_[i]));
   }
   return partitionKeyValues;
 }
 
 std::string IcebergPartitionIdGenerator::partitionName(
-    uint64_t partitionId,
-    const std::string& nullValueName) const {
-  auto keyValues =
-      extractPartitionKeyValues(partitionValues_, partitionId, nullValueName);
+    uint64_t partitionId) const {
+  auto keyValues = extractPartitionKeyValues(partitionValues_, partitionId);
   std::ostringstream ret;
 
   for (auto& [key, value] : keyValues) {

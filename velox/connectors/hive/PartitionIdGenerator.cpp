@@ -110,9 +110,7 @@ void PartitionIdGenerator::run(
   }
 }
 
-std::string PartitionIdGenerator::partitionName(
-    uint64_t partitionId,
-    const std::string& /*nullValueName*/) const {
+std::string PartitionIdGenerator::partitionName(uint64_t partitionId) const {
   return FileUtils::makePartName(
       extractPartitionKeyValues(partitionValues_, partitionId),
       partitionPathAsLowerCase_);

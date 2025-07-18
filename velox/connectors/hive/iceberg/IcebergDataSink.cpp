@@ -300,7 +300,7 @@ std::optional<std::string> IcebergDataSink::getPartitionName(
   std::optional<std::string> partitionName;
   if (isPartitioned()) {
     partitionName =
-        partitionIdGenerator_->partitionName(id.partitionId.value(), "null");
+        partitionIdGenerator_->partitionName(id.partitionId.value());
   }
   return partitionName;
 }
