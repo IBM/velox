@@ -16,6 +16,7 @@
 # shellcheck source-path=SCRIPT_DIR
 
 SCRIPT_DIR=$(dirname "${BASH_SOURCE[0]}")
+REAL_SCRIPT_DIR=$(realpath ${SCRIPT_DIR})
 source "$SCRIPT_DIR"/setup-helper-functions.sh
 source "$SCRIPT_DIR"/setup-versions.sh
 
@@ -34,6 +35,9 @@ SIMDJSON_SKIPUTF8VALIDATION=${SIMDJSON_SKIPUTF8VALIDATION:-"OFF"}
 
 USE_CLANG="${USE_CLANG:-false}"
 
+# added for using xsimd for power
+XSIMD_PPC64LE_REPOSITORY=${XSIMD_PPC64LE_REPOSITORY:-"git@github.ibm.com:lakehouse/xsimd-ppc64le.git"}
+
 MACHINE=$(uname -m)
 
 # Read WGET_OPTIONS into an array which can be expanded to nothing
@@ -51,6 +55,13 @@ function install_fmt {
 
 function install_folly {
   wget_and_untar https://github.com/facebook/folly/archive/refs/tags/"${FB_OS_VERSION}".tar.gz folly
+  (
+    if [[ ${MACHINE} == "ppc64le" ]]; then
+      cd ${DEPENDENCY_DIR}/folly
+      sed -i "s/#elif defined(__aarch64__) || defined(__arm__)/#elif defined(__aarch64__) || defined(__arm__) || (defined(__powerpc64__))/g" folly/tracing/StaticTracepoint-ELF.h
+      sed -i "s/defined(__arm__))/defined(__arm__) || defined(__powerpc64__))/g" folly/tracing/StaticTracepoint.h
+    fi
+  )
   local FOLLY_FLAGS=(-DBUILD_SHARED_LIBS="$VELOX_BUILD_SHARED" -DBUILD_TESTS=OFF -DFOLLY_HAVE_INT128_T=ON)
   # When folly is static, use static gflags to avoid dual gflags flag
   # registration when .so plugins are dlopen'd (both the binary and plugin
@@ -228,7 +239,14 @@ function install_snappy {
 }
 
 function install_xsimd {
-  wget_and_untar https://github.com/xtensor-stack/xsimd/archive/refs/tags/"${XSIMD_VERSION}".tar.gz xsimd
+  if [[ ${MACHINE} == "ppc64le" ]]; then
+    mkdir -p "${DEPENDENCY_DIR}"
+    pushd "${DEPENDENCY_DIR}"
+    git clone -q ${XSIMD_PPC64LE_REPOSITORY} xsimd
+    popd
+  else
+    wget_and_untar https://github.com/xtensor-stack/xsimd/archive/refs/tags/${XSIMD_VERSION}.tar.gz xsimd
+  fi
   cmake_install_dir xsimd
 }
 
@@ -350,6 +368,8 @@ function install_minio {
     MINIO_ARCH="arm64"
   elif [[ $MACHINE == x86_64 ]]; then
     MINIO_ARCH="amd64"
+  elif [[ $MACHINE == ppc64le ]]; then
+    MINIO_ARCH="ppc64le"
   else
     echo "Unsupported Minio platform"
   fi

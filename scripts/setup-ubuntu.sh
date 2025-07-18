@@ -136,7 +136,7 @@ function install_conda {
     return
   fi
   ARCH=$(uname -m)
-  if [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ]; then
+  if [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ] && [ "$ARCH" != "ppc64le" ]; then
     echo "Unsupported architecture: $ARCH"
     exit 1
   fi

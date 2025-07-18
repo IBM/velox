@@ -38,9 +38,20 @@ namespace detail {
 
 template <typename T, typename A>
 int genericToBitMask(xsimd::batch_bool<T, A> mask) {
-  static_assert(mask.size <= 32);
-  alignas(A::alignment()) bool tmp[mask.size];
-  mask.store_aligned(tmp);
+
+  #if XSIMD_WITH_VSX
+    static constexpr size_t N = xsimd::batch_bool<T, xsimd::vsx>::size;
+    using bool_t = typename xsimd::batch_bool<T, xsimd::vsx>::value_type;
+
+    std::array<bool_t, N> tmp{};
+    mask.store_aligned(tmp.data());
+
+  #else //why does this not work for Power?
+    static_assert(mask.size <= 32);
+    alignas(A::alignment()) bool tmp[mask.size];
+    mask.store_aligned(tmp);
+  #endif
+
   int ans = 0;
   for (int i = 0; i < mask.size; ++i) {
     ans |= tmp[i] << i;
@@ -110,6 +121,22 @@ struct BitMask<T, A, 1> {
         0x80}; // upper half
     uint8x16_t vmask = vandq_u8(mask.data, vmask_const);
     return (vaddv_u8(vget_high_u8(vmask)) << 8) | vaddv_u8(vget_low_u8(vmask));
+  }
+#endif
+
+#if XSIMD_WITH_VSX
+  static int toBitMask(xsimd::batch_bool<T,A> mask, const xsimd::vsx&) {
+    static constexpr size_t N = xsimd::batch_bool<T, xsimd::vsx>::size;
+    using bool_t = typename xsimd::batch_bool<T, xsimd::vsx>::value_type;
+
+    std::array<bool_t, N> tmp{};
+    mask.store_aligned(tmp.data());
+
+    int ans = 0;
+    for (size_t i = 0; i < N; ++i) {
+      ans |= (tmp[i] ? 1 : 0) << i;
+    }
+    return ans;
   }
 #endif
 
@@ -690,6 +717,14 @@ struct Gather<T, int32_t, A, 8> {
     return Batch64<int32_t>::load_unaligned(indices);
   }
 
+#if XSIMD_WITH_VSX
+  static Batch64<int32_t> loadIndices(
+      const int32_t* indices,
+      const xsimd::vsx&) {
+    return Batch64<int32_t>::load_unaligned(indices);
+  }
+#endif
+
 #if XSIMD_WITH_AVX2
   template <int kScale>
   static xsimd::batch<T, A>
@@ -937,6 +972,16 @@ xsimd::batch<int16_t, A> pack32(
     xsimd::batch<int32_t, A> y,
     const xsimd::neon&) {
   return vcombine_s16(vmovn_s32(x), vmovn_s32(y));
+}
+#endif
+
+#if XSIMD_WITH_VSX
+template <typename A>
+xsimd::batch<int16_t, A> pack32(
+    xsimd::batch<int32_t,A>x,
+    xsimd::batch<int32_t,A>y,
+    const xsimd::vsx&) {
+  return vec_pack(x.data, y.data);
 }
 #endif
 
@@ -1236,6 +1281,24 @@ struct GetHalf<int64_t, int32_t, A> {
     return vmovl_s32(half);
   }
 #endif
+
+#if XSIMD_WITH_VSX
+  template <bool kSecond>
+  static xsimd::batch<int64_t, A> apply(
+      xsimd::batch<int32_t, A> data,
+      const xsimd::vsx&) {
+    __vector int a = reinterpret_cast<__vector int&>(data); // 4x int32
+    __vector signed long long result;
+
+    if constexpr (!kSecond) {
+        result = vec_unpackh(a);
+    } else {
+        result = vec_unpackl(a);
+    }
+    
+    return xsimd::batch<int64_t, A>(result);
+  }
+#endif
 };
 
 template <typename A>
@@ -1271,6 +1334,24 @@ struct GetHalf<uint64_t, int32_t, A> {
       half = vget_high_s32(data);
     }
     return vmovl_u32(vreinterpret_u32_s32(half));
+  }
+#endif
+
+#if XSIMD_WITH_VSX
+  template <bool kSecond>
+  static xsimd::batch<uint64_t, A> apply(
+      xsimd::batch<int32_t, A> data,
+      const xsimd::vsx&) {
+    __vector int a = reinterpret_cast<__vector int&>(data);
+    __vector signed long long result;
+
+    if constexpr (!kSecond) {
+        result = vec_unpackh(a);
+    } else {
+        result = vec_unpackl(a);
+    }
+    __vector unsigned long long uresult = reinterpret_cast<__vector unsigned long long>(result);
+    return xsimd::batch<uint64_t, A>(uresult);
   }
 #endif
 
@@ -1428,6 +1509,26 @@ struct Crc32<uint64_t, A> {
     return checksum;
   }
 #endif
+
+#if XSIMD_WITH_VSX
+  static uint32_t apply(uint32_t checksum, uint64_t value, const xsimd::vsx&) {
+    //need to test
+    const uint32_t POLY = 0x82F63B78; // Reflected Castagnoli polynomial
+
+    for (int i = 0; i < 8; ++i) {
+        uint8_t byte = static_cast<uint8_t>(value >> (8 * i));
+        checksum ^= byte;
+        for (int bit = 0; bit < 8; ++bit) {
+            if (checksum & 1)
+                checksum = (checksum >> 1) ^ POLY;
+            else
+                checksum >>= 1;
+        }
+    }
+
+    return checksum;
+  }
+#endif
 };
 
 } // namespace detail
@@ -1459,6 +1560,13 @@ struct HalfBatchImpl<T, A, std::enable_if_t<std::is_base_of_v<xsimd::sve, A>>> {
 };
 #endif
 
+#if XSIMD_WITH_VSX
+template <typename T, typename A>
+struct HalfBatchImpl<T, A, std::enable_if_t<std::is_base_of_v<xsimd::vsx, A>>> {
+  using Type = Batch64<T>;
+};
+#endif
+
 template <typename T, typename A>
 struct HalfBatchImpl<T, A, std::enable_if_t<std::is_base_of_v<xsimd::avx, A>>> {
   using Type = xsimd::batch<T, xsimd::sse2>;
@@ -1485,6 +1593,14 @@ struct ReinterpretBatch {
 #if XSIMD_WITH_AVX
   static xsimd::batch<T, A> apply(xsimd::batch<U, A> data, const xsimd::avx&) {
     return xsimd::batch<T, A>(data);
+  }
+#endif
+
+#if XSIMD_WITH_VSX
+  static xsimd::batch<T, A> apply(xsimd::batch<U, A> data, const xsimd::vsx&) {
+    // return xsimd::batch<T, A>(data); WHY DOES THIS NOT WORK?
+    xsimd::batch<T,A> c = reinterpret_cast<xsimd::batch<T,A>&>(data);
+    return c;
   }
 #endif
 };

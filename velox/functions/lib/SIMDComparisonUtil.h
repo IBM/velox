@@ -38,6 +38,37 @@ inline uint64_t to64Bits(const int8_t* resultData) {
           numScalarElements == 64,
       "Unsupported number of scalar elements");
   uint64_t res = 0UL;
+#if XSIMD_WITH_VSX
+  // VSX: explicitly compare reinterpreted batch to zero broadcast and use toBitMask
+  // WHY IS THIS NEEDED? Should be fixed by xsimd::batch implementation
+  if constexpr (numScalarElements == 64) {
+    res = simd::toBitMask(
+        simd::reinterpretBatch<uint8_t>(d_type::load_unaligned(resultData)) !=
+        xsimd::broadcast<uint8_t>(0));
+  } else if constexpr (numScalarElements == 32) {
+    auto* addr = reinterpret_cast<uint32_t*>(&res);
+    *(addr) = simd::toBitMask(
+        simd::reinterpretBatch<uint8_t>(d_type::load_unaligned(resultData)) !=
+        xsimd::broadcast<uint8_t>(0));
+    *(addr + 1) = simd::toBitMask(
+        simd::reinterpretBatch<uint8_t>(d_type::load_unaligned(resultData + 32)) !=
+        xsimd::broadcast<uint8_t>(0));
+  } else if constexpr (numScalarElements == 16) {
+    auto* addr = reinterpret_cast<uint16_t*>(&res);
+    *(addr) = simd::toBitMask(
+        simd::reinterpretBatch<uint8_t>(d_type::load_unaligned(resultData)) !=
+        xsimd::broadcast<uint8_t>(0));
+    *(addr + 1) = simd::toBitMask(
+        simd::reinterpretBatch<uint8_t>(d_type::load_unaligned(resultData + 16)) !=
+        xsimd::broadcast<uint8_t>(0));
+    *(addr + 2) = simd::toBitMask(
+        simd::reinterpretBatch<uint8_t>(d_type::load_unaligned(resultData + 32)) !=
+        xsimd::broadcast<uint8_t>(0));
+    *(addr + 3) = simd::toBitMask(
+        simd::reinterpretBatch<uint8_t>(d_type::load_unaligned(resultData + 48)) !=
+        xsimd::broadcast<uint8_t>(0));
+  }
+#else
   if constexpr (numScalarElements == 64) {
     res = simd::toBitMask(
         xsimd::batch_bool<int8_t>(
@@ -72,6 +103,7 @@ inline uint64_t to64Bits(const int8_t* resultData) {
             simd::reinterpretBatch<uint8_t>(
                 d_type::load_unaligned(resultData + 48)) != 0));
   }
+#endif
   return res;
 }
 

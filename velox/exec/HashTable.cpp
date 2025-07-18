@@ -1357,6 +1357,12 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
       bool inserted{false};
       for (int64_t numProbedBuckets = 0; numProbedBuckets < numBuckets();
            ++numProbedBuckets) {
+        #if XSIMD_WITH_VSX
+        // why do we need conditional compilation here? Should be fixed by xsimd::batch implementation
+        MaskType free =
+            ~simd::toBitMask(tagsInTable != xsimd::broadcast<uint8_t>(0)) &
+            ProbeState::kFullMask;
+        #else
         // We are populating a newly allocated table during rehash(), so
         // here each tag is either empty (zero) or in-use (high bit set)
         // and never a tombstone (0x7f, high bit unset). Therefore, the two
@@ -1376,6 +1382,7 @@ void HashTable<ignoreNullKeys>::insertForGroupBy(
 #endif
                     ) &
             ProbeState::kFullMask;
+        #endif
         if (free) {
           auto freeOffset = bits::getAndClearLastSetBit(free);
           storeRowPointer(offset + freeOffset, hash, groups[i]);
