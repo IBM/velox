@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/SelectiveColumnReaderInternal.h"
 
 namespace facebook::velox::dwio::common {
@@ -111,6 +112,7 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
   static constexpr int32_t kConstantChildSpecSubscript = -1;
 
   SelectiveStructColumnReaderBase(
+      const dwio::common::ColumnReaderOptions& columnReaderOptions,
       const TypePtr& requestedType,
       const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
       FormatParams& params,
@@ -118,6 +120,7 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
       bool isRoot = false,
       bool generateLazyChildren = true)
       : SelectiveColumnReader(requestedType, fileType, params, scanSpec),
+        columnReaderOptions_(columnReaderOptions),
         debugString_(
             getExceptionContext().message(VeloxException::Type::kSystem)),
         isRoot_(isRoot),
@@ -144,6 +147,23 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
   /// forward within the row group.
   void recordParentNullsInChildren(int64_t offset, const RowSet& rows);
 
+  /// An implementation of seekTo that calls addSkippedParentNulls on each
+  /// child. Available as a helper function to formats that need it.
+  void seekToPropagateNullsToChildren(const int64_t offset);
+
+  /// A helper function that implements seekToRowGroup for formats that support
+  /// a fixed number of rows per row group.
+  void seekToRowGroupFixedRowsPerRowGroup(
+      const int64_t index,
+      const int32_t rowsPerRowGroup);
+
+  /// A helper function that implements advanceFieldReader for formats that
+  /// support a fixed number of rows per row group
+  void advanceFieldReaderFixedRowsPerRowGroup(
+      SelectiveColumnReader* reader,
+      const int64_t offset,
+      const int32_t rowsPerRowGroup);
+
   std::vector<SelectiveColumnReader*> children_;
 
  private:
@@ -154,6 +174,8 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
       setOutputRows(rows);
     }
   }
+
+  const dwio::common::ColumnReaderOptions& columnReaderOptions_;
 
   // Context information obtained from ExceptionContext. Stored here
   // so that LazyVector readers under this can add this to their
