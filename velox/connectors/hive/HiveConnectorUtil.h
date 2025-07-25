@@ -115,4 +115,6 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
     common::SubfieldFilters& filters,
     double& sampleRate);
 
+std::string makeUuid();
+
 } // namespace facebook::velox::connector::hive
