@@ -18,8 +18,6 @@
 
 #include "velox/dwio/parquet/writer/arrow/Statistics.h"
 
-#include "velox/functions/lib/string/StringImpl.h"
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -37,11 +35,11 @@
 #include "arrow/visit_data_inline.h"
 
 #include "velox/common/base/Exceptions.h"
+#include "velox/dwio/parquet/common/UnicodeUtil.h"
 #include "velox/dwio/parquet/writer/arrow/Encoding.h"
 #include "velox/dwio/parquet/writer/arrow/Exception.h"
 #include "velox/dwio/parquet/writer/arrow/Platform.h"
 #include "velox/dwio/parquet/writer/arrow/Schema.h"
-#include "velox/functions/lib/Utf8Utils.h"
 #include "velox/type/DecimalUtil.h"
 #include "velox/type/HugeInt.h"
 
@@ -789,7 +787,7 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
     return s;
   }
 
-  std::string IcebergLowerBoundInclusive(int32_t truncateTo) const override {
+  std::string MinValue() const override {
     if constexpr (std::is_same_v<T, int64_t>) {
       if (descr_->logical_type()->is_decimal()) {
         return encodeDecimalToBigEndian(min_);
@@ -799,8 +797,11 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
       return encodeDecimalToBigEndian(min_);
     }
     if constexpr (std::is_same_v<T, ByteArray>) {
-      const auto truncatedMin = functions::stringImpl::truncateUtf8(
-          std::string_view(min_), truncateTo);
+      // TODO: 16 is default value. See DEFAULT_WRITE_METRICS_MODE_DEFAULT in
+      // org.apache.iceberg.TableProperties. Need to support this table
+      // property.
+      const auto truncatedMin = UnicodeUtil::truncateStringMin(
+          reinterpret_cast<const char*>(min_.ptr), min_.len, 16);
       std::string s;
       this->PlainEncode(
           ByteArray(
@@ -812,8 +813,7 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
     return EncodeMin();
   }
 
-  std::optional<std::string> IcebergUpperBoundExclusive(
-      int32_t truncateTo) const override {
+  std::string MaxValue() const override {
     if constexpr (std::is_same_v<T, int64_t>) {
       if (descr_->logical_type()->is_decimal()) {
         return encodeDecimalToBigEndian(max_);
@@ -823,16 +823,13 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
       return encodeDecimalToBigEndian(max_);
     }
     if constexpr (std::is_same_v<T, ByteArray>) {
-      const auto truncatedMax = functions::stringImpl::roundUpUtf8(
-          std::string_view(max_), truncateTo);
-      if (!truncatedMax.has_value()) {
-        return std::nullopt;
-      }
+      const auto truncatedMax = UnicodeUtil::truncateStringMax(
+          reinterpret_cast<const char*>(max_.ptr), max_.len, 16);
       std::string s;
       this->PlainEncode(
           ByteArray(
-              truncatedMax->size(),
-              reinterpret_cast<const uint8_t*>(truncatedMax->data())),
+              truncatedMax.size(),
+              reinterpret_cast<const uint8_t*>(truncatedMax.data())),
           &s);
       return s;
     }
@@ -872,16 +869,14 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
     return statistics_.nan_count;
   }
 
-  bool MaxGreaterThan(const Statistics& other) const override {
-    const auto* typedOther =
-        dynamic_cast<const TypedStatisticsImpl<DType>*>(&other);
-    return comparator_->Compare(max_, typedOther->max_) ? false : true;
+  bool CompareMax(const Statistics& other) const override {
+    auto typedStats = dynamic_cast<const TypedStatisticsImpl<DType>*>(&other);
+    return comparator_->Compare(max_, typedStats->max_) ? false : true;
   }
 
-  bool MinLessThan(const Statistics& other) const override {
-    const auto* typedOther =
-        dynamic_cast<const TypedStatisticsImpl<DType>*>(&other);
-    return comparator_->Compare(min_, typedOther->min_) ? true : false;
+  bool CompareMin(const Statistics& other) const override {
+    auto typedStats = dynamic_cast<const TypedStatisticsImpl<DType>*>(&other);
+    return comparator_->Compare(min_, typedStats->min_) ? true : false;
   }
 
  private:
