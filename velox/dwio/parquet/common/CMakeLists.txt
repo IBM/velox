@@ -18,7 +18,7 @@ velox_add_library(
   XxHasher.cpp
   LevelComparison.cpp
   LevelConversion.cpp
-)
+  UnicodeUtil.cpp)
 
 velox_link_libraries(
   velox_dwio_parquet_common
