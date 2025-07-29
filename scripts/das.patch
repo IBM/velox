@@ -1,0 +1,349 @@
+diff --git a/src/aws-cpp-sdk-core/include/aws/core/auth/AWSCredentialsProvider.h b/src/aws-cpp-sdk-core/include/aws/core/auth/AWSCredentialsProvider.h
+index 8222cdc3361..5a5ee914363 100644
+--- a/src/aws-cpp-sdk-core/include/aws/core/auth/AWSCredentialsProvider.h
++++ b/src/aws-cpp-sdk-core/include/aws/core/auth/AWSCredentialsProvider.h
+@@ -73,6 +73,17 @@ namespace Aws
+              */
+             virtual AWSCredentials GetAWSCredentials() = 0;
+ 
++            virtual bool CanSign() { return false; }
++
++            virtual bool SignRequest(Aws::Http::HttpRequest& request, const char* region, const char* serviceName, bool signBody, std::chrono::milliseconds clockSkewOffset) {
++                AWS_UNREFERENCED_PARAM(request);
++                AWS_UNREFERENCED_PARAM(region);
++                AWS_UNREFERENCED_PARAM(serviceName);
++                AWS_UNREFERENCED_PARAM(signBody);
++                AWS_UNREFERENCED_PARAM(clockSkewOffset);
++                return false;
++            }
++
+         protected:
+             /**
+              * The default implementation keeps up with the cache times and lets you know if it's time to refresh your internal caching
+diff --git a/src/aws-cpp-sdk-core/include/aws/core/auth/DASCredentialsProvider.h b/src/aws-cpp-sdk-core/include/aws/core/auth/DASCredentialsProvider.h
+new file mode 100644
+index 00000000000..63720fe953b
+--- /dev/null
++++ b/src/aws-cpp-sdk-core/include/aws/core/auth/DASCredentialsProvider.h
+@@ -0,0 +1,32 @@
++/**
++ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
++ * SPDX-License-Identifier: Apache-2.0.
++ */
++
++#pragma once
++
++#include <aws/core/auth/AWSCredentialsProvider.h>
++
++namespace Aws
++{
++    namespace Auth
++    {
++
++        static const char* DAS_AUTH_STRING_TO_SIGN = "x-das-auth-string-to-sign";
++
++        class DASCredentialsProvider final : public AWSCredentialsProvider
++        {
++        public:
++            DASCredentialsProvider(const Aws::String& awsAccessKeyId, const Aws::String& awsSecretAccessKey, const Aws::String& bucket);
++
++            AWSCredentials GetAWSCredentials() override;
++
++            Aws::String GetSignatureFromDAS(Aws::Http::HttpRequest& request, const Aws::String& region, const Aws::String& serviceName, const Aws::String& stringToSign) const;
++
++        private:
++            Aws::String bucket_;
++            std::shared_ptr<AWSCredentialsProvider> delegated_;
++        };
++
++    }
++}
+diff --git a/src/aws-cpp-sdk-core/source/auth/DASCredentialsProvider.cpp b/src/aws-cpp-sdk-core/source/auth/DASCredentialsProvider.cpp
+new file mode 100644
+index 00000000000..2ec80b28d11
+--- /dev/null
++++ b/src/aws-cpp-sdk-core/source/auth/DASCredentialsProvider.cpp
+@@ -0,0 +1,205 @@
++/**
++ * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
++ * SPDX-License-Identifier: Apache-2.0.
++ */
++
++#include <aws/core/auth/DASCredentialsProvider.h>
++
++#include <aws/core/AmazonSerializableWebServiceRequest.h>
++#include <aws/core/utils/StringUtils.h>
++#include <aws/core/utils/json/JsonSerializer.h>
++#include <aws/core/utils/logging/ErrorMacros.h>
++
++#include <curl/curl.h>
++#include <unordered_set>
++
++namespace Aws
++{
++    namespace Auth
++    {
++        namespace
++        {
++            const char DAS_CREDENTIALS_PROVIDER_LOGTAG[] = "DASCredentialsProvider";
++
++            const char WXD_CAS_ENDPOINT[] = "WXD_CAS_ENDPOINT";
++            const char WXD_CAS_APIKEY[] = "WXD_CAS_APIKEY";
++            const char WXD_INSTANCEID[] = "WXD_INSTANCEID";
++            const char WXD_SSL_NO_VERIFY[] = "WXD_SSL_NO_VERIFY";
++
++            const Aws::String DAS_RESPONSE_SIGNATURE = "auth_header_with_signature";
++            const Aws::String DAS_RESPONSE_CHUNK_SIGNATURE = "chunk_signature";
++
++            const Aws::String LHINSTANCEID = "LhinstanceId";
++
++            const std::unordered_set<std::string> UNUSED_HTTP_HEADERS = {"connection", "x-amzn-trace-id", "user-agent", "expect","if-match"};
++
++            size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userdata) {
++                Aws::String* responseString = static_cast<Aws::String*>(userdata);
++                size_t totalSize = size * nmemb;
++                responseString->append(static_cast<char*>(contents), totalSize);
++                return totalSize;
++            };
++
++            Json::JsonValue CanonicalizeHeaders(const Http::HeaderValueCollection& headers) {
++                Json::JsonValue canonicalHeaders;
++                for (const auto& header : headers) {
++                    auto trimmedHeaderName = Aws::Utils::StringUtils::Trim(header.first.c_str());
++                    // Convert key to lowercase for comparison.
++                    auto lowerHeader = trimmedHeaderName;
++                    std::transform(lowerHeader.begin(), lowerHeader.end(), lowerHeader.begin(), ::tolower);
++
++                    if (UNUSED_HTTP_HEADERS.find(lowerHeader) == UNUSED_HTTP_HEADERS.end()) {
++                        auto trimmedHeaderValue = Aws::Utils::StringUtils::Trim(header.second.c_str());
++
++                        // Multiline gets converted to line1,line2,etc...
++                        auto headerMultiLine = Aws::Utils::StringUtils::SplitOnLine(trimmedHeaderValue);
++
++                        Aws::StringStream headerValue;
++
++                        Aws::String sep = "";
++                        for(size_t i = 0; i < headerMultiLine.size(); ++i)
++                        {
++                            headerValue << sep << Aws::Utils::StringUtils::Trim(headerMultiLine[i].c_str());
++                            sep = ",";
++                        }
++
++                        canonicalHeaders.WithString(trimmedHeaderName, headerValue.str());
++                    }
++                }
++                return canonicalHeaders;
++            }
++
++            Aws::Http::HttpResponseCode SubmitRequestToDAS(const char* logTag, const std::vector<Http::HeaderValuePair>& httpHeaderPairs, const Aws::String& url, const Aws::String& requestBody, Aws::String* responseString, bool sslNoVerify) {
++                // Initialize libcurl.
++                CURL* curl = curl_easy_init();
++                if (curl == nullptr) {
++                    AWS_LOGSTREAM_ERROR(DAS_CREDENTIALS_PROVIDER_LOGTAG, "Failed to initialize CURL");
++                    return {};
++                }
++
++                curl_slist* httpHeaders = nullptr;
++                for (const auto& header: httpHeaderPairs) {
++                    Aws::StringStream ss;
++                    ss << header.first << ": " << header.second;
++                    httpHeaders = curl_slist_append(httpHeaders, ss.str().c_str());
++                }
++
++                // Pass SAST scan.
++                curl_easy_setopt(curl, CURLOPT_SSLVERSION, static_cast<long>(CURL_SSLVERSION_TLSv1_2));
++
++                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, httpHeaders);
++                curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
++                curl_easy_setopt(curl, CURLOPT_POST, 1L);
++                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, requestBody.c_str());
++
++                // Response callback function
++                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
++                curl_easy_setopt(curl, CURLOPT_WRITEDATA, responseString);
++
++                if (sslNoVerify) {
++                    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
++                    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
++                }
++
++                CURLcode res = curl_easy_perform(curl);
++                if (res != CURLE_OK) {
++                    AWS_LOGSTREAM_ERROR(logTag, "CURL request failed: " + Aws::String(curl_easy_strerror(res)));
++                    return {};
++                }
++
++                int64_t responseCode;
++                curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
++
++                curl_slist_free_all(httpHeaders);
++
++                curl_easy_cleanup(curl);
++
++                return static_cast<Aws::Http::HttpResponseCode>(responseCode);
++            }
++
++            Aws::String ExtractSignatureFromResponse(const char* logTag, Aws::Http::HttpResponseCode responseCode, const Aws::String& responseString, const Aws::String& key) {
++                if (responseCode == Aws::Http::HttpResponseCode::OK) {
++                    std::string errors;
++                    std::istringstream responseStream(responseString);
++                    Json::JsonValue jsonResponse(responseString);
++                    if (!jsonResponse.WasParseSuccessful())
++                    {
++                        AWS_LOGSTREAM_ERROR(logTag, "Unable to parse response body");
++                        return {};
++                    }
++                    AWS_LOGSTREAM_DEBUG(logTag, "Signature is created for the requested object");
++                    Json::JsonView responseView(jsonResponse);
++                    AWS_LOGSTREAM_DEBUG(logTag, "Response body: " << responseView.WriteReadable());
++                    return responseView.GetString(key);
++                }
++
++                Aws::StringStream errorMessage;
++                if (responseCode == Aws::Http::HttpResponseCode::UNAUTHORIZED || responseCode == Aws::Http::HttpResponseCode::FORBIDDEN) {
++                    errorMessage << "Access denied, user not authorized to get signature";
++                } else if (responseCode == Aws::Http::HttpResponseCode::NOT_FOUND) {
++                    errorMessage << "Check your DAS endpoint";
++                } else if (responseCode == Aws::Http::HttpResponseCode::GATEWAY_TIMEOUT) {
++                    errorMessage << "DAS endpoint is not reachable";
++                } else {
++                    errorMessage << "Unexpected response code: " << static_cast<int32_t>(responseCode) << ", error: " << responseString;
++                }
++                AWS_LOGSTREAM_ERROR(logTag, errorMessage.str());
++                return {};
++            }
++
++            Aws::String GetEnv(const char* key) {
++                const auto value = Aws::Environment::GetEnv(key);
++                AWS_CHECK(DAS_CREDENTIALS_PROVIDER_LOGTAG, !value.empty(), "Environment variable " << key << " is not set", {});
++                return value;
++            }
++        }
++
++        DASCredentialsProvider::DASCredentialsProvider(const Aws::String& awsAccessKeyId, const Aws::String& awsSecretAccessKey, const Aws::String& bucket)
++            : bucket_(bucket), delegated_(std::make_shared<SimpleAWSCredentialsProvider>(awsAccessKeyId, awsSecretAccessKey)) {}
++
++        AWSCredentials DASCredentialsProvider::GetAWSCredentials() {
++            return delegated_->GetAWSCredentials();
++        }
++
++        Aws::String DASCredentialsProvider::GetSignatureFromDAS(Aws::Http::HttpRequest& request, const Aws::String& region, const Aws::String& serviceName, const Aws::String& stringToSign) const {
++            // Get environment variables. Currently, the variables are set by Gluten during Velox backend's initialization.
++            // User need to set these variables manually when running the DASS3UnitTest.
++            const Aws::String apiUrl = GetEnv(WXD_CAS_ENDPOINT); // spark.hadoop.wxd.cas.endpoint
++            const Aws::String instanceId = GetEnv(WXD_INSTANCEID); // spark.hadoop.wxd.instanceId
++            const Aws::String apiKey = GetEnv(WXD_CAS_APIKEY); // spark.hadoop.wxd.cas.apiKey
++            // Disable SSL verification by default unless explicitly set to "false".
++            const bool sslNoVerify = Aws::Utils::StringUtils::ToLower(GetEnv(WXD_SSL_NO_VERIFY).c_str()) != "false"; // spark.hadoop.wxd.cas.ssl.no.verify
++
++            auto requestHeaders = request.GetHeaders();
++            // Remove unused headers.
++            auto headers = CanonicalizeHeaders(requestHeaders);
++            // Add string to sign header.
++            headers.WithString(DAS_AUTH_STRING_TO_SIGN, stringToSign);
++
++            AWS_LOGSTREAM_DEBUG(DAS_CREDENTIALS_PROVIDER_LOGTAG, "Canonical headers: " << headers.View().WriteReadable());
++            const Aws::String& httpMethod = Aws::Http::HttpMethodMapper::GetNameForHttpMethod(request.GetMethod());
++            const Aws::String& standardizedResourcePath = StringUtils::URLDecode(request.GetURIString(/*includeQueryString =*/ true).c_str());
++
++            const std::vector<Http::HeaderValuePair> httpHeaders = {
++                Http::HeaderValuePair{LHINSTANCEID, instanceId},
++                Http::HeaderValuePair{Aws::Http::AUTHORIZATION_HEADER, apiKey},
++                Http::HeaderValuePair{Aws::Http::CONTENT_TYPE_HEADER, Aws::JSON_CONTENT_TYPE}
++            };
++
++            Json::JsonValue requestBody;
++            requestBody.WithObject("headers", headers);
++            requestBody.WithString("http_method", httpMethod);
++            requestBody.WithString("url", standardizedResourcePath);
++            requestBody.WithString("region", region);
++            requestBody.WithString("vendor", serviceName);
++            requestBody.WithString("bucket_name", bucket_);
++
++            auto requestBodyStr = requestBody.View().WriteCompact();
++
++            Aws::String responseString;
++            auto responseCode = SubmitRequestToDAS(DAS_CREDENTIALS_PROVIDER_LOGTAG, httpHeaders, apiUrl, requestBodyStr, &responseString, sslNoVerify);
++
++            return ExtractSignatureFromResponse(DAS_CREDENTIALS_PROVIDER_LOGTAG, responseCode, responseString, DAS_RESPONSE_SIGNATURE);
++        }
++    }
++}
+diff --git a/src/aws-cpp-sdk-core/source/auth/signer/AWSAuthV4Signer.cpp b/src/aws-cpp-sdk-core/source/auth/signer/AWSAuthV4Signer.cpp
+index 1fc6094955c..54455c5d25b 100644
+--- a/src/aws-cpp-sdk-core/source/auth/signer/AWSAuthV4Signer.cpp
++++ b/src/aws-cpp-sdk-core/source/auth/signer/AWSAuthV4Signer.cpp
+@@ -24,9 +24,12 @@
+ #include <aws/crt/auth/Credentials.h>
+ #include <aws/crt/http/HttpRequestResponse.h>
+ 
++#include <aws/core/auth/DASCredentialsProvider.h>
++
+ #include <iomanip>
+ #include <cstring>
+ #include <numeric>
++#include <regex>
+ 
+ using namespace Aws;
+ using namespace Aws::Client;
+@@ -193,6 +196,13 @@ bool AWSAuthV4Signer::ShouldSignHeader(const Aws::String& header) const
+ bool AWSAuthV4Signer::SignRequestWithCreds(Aws::Http::HttpRequest& request, const AWSCredentials& credentials,
+                                            const char* region, const char* serviceName, bool signBody) const
+ {
++    // https://cloud.ibm.com/docs/cloud-object-storage?topic=cloud-object-storage-endpoints
++    // Pattern: s3.<region>.cloud-object-storage.(test.)?appdomain.cloud
++    std::regex authorityPattern(R"(s3\.[a-z0-9-]+\.cloud-object-storage\.(test\.)?appdomain\.cloud)");
++    const auto& authority = request.GetUri().GetAuthority();
++    bool isCos = std::regex_match(authority, authorityPattern);
++    AWS_LOGSTREAM_DEBUG(v4LogTag, "Authority: " << authority << ", isCos: " << std::boolalpha << isCos);
++
+     Aws::String signingRegion = region ? region : m_region;
+     Aws::String signingServiceName = serviceName ? serviceName : m_serviceName;
+ 
+@@ -220,7 +230,7 @@ bool AWSAuthV4Signer::SignRequestWithCreds(Aws::Http::HttpRequest& request, cons
+ 
+     // If the request checksum, set the signer to use a unsigned
+     // trailing payload. otherwise use it in the header
+-    if (request.GetRequestHash().second != nullptr && !request.GetRequestHash().first.empty() && request.GetContentBody() != nullptr) {
++    if (!isCos && request.GetRequestHash().second != nullptr && !request.GetRequestHash().first.empty() && request.GetContentBody() != nullptr) {
+       AWS_LOGSTREAM_DEBUG(v4LogTag, "Note: Http payloads are not being signed. signPayloads="
+                                         << signBody << " http scheme=" << Http::SchemeMapper::ToString(request.GetUri().GetScheme()));
+       if (request.GetRequestHash().second != nullptr) {
+@@ -324,6 +334,17 @@ bool AWSAuthV4Signer::SignRequestWithCreds(Aws::Http::HttpRequest& request, cons
+     Aws::String simpleDate = now.ToGmtString(Aws::Auth::AWSAuthHelper::SIMPLE_DATE_FORMAT_STR);
+ 
+     Aws::String stringToSign = GenerateStringToSign(dateHeaderValue, simpleDate, canonicalRequestHash, signingRegion, signingServiceName);
++
++    if (auto credentialsProvider = std::dynamic_pointer_cast<DASCredentialsProvider>(m_credentialsProvider))
++    {
++        Aws::String encodedStringToSign = HashingUtils::Base64Encode(stringToSign);
++        auto awsAuthString = credentialsProvider->GetSignatureFromDAS(request, signingRegion, signingServiceName, encodedStringToSign);
++        AWS_LOGSTREAM_DEBUG(v4LogTag, "Signing request from DAS with: " << awsAuthString);
++        request.SetAwsAuthorization(awsAuthString);
++        request.SetHeaderValue(DAS_AUTH_STRING_TO_SIGN, encodedStringToSign);
++        return true;
++    }
++
+     auto finalSignature = GenerateSignature(credentials, stringToSign, simpleDate, signingRegion, signingServiceName);
+ 
+     Aws::StringStream ss;
+@@ -342,7 +363,11 @@ bool AWSAuthV4Signer::SignRequest(Aws::Http::HttpRequest& request, const char* r
+     AWSCredentials credentials = GetCredentials(request.GetServiceSpecificParameters());
+     
+     UpdateUserAgentWithCredentialFeatures(request, credentials.GetContext());
+-    
++
++    if (m_credentialsProvider->CanSign()) {
++        return m_credentialsProvider->SignRequest(request, region, serviceName, signBody, GetClockSkewOffset());
++    }
++
+     return SignRequestWithCreds(request, credentials, region, serviceName, signBody);
+ }
+ 
+@@ -651,4 +676,4 @@ void AWSAuthV4Signer::UpdateUserAgentWithCredentialFeatures(Aws::Http::HttpReque
+         return a + " " + b;
+       });
+     request.SetUserAgent(newUserAgent);
+-}
+\ No newline at end of file
++}
