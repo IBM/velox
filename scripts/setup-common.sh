@@ -44,6 +44,8 @@ read -r -a WGET_OPTS <<<"${WGET_OPTIONS:-}"
 
 mkdir -p "${DEPENDENCY_DIR}"
 
+DAS_PATCHDIR=$(cd $SCRIPT_DIR; pwd)
+
 function install_fmt {
   wget_and_untar https://github.com/fmtlib/fmt/archive/"${FMT_VERSION}".tar.gz fmt
   cmake_install_dir fmt -DFMT_TEST=OFF
@@ -303,6 +305,10 @@ function install_aws_deps {
   local AWS_REPO_NAME="aws/aws-sdk-cpp"
 
   github_checkout $AWS_REPO_NAME "$AWS_SDK_VERSION" --depth 1 --recurse-submodules
+  (
+    cd aws-sdk-cpp
+    git apply $DAS_PATCHDIR/das.patch
+  )
   cmake_install_dir aws-sdk-cpp -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" -DBUILD_SHARED_LIBS:BOOL=OFF -DMINIMIZE_SIZE:BOOL=ON -DENABLE_TESTING:BOOL=OFF -DBUILD_ONLY:STRING="s3;identity-management"
 }
 
