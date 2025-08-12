@@ -84,7 +84,9 @@ std::unique_ptr<SplitReader> SplitReader::create(
     const std::shared_ptr<filesystems::File::IoStats>& fsStats,
     FileHandleFactory* fileHandleFactory,
     folly::Executor* executor,
-    const std::shared_ptr<common::ScanSpec>& scanSpec) {
+    const std::shared_ptr<common::ScanSpec>& scanSpec,
+    core::ExpressionEvaluator* expressionEvaluator,
+    std::atomic<uint64_t>& totalRemainingFilterTime) {
   //  Create the SplitReader based on hiveSplit->customSplitInfo["table_format"]
   if (hiveSplit->customSplitInfo.count("table_format") > 0 &&
       hiveSplit->customSplitInfo["table_format"] == "hive-iceberg") {
@@ -99,7 +101,9 @@ std::unique_ptr<SplitReader> SplitReader::create(
         fsStats,
         fileHandleFactory,
         executor,
-        scanSpec);
+        scanSpec,
+        expressionEvaluator,
+        totalRemainingFilterTime);
   } else {
     return std::unique_ptr<SplitReader>(new SplitReader(
         hiveSplit,
@@ -416,11 +420,17 @@ std::vector<TypePtr> SplitReader::adaptColumns(
       auto fileTypeIdx = fileType->getChildIdxIfExists(fieldName);
       if (!fileTypeIdx.has_value()) {
         // Column is missing. Most likely due to schema evolution.
-        VELOX_CHECK(tableSchema, "Unable to resolve column '{}'", fieldName);
+        auto outputTypeIdx = readerOutputType_->getChildIdxIfExists(fieldName);
+        TypePtr fieldType;
+        if (outputTypeIdx.has_value()) {
+          // Field name exists in the user-specified output type.
+          fieldType = readerOutputType_->childAt(outputTypeIdx.value());
+        } else {
+          VELOX_CHECK(tableSchema, "Unable to resolve column '{}'", fieldName);
+          fieldType = tableSchema->findChild(fieldName);
+        }
         childSpec->setConstantValue(BaseVector::createNullConstant(
-            tableSchema->findChild(fieldName),
-            1,
-            connectorQueryCtx_->memoryPool()));
+            fieldType, 1, connectorQueryCtx_->memoryPool()));
       } else {
         // Column no longer missing, reset constant value set on the spec.
         childSpec->setConstantValue(nullptr);
