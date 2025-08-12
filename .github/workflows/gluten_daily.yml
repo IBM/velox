@@ -1,0 +1,95 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Gluten Daily Build
+
+on:
+  push:
+    branches:
+      - 'main'
+
+  pull_request:
+    paths:
+      - '.github/workflows/gluten_daily.yml'
+
+
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.head_ref || github.sha }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+
+  linux-gcc:
+    name: Build with GCC
+    if: ${{ github.repository == 'IBM/velox' }}
+    runs-on: ubuntu-22.04
+    container: ghcr.io/facebookincubator/velox-dev:adapters
+    defaults:
+      run:
+        shell: bash
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/ccache
+      VELOX_DEPENDENCY_SOURCE: SYSTEM
+      GTest_SOURCE: BUNDLED
+      cudf_SOURCE: BUNDLED
+      CUDA_VERSION: '12.8'
+      faiss_SOURCE: BUNDLED
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Fix git permissions
+        # Usually actions/checkout does this but as we run in a container
+        # it doesn't work
+        run: git config --global --add safe.directory ${GITHUB_WORKSPACE}
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}-${{github.sha}}
+          restore-keys: |
+            ccache-linux-adapters-${{ inputs.use-clang && 'clang' || 'gcc' }}
+
+      - name: Zero Ccache Statistics
+        run: |
+          ccache -sz
+
+      - name: Make Release Build
+        env:
+          MAKEFLAGS: 'NUM_THREADS=4'
+          CUDA_ARCHITECTURES: 70
+          CUDA_COMPILER: /usr/local/cuda-${CUDA_VERSION}/bin/nvcc
+          # Set compiler to GCC 12
+          CUDA_FLAGS: -ccbin /opt/rh/gcc-toolset-12/root/usr/bin
+        run: |
+          EXTRA_CMAKE_FLAGS=(
+            "-DVELOX_ENABLE_PARQUET=ON"
+            "-DVELOX_MONO_LIBRARY=ON"
+            "-DVELOX_BUILD_SHARED=ON"
+          )
+          if [[ "${USE_CLANG}" = "true" ]]; then scripts/setup-centos9.sh install_clang15; export CC=/usr/bin/clang-15; export CXX=/usr/bin/clang++-15; CUDA_FLAGS="-ccbin /usr/lib64/llvm15/bin/clang++-15"; fi
+          make release EXTRA_CMAKE_FLAGS="${EXTRA_CMAKE_FLAGS[*]}"
+
+      - name: Ccache after
+        run: ccache -s
+
+      - uses: actions/cache/save@v4
+        with:
+          path: '${{ env.CCACHE_DIR }}'
+          key: ccache-linux-adapters-gcc-${{github.sha}}
+
+
