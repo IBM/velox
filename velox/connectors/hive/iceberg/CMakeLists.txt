@@ -17,6 +17,7 @@ velox_add_library(
   EqualityDeleteFileReader.cpp
   FilterUtil.cpp
   IcebergDeleteFile.cpp
+  IcebergColumnHandle.cpp
   IcebergDataSink.cpp
   IcebergPartitionIdGenerator.cpp
   IcebergSplit.cpp
