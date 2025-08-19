@@ -16,8 +16,9 @@
 
 #pragma once
 
-#include "velox/common/Enums.h"
-#include "velox/type/Type.h"
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace facebook::velox::connector::hive::iceberg {
 
@@ -31,16 +32,11 @@ enum class TransformType {
   kTruncate
 };
 
-VELOX_DECLARE_ENUM_NAME(TransformType);
-
 struct IcebergPartitionSpec {
   struct Field {
     // The column name and type of this partition field as it appears in the
-    // partition spec.
+    // partition spec. The column can be a nested column in struct field.
     std::string name;
-
-    // The source column type.
-    TypePtr type;
 
     // The transform type applied to the source field (e.g., kIdentity, kBucket,
     // kTruncate, etc.).
@@ -52,13 +48,9 @@ struct IcebergPartitionSpec {
 
     Field(
         const std::string& _name,
-        const TypePtr& _type,
         TransformType _transform,
         std::optional<int32_t> _parameter)
-        : name(_name),
-          type(_type),
-          transformType(_transform),
-          parameter(_parameter) {}
+        : name(_name), transformType(_transform), parameter(_parameter) {}
   };
 
   const int32_t specId;

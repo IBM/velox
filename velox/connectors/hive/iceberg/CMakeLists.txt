@@ -16,24 +16,14 @@ velox_add_library(
   velox_hive_iceberg_splitreader
   EqualityDeleteFileReader.cpp
   FilterUtil.cpp
-  IcebergDataSink.cpp
   IcebergDeleteFile.cpp
-  IcebergPartitionIdGenerator.cpp
-  IcebergSplit.cpp
   IcebergSplitReader.cpp
-  Murmur3.cpp
-  PartitionSpec.cpp
+  IcebergSplit.cpp
   PositionalDeleteFileReader.cpp
-  TransformFactory.cpp
-  Transforms.cpp)
+  IcebergDataSink.cpp)
 
 velox_link_libraries(velox_hive_iceberg_splitreader velox_connector
                      velox_dwio_common Folly::folly)
-
-if(VELOX_ENABLE_PARQUET)
-  velox_link_libraries(velox_hive_iceberg_connector
-                       velox_dwio_arrow_parquet_writer)
-endif()
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)

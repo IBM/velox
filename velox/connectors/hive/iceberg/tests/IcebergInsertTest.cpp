@@ -38,6 +38,7 @@ class IcebergInsertTest : public IcebergTestBase {
 
 TEST_F(IcebergInsertTest, testIcebergTableWrite) {
   const auto outputDirectory = exec::test::TempDirectoryPath::create();
+  const auto dataPath = fmt::format("{}", outputDirectory->getPath());
   constexpr int32_t numBatches = 10;
   constexpr int32_t vectorSize = 5'000;
   const auto vectors = createTestData(numBatches, vectorSize, 0.5);
@@ -51,7 +52,7 @@ TEST_F(IcebergInsertTest, testIcebergTableWrite) {
   ASSERT_TRUE(dataSink->finish());
   const auto commitTasks = dataSink->close();
   createDuckDbTable(vectors);
-  auto splits = createSplitsForDirectory(outputDirectory->getPath());
+  auto splits = createSplitsForDirectory(dataPath);
   ASSERT_EQ(splits.size(), commitTasks.size());
   auto plan = exec::test::PlanBuilder().tableScan(rowType_).planNode();
   assertQuery(plan, splits, fmt::format("SELECT * FROM tmp"));
@@ -60,13 +61,35 @@ TEST_F(IcebergInsertTest, testIcebergTableWrite) {
 TEST_F(IcebergInsertTest, testSingleColumnAsPartition) {
   for (auto colIndex = 0; colIndex < rowType_->size() - 1; colIndex++) {
     const auto& colName = rowType_->nameOf(colIndex);
-    const auto outputDirectory = exec::test::TempDirectoryPath::create();
+    const auto colType = rowType_->childAt(colIndex);
+
+    const bool isDecimal = colType->isDecimal();
+    const bool isVarbinary = colType->isVarbinary();
     constexpr int32_t numBatches = 2;
     constexpr int32_t vectorSize = 50;
+    const auto outputDirectory = exec::test::TempDirectoryPath::create();
 
+    if (isDecimal || isVarbinary) {
+      const auto vectors = createTestData(numBatches, vectorSize, 0.5);
+      std::vector<std::string> partitionTransforms = {colName};
+      auto dataSink = createIcebergDataSink(
+          rowType_, outputDirectory->getPath(), partitionTransforms);
+      for (const auto& vector : vectors) {
+        if (isDecimal) {
+          VELOX_ASSERT_THROW(
+              dataSink->appendData(vector),
+              "Partition on decimal column is not supported yet.");
+        } else if (isVarbinary) {
+          VELOX_ASSERT_THROW(
+              dataSink->appendData(vector),
+              "Partition on varbinary column is not supported yet.");
+        }
+      }
+      continue;
+    }
+    const auto dataPath = fmt::format("{}", outputDirectory->getPath());
     const auto vectors = createTestData(numBatches, vectorSize, 0.5);
-    std::vector<PartitionField> partitionTransforms = {
-        {colIndex, TransformType::kIdentity, std::nullopt}};
+    std::vector<std::string> partitionTransforms = {colName};
     auto dataSink = createIcebergDataSink(
         rowType_, outputDirectory->getPath(), partitionTransforms);
 
@@ -77,7 +100,7 @@ TEST_F(IcebergInsertTest, testSingleColumnAsPartition) {
     ASSERT_TRUE(dataSink->finish());
     const auto commitTasks = dataSink->close();
     createDuckDbTable(vectors);
-    auto splits = createSplitsForDirectory(outputDirectory->getPath());
+    auto splits = createSplitsForDirectory(dataPath);
 
     ASSERT_GT(commitTasks.size(), 0);
     ASSERT_EQ(splits.size(), commitTasks.size());
@@ -124,12 +147,33 @@ TEST_F(IcebergInsertTest, testPartitionNullColumn) {
     const auto& colName = rowType_->nameOf(colIndex);
     const auto colType = rowType_->childAt(colIndex);
     const auto outputDirectory = exec::test::TempDirectoryPath::create();
+    const auto dataPath = fmt::format("{}", outputDirectory->getPath());
     constexpr int32_t numBatches = 2;
     constexpr int32_t vectorSize = 100;
+    const bool isDecimal = colType->isDecimal();
+    const bool isVarbinary = colType->isVarbinary();
+
+    if (isDecimal || isVarbinary) {
+      const auto vectors = createTestData(numBatches, vectorSize, 0.5);
+      std::vector<std::string> partitionTransforms = {colName};
+      auto dataSink = createIcebergDataSink(
+          rowType_, outputDirectory->getPath(), partitionTransforms);
+      for (const auto& vector : vectors) {
+        if (isDecimal) {
+          VELOX_ASSERT_THROW(
+              dataSink->appendData(vector),
+              "Partition on decimal column is not supported yet.");
+        } else if (isVarbinary) {
+          VELOX_ASSERT_THROW(
+              dataSink->appendData(vector),
+              "Partition on varbinary column is not supported yet.");
+        }
+      }
+      continue;
+    }
 
     const auto vectors = createTestData(numBatches, vectorSize, 1.0);
-    std::vector<PartitionField> partitionTransforms = {
-        {colIndex, TransformType::kIdentity, std::nullopt}};
+    std::vector<std::string> partitionTransforms = {colName};
     auto dataSink = createIcebergDataSink(
         rowType_, outputDirectory->getPath(), partitionTransforms);
 
@@ -139,17 +183,8 @@ TEST_F(IcebergInsertTest, testPartitionNullColumn) {
 
     ASSERT_TRUE(dataSink->finish());
     const auto commitTasks = dataSink->close();
-    ASSERT_EQ(1, commitTasks.size());
-    auto taskJson = folly::parseJson(commitTasks.at(0));
-    ASSERT_EQ(1, taskJson.count("partitionDataJson"));
-    auto partitionDataStr = taskJson["partitionDataJson"].asString();
-    auto partitionData = folly::parseJson(partitionDataStr);
-    ASSERT_EQ(1, partitionData.count("partitionValues"));
-    auto partitionValues = partitionData["partitionValues"];
-    ASSERT_TRUE(partitionValues.isArray());
-    ASSERT_TRUE(partitionValues[0].isNull());
 
-    auto files = listFiles(outputDirectory->getPath());
+    auto files = listFiles(dataPath);
     ASSERT_EQ(files.size(), 1);
 
     for (const auto& file : files) {
@@ -176,19 +211,19 @@ TEST_F(IcebergInsertTest, testColumnCombinationsAsPartition) {
   std::vector<std::vector<int32_t>> columnCombinations = {
       {0, 1}, // BIGINT, INTEGER.
       {2, 1}, // SMALLINT, INTEGER.
-      {2, 3}, // SMALLINT, DECIMAL.
+      {2, 0}, // SMALLINT, BIGINT.
       {0, 2, 1} // BIGINT, SMALLINT, INTEGER.
   };
 
   for (const auto& combination : columnCombinations) {
     const auto outputDirectory = exec::test::TempDirectoryPath::create();
+    const auto dataPath = fmt::format("{}", outputDirectory->getPath());
     constexpr int32_t numBatches = 2;
     constexpr int32_t vectorSize = 50;
     const auto vectors = createTestData(numBatches, vectorSize);
-    std::vector<PartitionField> partitionTransforms;
+    std::vector<std::string> partitionTransforms;
     for (auto colIndex : combination) {
-      partitionTransforms.push_back(
-          {colIndex, TransformType::kIdentity, std::nullopt});
+      partitionTransforms.push_back(rowType_->nameOf(colIndex));
     }
 
     auto dataSink = createIcebergDataSink(
@@ -201,7 +236,7 @@ TEST_F(IcebergInsertTest, testColumnCombinationsAsPartition) {
     ASSERT_TRUE(dataSink->finish());
     const auto commitTasks = dataSink->close();
     createDuckDbTable(vectors);
-    auto splits = createSplitsForDirectory(outputDirectory->getPath());
+    auto splits = createSplitsForDirectory(dataPath);
 
     ASSERT_GT(commitTasks.size(), 0);
     ASSERT_EQ(splits.size(), commitTasks.size());
