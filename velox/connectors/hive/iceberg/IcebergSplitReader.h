@@ -53,6 +53,10 @@ class IcebergSplitReader : public SplitReader {
   std::shared_ptr<const dwio::common::TypeWithId> baseFileSchema();
 
  private:
+  std::vector<TypePtr> adaptColumns(
+      const RowTypePtr& fileType,
+      const std::shared_ptr<const velox::RowType>& tableSchema) const override;
+
   // The read offset to the beginning of the split in number of rows for the
   // current batch for the base data file
   uint64_t baseReadOffset_;
