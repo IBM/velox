@@ -18,12 +18,10 @@
 #include "velox/common/base/Fs.h"
 #include "velox/connectors/hive/HiveConnectorUtil.h"
 #include "velox/connectors/hive/iceberg/IcebergPartitionIdGenerator.h"
-#include "velox/dwio/common/SortingWriter.h"
 #ifdef VELOX_ENABLE_PARQUET
 #include "velox/dwio/parquet/writer/Writer.h"
 #endif
 #include "velox/exec/OperatorUtils.h"
-#include "velox/exec/SortBuffer.h"
 
 namespace facebook::velox::connector::hive::iceberg {
 
@@ -121,14 +119,14 @@ IcebergInsertTableHandle::IcebergInsertTableHandle(
     std::shared_ptr<const IcebergPartitionSpec> partitionSpec,
     memory::MemoryPool* pool,
     dwio::common::FileFormat tableStorageFormat,
-    const std::vector<IcebergSortingColumn>& sortedBy,
+    std::shared_ptr<HiveBucketProperty> bucketProperty,
     std::optional<common::CompressionKind> compressionKind,
     const std::unordered_map<std::string, std::string>& serdeParameters)
     : HiveInsertTableHandle(
           std::move(inputColumns),
           std::move(locationHandle),
           tableStorageFormat,
-          nullptr,
+          std::move(bucketProperty),
           compressionKind,
           serdeParameters,
           nullptr,
@@ -136,8 +134,7 @@ IcebergInsertTableHandle::IcebergInsertTableHandle(
           std::make_shared<const IcebergFileNameGenerator>()),
       partitionSpec_(std::move(partitionSpec)),
       columnTransforms_(
-          parsePartitionTransformSpecs(partitionSpec_->fields, pool)),
-      sortedBy_(sortedBy) {}
+          parsePartitionTransformSpecs(partitionSpec_->fields, pool)) {}
 
 IcebergDataSink::IcebergDataSink(
     facebook::velox::RowTypePtr inputType,
@@ -251,24 +248,6 @@ IcebergDataSink::IcebergDataSink(
         icebergColumnHandle->nestedField(),
         icebergColumnHandle->dataType(),
         false));
-  }
-
-  const auto& sortedBy = insertTableHandle->sortedBy();
-  if (!sortedBy.empty()) {
-    sortColumnIndices_.reserve(sortedBy.size());
-    sortCompareFlags_.reserve(sortedBy.size());
-    for (auto i = 0; i < sortedBy.size(); ++i) {
-      auto columnIndex =
-          inputType_->getChildIdxIfExists(sortedBy[i].sortColumn());
-      if (columnIndex.has_value()) {
-        sortColumnIndices_.push_back(columnIndex.value());
-        sortCompareFlags_.push_back(
-            {sortedBy[i].sortOrder().isNullsFirst(),
-             sortedBy[i].sortOrder().isAscending(),
-             false,
-             CompareFlags::NullHandlingMode::kNullAsValue});
-      }
-    }
   }
 }
 
@@ -436,52 +415,6 @@ void IcebergDataSink::closeInternal() {
       writers_[i]->abort();
     }
   }
-}
-
-std::unique_ptr<facebook::velox::dwio::common::Writer>
-IcebergDataSink::maybeCreateBucketSortWriter(
-    std::unique_ptr<facebook::velox::dwio::common::Writer> writer) {
-  if (!sortWrite()) {
-    return writer;
-  }
-  auto sortPool = writerInfo_.back()->sortPool.get();
-  VELOX_CHECK_NOT_NULL(sortPool);
-  auto sortBuffer = std::make_unique<exec::SortBuffer>(
-      inputType_,
-      sortColumnIndices_,
-      sortCompareFlags_,
-      sortPool,
-      writerInfo_.back()->nonReclaimableSectionHolder.get(),
-      connectorQueryCtx_->prefixSortConfig(),
-      spillConfig_,
-      writerInfo_.back()->spillStats.get());
-  return std::make_unique<dwio::common::SortingWriter>(
-      std::move(writer),
-      std::move(sortBuffer),
-      hiveConfig_->sortWriterMaxOutputRows(
-          connectorQueryCtx_->sessionProperties()),
-      hiveConfig_->sortWriterMaxOutputBytes(
-          connectorQueryCtx_->sessionProperties()),
-      sortWriterFinishTimeSliceLimitMs_);
-}
-
-IcebergSortingColumn::IcebergSortingColumn(
-    const std::string& sortColumn,
-    const core::SortOrder& sortOrder)
-    : sortColumn_(sortColumn), sortOrder_(sortOrder) {
-  VELOX_USER_CHECK(!sortColumn_.empty(), "iceberg sort column must be set.");
-}
-
-const std::string& IcebergSortingColumn::sortColumn() const {
-  return sortColumn_;
-}
-
-const core::SortOrder& IcebergSortingColumn::sortOrder() const {
-  return sortOrder_;
-}
-
-folly::dynamic IcebergSortingColumn::serialize() const {
-  VELOX_UNREACHABLE("Unexpected code path, implement serialize() first.");
 }
 
 } // namespace facebook::velox::connector::hive::iceberg
