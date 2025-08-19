@@ -18,6 +18,37 @@
 exclude: .*\.patch|scripts/tests/.*|velox/external/.*|CMake/third-party/.*
 default_install_hook_types: [pre-commit, pre-push]
 repos:
+  # This configuration enables the detect-secrets in the pre-commit hook for
+  # the velox folder.
+  #
+  # All unrelated Java folders and files are excluded from scanning.
+  #
+  # Read pre-commit hook framework https://pre-commit.com/ for more details about the structure of config yaml file and how git pre-commit would invoke each hook.
+  #
+  # NOTE: this is added at the beginnning to avoid conflicts if more hooks
+  # are added in the OSS version.
+  #
+  # This line indicates we will use the hook from ibm/detect-secrets to run scan during committing phase.
+  - repo: https://github.com/ibm/detect-secrets
+    # If you desire to use a specific version of detect-secrets, you can replace `master` with other git revisions such as branch, tag or commit sha.
+    # You are encouraged to use static refs such as tags, instead of branch name
+    #
+    # Running "pre-commit autoupdate" automatically updates rev to latest tag
+    rev: 0.13.1+ibm.62.dss
+    hooks:
+      - id: detect-secrets # pragma: whitelist secret
+        # It excludes website/package-lock.json because there are a lot of false-positives triggered by the sha512 of the packages used.
+        # Also excludes velox/dwio/orc/test/examples/expected/TestOrcFile.columnProjection.jsn because it is test data that is all false-positives.
+        exclude: ^(website/package-lock.json|velox/dwio/orc/test/examples/expected/TestOrcFile.columnProjection.jsn)$
+        # Add options for detect-secrets-hook binary. You can run `detect-secrets-hook --help` to list out all possible options.
+        # You may also run `pre-commit run detect-secrets` to preview the scan result.
+        # when "--baseline" without "--use-all-plugins", pre-commit scan with just plugins in baseline file
+        # when "--baseline" with "--use-all-plugins", pre-commit scan with all available plugins
+        # add "--fail-on-unaudited" to fail pre-commit for unaudited potential secrets
+        args: [--baseline, .secrets.baseline, --use-all-plugins]
+
+  ### OSS added hooks
+
   - repo: meta
     hooks:
       - id: check-hooks-apply
