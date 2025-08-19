@@ -17,7 +17,6 @@
 #pragma once
 
 #include "velox/connectors/hive/HiveDataSink.h"
-#include "velox/connectors/hive/iceberg/IcebergColumnHandle.h"
 #include "velox/connectors/hive/iceberg/TransformFactory.h"
 #include "velox/connectors/hive/iceberg/Transforms.h"
 
@@ -63,11 +62,6 @@ class IcebergDataSink : public HiveDataSink {
 
   void appendData(RowVectorPtr input) override;
 
-  const std::vector<std::shared_ptr<dwio::common::IcebergDataFileStatistics>>&
-  dataFileStats() const {
-    return dataFileStats_;
-  }
-
  private:
   IcebergDataSink(
       RowTypePtr inputType,
@@ -90,16 +84,9 @@ class IcebergDataSink : public HiveDataSink {
   std::optional<std::string> getPartitionName(
       const HiveWriterId& id) const override;
 
-  void closeInternal() override;
-
   // Below are structures for partitions from all inputs. partitionData_
   // is indexed by partitionId.
   std::vector<std::vector<folly::dynamic>> partitionData_;
-
-  std::vector<std::shared_ptr<dwio::common::IcebergDataFileStatistics>>
-      dataFileStats_;
-  std::shared_ptr<std::vector<dwio::common::IcebergStatsSettings>>
-      statsSettings_;
 };
 
 } // namespace facebook::velox::connector::hive::iceberg
