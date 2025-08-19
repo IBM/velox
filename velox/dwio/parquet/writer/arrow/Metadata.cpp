@@ -101,12 +101,10 @@ static std::shared_ptr<Statistics> MakeTypedColumnStats(
         metadata.num_values - metadata.statistics.null_count,
         metadata.statistics.null_count,
         metadata.statistics.distinct_count,
-        metadata.statistics.nan_count,
         metadata.statistics.__isset.max_value ||
             metadata.statistics.__isset.min_value,
         metadata.statistics.__isset.null_count,
-        metadata.statistics.__isset.distinct_count,
-        metadata.statistics.__isset.nan_count);
+        metadata.statistics.__isset.distinct_count);
   }
   // Default behavior
   return MakeStatistics<DType>(
@@ -116,11 +114,9 @@ static std::shared_ptr<Statistics> MakeTypedColumnStats(
       metadata.num_values - metadata.statistics.null_count,
       metadata.statistics.null_count,
       metadata.statistics.distinct_count,
-      metadata.statistics.nan_count,
       metadata.statistics.__isset.max || metadata.statistics.__isset.min,
       metadata.statistics.__isset.null_count,
-      metadata.statistics.__isset.distinct_count,
-      metadata.statistics.__isset.nan_count);
+      metadata.statistics.__isset.distinct_count);
 }
 
 std::shared_ptr<Statistics> MakeColumnStats(
@@ -393,10 +389,6 @@ class ColumnChunkMetaData::ColumnChunkMetaDataImpl {
     return std::nullopt;
   }
 
-  inline int32_t field_id() const {
-    return descr_->field_id();
-  }
-
  private:
   mutable std::shared_ptr<Statistics> possible_stats_;
   std::vector<Encoding::type> encodings_;
@@ -541,10 +533,6 @@ int64_t ColumnChunkMetaData::total_uncompressed_size() const {
 
 int64_t ColumnChunkMetaData::total_compressed_size() const {
   return impl_->total_compressed_size();
-}
-
-int32_t ColumnChunkMetaData::field_id() const {
-  return impl_->field_id();
 }
 
 std::unique_ptr<ColumnCryptoMetaData> ColumnChunkMetaData::crypto_metadata()

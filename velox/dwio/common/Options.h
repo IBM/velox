@@ -693,15 +693,6 @@ class ReaderOptions : public io::ReaderOptions {
   bool enableRequestedTypeCheck_{true};
 };
 
-/// Settings for collecting Iceberg column statistics. Holds the Iceberg
-/// source column ID (field_id) and whether to skip bounds collection for this
-/// field. For nested field, it contains child fields.
-struct IcebergStatsSettings {
-  int32_t id;
-  bool skipBounds;
-  std::vector<IcebergStatsSettings> children;
-};
-
 struct WriterOptions {
   TypePtr schema{nullptr};
   velox::memory::MemoryPool* memoryPool{nullptr};
@@ -723,13 +714,6 @@ struct WriterOptions {
 
   std::string sessionTimezoneName;
   bool adjustTimestampToTimezone{false};
-
-  /// This option controls whether collect iceberg data file statistics
-  /// during write. It will be set to true only by IcebergDataSink.
-  bool collectIcebergDataFileStats{false};
-
-  std::shared_ptr<std::vector<IcebergStatsSettings>> icebergStatsSetting{
-      nullptr};
 
   // WriterOption implementations can implement this function to specify how to
   // process format-specific session and connector configs.

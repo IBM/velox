@@ -17,8 +17,7 @@ velox_add_library(
   BloomFilter.cpp
   XxHasher.cpp
   LevelComparison.cpp
-  LevelConversion.cpp
-  UnicodeUtil.cpp)
+  LevelConversion.cpp)
 
 velox_link_libraries(
   velox_dwio_parquet_common

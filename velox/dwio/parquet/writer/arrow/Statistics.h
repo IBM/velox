@@ -141,13 +141,11 @@ class PARQUET_EXPORT EncodedStatistics {
 
   int64_t null_count = 0;
   int64_t distinct_count = 0;
-  int64_t nan_count = 0;
 
   bool has_min = false;
   bool has_max = false;
   bool has_null_count = false;
   bool has_distinct_count = false;
-  bool has_nan_count = false;
 
   // When all values in the statistics are null, it is set to true.
   // Otherwise, at least one value is not null, or we are not sure at all.
@@ -172,8 +170,7 @@ class PARQUET_EXPORT EncodedStatistics {
   }
 
   bool is_set() const {
-    return has_min || has_max || has_null_count || has_distinct_count ||
-        has_nan_count;
+    return has_min || has_max || has_null_count || has_distinct_count;
   }
 
   bool is_signed() const {
@@ -207,12 +204,6 @@ class PARQUET_EXPORT EncodedStatistics {
     has_distinct_count = true;
     return *this;
   }
-
-  EncodedStatistics& set_nan_count(int64_t value) {
-    nan_count = value;
-    has_nan_count = true;
-    return *this;
-  }
 };
 
 /// \brief Base type for computing column statistics while writing a file
@@ -236,12 +227,10 @@ class PARQUET_EXPORT Statistics {
   /// \param[in] num_values total number of values
   /// \param[in] null_count number of null values
   /// \param[in] distinct_count number of distinct values
-  /// \param[in] nan_count number of nan values
   /// \param[in] has_min_max whether the min/max statistics are set
   /// \param[in] has_null_count whether the null_count statistics are set
   /// \param[in] has_distinct_count whether the distinct_count statistics are
-  /// set \param[in] has_nan_count whether the nan_count statistics are set
-  /// \param[in] pool a memory pool to use for any memory allocations,
+  /// set \param[in] pool a memory pool to use for any memory allocations,
   /// optional
   static std::shared_ptr<Statistics> Make(
       const ColumnDescriptor* descr,
@@ -250,11 +239,9 @@ class PARQUET_EXPORT Statistics {
       int64_t num_values,
       int64_t null_count,
       int64_t distinct_count,
-      int64_t nan_count,
       bool has_min_max,
       bool has_null_count,
       bool has_distinct_count,
-      bool has_nan_count,
       ::arrow::MemoryPool* pool = ::arrow::default_memory_pool());
 
   // Helper function to convert EncodedStatistics to Statistics.
@@ -281,12 +268,6 @@ class PARQUET_EXPORT Statistics {
   /// \brief The number of non-null values in the column
   virtual int64_t num_values() const = 0;
 
-  /// \brief Return true if the count of nan values is set
-  virtual bool HasNaNCount() const = 0;
-
-  /// \brief The number of NaN values, may not be set
-  virtual int64_t nan_count() const = 0;
-
   /// \brief Return true if the min and max statistics are set. Obtain
   /// with TypedStatistics<T>::min and max
   virtual bool HasMinMax() const = 0;
@@ -300,12 +281,6 @@ class PARQUET_EXPORT Statistics {
   /// \brief Plain-encoded maximum value
   virtual std::string EncodeMax() const = 0;
 
-  /// \brief Compatible minimum value with iceberg
-  virtual std::string MinValue() const = 0;
-
-  /// \brief Compatible maximum value with iceberg
-  virtual std::string MaxValue() const = 0;
-
   /// \brief The finalized encoded form of the statistics for transport
   virtual EncodedStatistics Encode() = 0;
 
@@ -317,24 +292,6 @@ class PARQUET_EXPORT Statistics {
 
   /// \brief Check two Statistics for equality
   virtual bool Equals(const Statistics& other) const = 0;
-
-  /// \brief Return true if this object is greater than other
-  virtual bool CompareMax(const Statistics& other) const = 0;
-
-  /// \brief Return true if this object is less than other
-  virtual bool CompareMin(const Statistics& other) const = 0;
-
-  static std::shared_ptr<Statistics> CompareAndGetMax(
-      const std::shared_ptr<Statistics>& stats1,
-      const std::shared_ptr<Statistics>& stats2) {
-    return stats1->CompareMax(*stats2) ? stats1 : stats2;
-  }
-
-  static std::shared_ptr<Statistics> CompareAndGetMin(
-      const std::shared_ptr<Statistics>& stats1,
-      const std::shared_ptr<Statistics>& stats2) {
-    return stats1->CompareMin(*stats2) ? stats1 : stats2;
-  }
 
  protected:
   static std::shared_ptr<Statistics> Make(
@@ -412,9 +369,6 @@ class TypedStatistics : public Statistics {
   /// \brief Increments the number of values directly
   /// The same note on IncrementNullCount applies here
   virtual void IncrementNumValues(int64_t n) = 0;
-
-  /// \brief Increments the NaN count directly
-  virtual void IncrementNaNValues(int64_t n) = 0;
 };
 
 using BoolStatistics = TypedStatistics<BooleanType>;
@@ -460,11 +414,9 @@ std::shared_ptr<TypedStatistics<DType>> MakeStatistics(
     int64_t num_values,
     int64_t null_count,
     int64_t distinct_count,
-    int64_t nan_count,
     bool has_min_max,
     bool has_null_count,
     bool has_distinct_count,
-    bool has_nan_count,
     ::arrow::MemoryPool* pool = ::arrow::default_memory_pool()) {
   return std::static_pointer_cast<TypedStatistics<DType>>(Statistics::Make(
       descr,
@@ -473,11 +425,9 @@ std::shared_ptr<TypedStatistics<DType>> MakeStatistics(
       num_values,
       null_count,
       distinct_count,
-      nan_count,
       has_min_max,
       has_null_count,
       has_distinct_count,
-      has_nan_count,
       pool));
 }
 
