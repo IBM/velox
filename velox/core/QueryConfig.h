@@ -139,6 +139,11 @@ class QueryConfig {
   static constexpr const char* kLocalExchangePartitionBufferPreserveEncoding =
       "local_exchange_partition_buffer_preserve_encoding";
 
+  /// Maximum number of vectors buffered in each local merge source before
+  /// blocking to wait for consumers.
+  static constexpr const char* kLocalMergeSourceQueueSize =
+      "local_merge_source_queue_size";
+
   /// Maximum size in bytes to accumulate in ExchangeQueue. Enforced
   /// approximately, not strictly.
   static constexpr const char* kMaxExchangeBufferSize =
@@ -175,6 +180,12 @@ class QueryConfig {
 
   static constexpr const char* kAbandonPartialTopNRowNumberMinPct =
       "abandon_partial_topn_row_number_min_pct";
+
+  static constexpr const char* kAbandonBuildNoDupHashMinRows =
+      "abandon_build_no_dup_hash_min_rows";
+
+  static constexpr const char* kAbandonBuildNoDupHashMinPct =
+      "abandon_build_no_dup_hash_min_pct";
 
   static constexpr const char* kMaxElementsSizeInRepeatAndSequence =
       "max_elements_size_in_repeat_and_sequence";
@@ -523,9 +534,18 @@ class QueryConfig {
   static constexpr const char* kDebugMemoryPoolNameRegex =
       "debug_memory_pool_name_regex";
 
+  /// Warning threshold in bytes for debug memory pools. When set to a
+  /// non-zero value, a warning will be logged once per memory pool when
+  /// allocations cause the pool to exceed this threshold. This is useful for
+  /// identifying memory usage patterns during debugging. Requires allocation
+  /// tracking to be enabled via `debug_memory_pool_name_regex` for the pool. A
+  /// value of 0 means no warning threshold is enforced.
+  static constexpr const char* kDebugMemoryPoolWarnThresholdBytes =
+      "debug_memory_pool_warn_threshold_bytes";
+
   /// Some lambda functions over arrays and maps are evaluated in batches of the
   /// underlying elements that comprise the arrays/maps. This is done to make
-  /// the batch size managable as array vectors can have thousands of elements
+  /// the batch size manageable as array vectors can have thousands of elements
   /// each and hit scaling limits as implementations typically expect
   /// BaseVectors to a couple of thousand entries. This lets up tune those batch
   /// sizes.
@@ -695,6 +715,12 @@ class QueryConfig {
     return get<std::string>(kDebugMemoryPoolNameRegex, "");
   }
 
+  uint64_t debugMemoryPoolWarnThresholdBytes() const {
+    return config::toCapacity(
+        get<std::string>(kDebugMemoryPoolWarnThresholdBytes, "0B"),
+        config::CapacityUnit::BYTE);
+  }
+
   std::optional<uint32_t> debugAggregationApproxPercentileFixedRandomSeed()
       const {
     return get<uint32_t>(kDebugAggregationApproxPercentileFixedRandomSeed);
@@ -738,6 +764,14 @@ class QueryConfig {
 
   int32_t abandonPartialTopNRowNumberMinPct() const {
     return get<int32_t>(kAbandonPartialTopNRowNumberMinPct, 80);
+  }
+
+  int32_t abandonBuildNoDupHashMinRows() const {
+    return get<int32_t>(kAbandonBuildNoDupHashMinRows, 100'000);
+  }
+
+  int32_t abandonBuildNoDupHashMinPct() const {
+    return get<int32_t>(kAbandonBuildNoDupHashMinPct, 0);
   }
 
   int32_t maxElementsSizeInRepeatAndSequence() const {
@@ -794,6 +828,10 @@ class QueryConfig {
   bool localExchangePartitionBufferPreserveEncoding() const {
     /// Trying to preserve encoding can be expensive. Disabled by default.
     return get<bool>(kLocalExchangePartitionBufferPreserveEncoding, false);
+  }
+
+  uint32_t localMergeSourceQueueSize() const {
+    return get<uint32_t>(kLocalMergeSourceQueueSize, 2);
   }
 
   uint64_t maxExchangeBufferSize() const {

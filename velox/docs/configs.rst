@@ -43,6 +43,16 @@ Generic Configuration
      - integer
      - 80
      - Abandons partial TopNRowNumber if number of output rows equals or exceeds this percentage of the number of input rows.
+   * - abandon_build_no_dup_hash_min_rows
+     - integer
+     - 100,000
+     - Number of input rows to receive before starting to check whether to abandon building a HashTable without
+       duplicates in HashBuild for left semi/anti join.
+   * - abandon_build_no_dup_hash_min_pct
+     - integer
+     - 0
+     - Abandons building a HashTable without duplicates in HashBuild for left semi/anti join if the percentage of
+       distinct keys in the HashTable exceeds this threshold. Zero means 'disable this optimization'.
    * - session_timezone
      - string
      -
@@ -106,6 +116,10 @@ Generic Configuration
        client. Enforced approximately, not strictly. A larger size can increase network throughput
        for larger clusters and thus decrease query processing time at the expense of reducing the
        amount of memory available for other usage.
+   * - local_merge_source_queue_size
+     - integer
+     - 2
+     - Maximum number of vectors buffered in each local merge source before blocking to wait for consumers.
    * - max_page_partitioning_buffer_size
      - integer
      - 32MB
@@ -676,6 +690,16 @@ Each query can override the config by setting corresponding query session proper
      - bool
      - true
      - Reads timestamp partition value as local time if true. Otherwise, reads as UTC.
+   * - hive.preserve-flat-maps-in-memory
+     - hive.preserve_flat_maps_in_memory
+     - bool
+     - false
+     - Whether to preserve flat maps in memory as FlatMapVectors instead of converting them to MapVectors. This is only applied during data reading inside the DWRF and Nimble readers, not during downstream processing like expression evaluation etc.
+   * - enable-requested-type-check
+     - enable_requested_type_check
+     - bool
+     - true
+     - Whether to enable requested type check in the `ReaderBase::convertType`. True by default.
 
 ``ORC File Format Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
