@@ -36,8 +36,9 @@ class IcebergPartitionIdGeneratorTest : public IcebergTestBase {
       std::optional<int32_t> parameter =
           parameters.size() > i ? parameters[i] : std::nullopt;
 
-      fields.emplace_back(IcebergPartitionSpec::Field{
-          columnNames[i], types[i], transformTypes[i], parameter});
+      fields.emplace_back(
+          IcebergPartitionSpec::Field{
+              columnNames[i], types[i], transformTypes[i], parameter});
     }
 
     return parsePartitionTransformSpecs(fields, pool_.get());
