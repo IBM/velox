@@ -59,10 +59,12 @@ class IcebergTransformE2ETest : public IcebergTestBase {
     std::vector<RowVectorPtr> batches;
     for (auto batchIdx = 0; batchIdx < numBatches; ++batchIdx) {
       std::vector<VectorPtr> columns;
-      columns.push_back(makeFlatVector<int32_t>(
-          rowsPerBatch, [](auto row) { return row % 100; }));
-      columns.push_back(makeFlatVector<int64_t>(
-          rowsPerBatch, [](auto row) { return row * 1'000; }));
+      columns.push_back(makeFlatVector<int32_t>(rowsPerBatch, [](auto row) {
+        return row % 100;
+      }));
+      columns.push_back(makeFlatVector<int64_t>(rowsPerBatch, [](auto row) {
+        return row * 1'000;
+      }));
       auto varcharVector = BaseVector::create<FlatVector<StringView>>(
           VARCHAR(), rowsPerBatch, opPool_.get());
       for (auto i = 0; i < rowsPerBatch; i++) {
@@ -554,8 +556,8 @@ TEST_F(IcebergTransformE2ETest, multipleTransformsOnSameColumn) {
             << " should use bucket transform";
 
         auto leafDir = thirdDir;
-        auto intValue =
-            std::stoi(std::filesystem::path(dir).filename().string().substr(
+        auto intValue = std::stoi(
+            std::filesystem::path(dir).filename().string().substr(
                 6)); // c_int=X.
         auto truncValue = std::stoi(
             std::filesystem::path(secondDir).filename().string().substr(
