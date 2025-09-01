@@ -66,10 +66,11 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
           ColumnTransformTest.cpp
           IcebergInsertTest.cpp
           IcebergPartitionIdGeneratorTest.cpp
+          IcebergStatsTest.cpp
           IcebergTestBase.cpp
-          Main.cpp
           IcebergTransformE2ETest.cpp
           IcebergTransformUnitTest.cpp
+          Main.cpp
           Murmur3Test.cpp)
 
   add_test(velox_hive_iceberg_insert_test velox_hive_iceberg_insert_test)
