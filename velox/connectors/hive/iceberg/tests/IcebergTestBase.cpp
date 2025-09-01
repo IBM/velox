@@ -107,11 +107,12 @@ std::shared_ptr<IcebergPartitionSpec> IcebergTestBase::createPartitionSpec(
     const RowTypePtr& rowType) {
   std::vector<IcebergPartitionSpec::Field> fields;
   for (const auto& partitionField : partitionFields) {
-    fields.push_back(IcebergPartitionSpec::Field{
-        rowType->nameOf(partitionField.id),
-        rowType->childAt(partitionField.id),
-        partitionField.type,
-        partitionField.parameter});
+    fields.push_back(
+        IcebergPartitionSpec::Field{
+            rowType->nameOf(partitionField.id),
+            rowType->childAt(partitionField.id),
+            partitionField.type,
+            partitionField.parameter});
   }
 
   return std::make_shared<IcebergPartitionSpec>(1, fields);
@@ -160,16 +161,17 @@ void addColumnHandles(
     auto columnName = rowType->nameOf(i);
     auto type = rowType->childAt(i);
     auto field = collectNestedField(type, startIndex);
-    columnHandles.push_back(std::make_shared<IcebergColumnHandle>(
-        columnName,
-        partitionColumnIds.count(i) > 0
-            ? HiveColumnHandle::ColumnType::kPartitionKey
-            : HiveColumnHandle::ColumnType::kRegular,
-        type,
-        type,
-        field,
-        std::vector<common::Subfield>{},
-        columnParseParameters));
+    columnHandles.push_back(
+        std::make_shared<IcebergColumnHandle>(
+            columnName,
+            partitionColumnIds.count(i) > 0
+                ? HiveColumnHandle::ColumnType::kPartitionKey
+                : HiveColumnHandle::ColumnType::kRegular,
+            type,
+            type,
+            field,
+            std::vector<common::Subfield>{},
+            columnParseParameters));
   }
 }
 
@@ -288,18 +290,19 @@ IcebergTestBase::createSplitsForDirectory(const std::string& directory) {
 
     const auto file = filesystems::getFileSystem(filePath, nullptr)
                           ->openFileForRead(filePath);
-    splits.push_back(std::make_shared<HiveIcebergSplit>(
-        exec::test::kHiveConnectorId,
-        filePath,
-        fileFormat_,
-        0,
-        file->size(),
-        partitionKeys,
-        std::nullopt,
-        customSplitInfo,
-        nullptr,
-        true,
-        std::vector<IcebergDeleteFile>()));
+    splits.push_back(
+        std::make_shared<HiveIcebergSplit>(
+            exec::test::kHiveConnectorId,
+            filePath,
+            fileFormat_,
+            0,
+            file->size(),
+            partitionKeys,
+            std::nullopt,
+            customSplitInfo,
+            nullptr,
+            true,
+            std::vector<IcebergDeleteFile>()));
   }
 
   return splits;
