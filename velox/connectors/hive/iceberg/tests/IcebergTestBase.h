@@ -63,9 +63,12 @@ class IcebergTestBase : public exec::test::HiveConnectorTestBase {
     const std::vector<PartitionField>& transformSpecs,
     const RowTypePtr& rowType);
 
+  void setupMemoryPools();
+
   dwio::common::FileFormat fileFormat_{dwio::common::FileFormat::PARQUET};
   RowTypePtr rowType_;
   std::shared_ptr<memory::MemoryPool> opPool_;
+  std::shared_ptr<config::ConfigBase> connectorSessionProperties_;
 
 private:
   IcebergInsertTableHandlePtr createIcebergInsertTableHandle(
@@ -77,10 +80,8 @@ private:
   std::vector<std::string> listPartitionDirectories(
       const std::string& dataPath);
 
-  void setupMemoryPools();
   std::shared_ptr<memory::MemoryPool> root_;
   std::shared_ptr<memory::MemoryPool> connectorPool_;
-  std::shared_ptr<config::ConfigBase> connectorSessionProperties_;
   std::shared_ptr<HiveConfig> connectorConfig_;
   std::unique_ptr<ConnectorQueryCtx> connectorQueryCtx_;
   VectorFuzzer::Options fuzzerOptions_;
