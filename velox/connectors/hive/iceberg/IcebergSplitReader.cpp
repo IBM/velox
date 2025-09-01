@@ -232,7 +232,6 @@ uint64_t IcebergSplitReader::next(uint64_t size, VectorPtr& output) {
         (getCurrentTimeMs() - filterStartMs), std::memory_order_relaxed);
   }
 
-
   if (rowsScanned == 0) {
     scanSpec_->deleteTempNodes();
   }
