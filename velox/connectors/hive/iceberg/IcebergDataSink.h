@@ -100,8 +100,8 @@ class IcebergDataSink : public HiveDataSink {
   void appendData(RowVectorPtr input) override;
 
   const std::vector<std::shared_ptr<dwio::common::DataFileStatistics>>&
-dataFileStats() const {
-        return dataFileStats_;
+  dataFileStats() const {
+    return dataFileStats_;
   }
   /// Generates Iceberg-specific commit messages for all writers containing
   /// metadata about written files. Creates a JSON object for each writer
@@ -125,17 +125,21 @@ dataFileStats() const {
   /// Presto and Spark Iceberg commit protocol.
   std::vector<std::string> commitMessage() const override;
 
-private:
-    IcebergDataSink(
-        RowTypePtr inputType,
-        IcebergInsertTableHandlePtr insertTableHandle,
-        const ConnectorQueryCtx* connectorQueryCtx,
-        CommitStrategy commitStrategy,
-        const std::shared_ptr<const HiveConfig>& hiveConfig,
-        const std::vector<column_index_t>& partitionChannels,
-        const std::vector<column_index_t>& dataChannels);
+  bool finish() override;
 
-    void splitInputRowsAndEnsureWriters(RowVectorPtr input) override;
+ private:
+  IcebergDataSink(
+      RowTypePtr inputType,
+      IcebergInsertTableHandlePtr insertTableHandle,
+      const ConnectorQueryCtx* connectorQueryCtx,
+      CommitStrategy commitStrategy,
+      const std::shared_ptr<const HiveConfig>& hiveConfig,
+      const std::vector<column_index_t>& partitionChannels,
+      const std::vector<column_index_t>& dataChannels);
+
+  void splitInputRowsAndEnsureWriters(RowVectorPtr input) override;
+
+  void computePartition(const RowVectorPtr& input);
 
   HiveWriterId getIcebergWriterId(size_t row) const;
 
@@ -148,7 +152,15 @@ private:
   std::unique_ptr<dwio::common::Writer> maybeCreateBucketSortWriter(
       std::unique_ptr<dwio::common::Writer> writer) override;
 
+  void buildPartitionData(int32_t index);
+
+  void clusteredWrite(RowVectorPtr input, int32_t writerIdx);
+
   void closeInternal() override;
+
+  void closeWriter(int32_t index);
+
+  bool finishWriter(int32_t index);
 
   // Below are structures for partitions from all inputs. partitionData_
   // is indexed by partitionId.
@@ -159,6 +171,11 @@ private:
       std::vector<std::unique_ptr<dwio::common::DataFileStatsSettings>>>
       statsSettings_;
   std::unique_ptr<DataFileStatsCollector> icebergStatsCollector_;
+
+  // Below are structures for clustered mode writer.
+  const bool fanoutEnabled_;
+  uint32_t currentWriterId_;
+  std::unordered_set<uint32_t> completedWriterIds_;
 };
 
 } // namespace facebook::velox::connector::hive::iceberg
