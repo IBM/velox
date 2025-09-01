@@ -117,8 +117,9 @@ std::shared_ptr<Transform> buildColumnTransform(
     const IcebergPartitionSpec::Field& field,
     memory::MemoryPool* pool) {
   if (!isValidPartitionType(field.type)) {
-    VELOX_USER_FAIL(fmt::format(
-        "Type not supported as partition column: {}.", field.type->name()));
+    VELOX_USER_FAIL(
+        fmt::format(
+            "Type not supported as partition column: {}.", field.type->name()));
   }
   switch (field.transformType) {
     // Identity transform.
@@ -144,9 +145,10 @@ std::shared_ptr<Transform> buildColumnTransform(
             pool);
       }
 
-      VELOX_UNREACHABLE(fmt::format(
-          "Unsupported column type {} for transform year.",
-          field.type->name()));
+      VELOX_UNREACHABLE(
+          fmt::format(
+              "Unsupported column type {} for transform year.",
+              field.type->name()));
     }
     // Month transform.
     case TransformType::kMonth: {
@@ -166,9 +168,10 @@ std::shared_ptr<Transform> buildColumnTransform(
             pool);
       }
 
-      VELOX_UNREACHABLE(fmt::format(
-          "Unsupported column type {} for transform month.",
-          field.type->name()));
+      VELOX_UNREACHABLE(
+          fmt::format(
+              "Unsupported column type {} for transform month.",
+              field.type->name()));
     }
     // Day transform.
     case TransformType::kDay: {
@@ -188,8 +191,10 @@ std::shared_ptr<Transform> buildColumnTransform(
             pool);
       }
 
-      VELOX_UNREACHABLE(fmt::format(
-          "Unsupported column type {} for transform day.", field.type->name()));
+      VELOX_UNREACHABLE(
+          fmt::format(
+              "Unsupported column type {} for transform day.",
+              field.type->name()));
     }
     // Hour transform.
     case TransformType::kHour: {
@@ -201,9 +206,10 @@ std::shared_ptr<Transform> buildColumnTransform(
             pool);
       }
 
-      VELOX_UNREACHABLE(fmt::format(
-          "Unsupported column type {} for transform hour.",
-          field.type->name()));
+      VELOX_UNREACHABLE(
+          fmt::format(
+              "Unsupported column type {} for transform hour.",
+              field.type->name()));
     }
     // Bucket transform.
     case TransformType::kBucket: {
@@ -235,9 +241,10 @@ std::shared_ptr<Transform> buildColumnTransform(
         return createBucketTransform<TypeKind::VARBINARY>(
             field, numBuckets, pool);
       }
-      VELOX_UNREACHABLE(fmt::format(
-          "Unsupported column type {} for transform bucket.",
-          field.type->name()));
+      VELOX_UNREACHABLE(
+          fmt::format(
+              "Unsupported column type {} for transform bucket.",
+              field.type->name()));
     }
     // Truncate transform.
     case TransformType::kTruncate: {
@@ -257,9 +264,10 @@ std::shared_ptr<Transform> buildColumnTransform(
       if (field.type->isVarbinary()) {
         return createTruncateTransform<TypeKind::VARBINARY>(field, width, pool);
       }
-      VELOX_UNREACHABLE(fmt::format(
-          "Unsupported column type {} for transform truncate.",
-          field.type->name()));
+      VELOX_UNREACHABLE(
+          fmt::format(
+              "Unsupported column type {} for transform truncate.",
+              field.type->name()));
     }
     default:
       VELOX_UNREACHABLE("Unsupported transform.");
