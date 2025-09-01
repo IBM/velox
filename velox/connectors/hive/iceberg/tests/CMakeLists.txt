@@ -37,11 +37,7 @@ if(VELOX_ENABLE_BENCHMARKS)
 endif()
 
 if(NOT VELOX_DISABLE_GOOGLETEST)
-  add_executable(
-    velox_hive_iceberg_test
-    IcebergReadTest.cpp
-    IcebergSplitReaderBenchmarkTest.cpp
-  )
+  add_executable(velox_hive_iceberg_test IcebergReadTest.cpp IcebergSplitReaderBenchmarkTest.cpp)
   add_test(velox_hive_iceberg_test velox_hive_iceberg_test)
 
   target_link_libraries(
@@ -62,17 +58,20 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
     GTest::gtest_main
   )
 
-  add_executable(velox_hive_iceberg_insert_test
-          ColumnTransformTest.cpp
-          IcebergInsertTest.cpp
-          IcebergPartitionIdGeneratorTest.cpp
-          IcebergSortOrderTest.cpp
-          IcebergStatsTest.cpp
-          IcebergTestBase.cpp
-          IcebergTransformE2ETest.cpp
-          IcebergTransformUnitTest.cpp
-          Main.cpp
-          Murmur3Test.cpp)
+  add_executable(
+    velox_hive_iceberg_insert_test
+    ColumnTransformTest.cpp
+    IcebergInsertTest.cpp
+    IcebergPartitionIdGeneratorTest.cpp
+    IcebergSortOrderTest.cpp
+    IcebergStatsTest.cpp
+    IcebergTestBase.cpp
+    IcebergTransformE2ETest.cpp
+    IcebergTransformUnitTest.cpp
+    IcebergWriterModeTest.cpp
+    Main.cpp
+    Murmur3Test.cpp
+  )
 
   add_test(velox_hive_iceberg_insert_test velox_hive_iceberg_insert_test)
 
