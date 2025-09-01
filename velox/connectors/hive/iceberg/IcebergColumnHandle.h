@@ -41,7 +41,6 @@ class IcebergColumnHandle : public HiveColumnHandle {
   const IcebergNestedField nestedField_;
 };
 
-using IcebergColumnHandlePtr =
-    std::shared_ptr<const IcebergColumnHandle>;
+using IcebergColumnHandlePtr = std::shared_ptr<const IcebergColumnHandle>;
 
 } // namespace facebook::velox::connector::hive::iceberg
