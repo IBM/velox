@@ -881,14 +881,12 @@ TEST_F(ParquetWriterTest, withFieldIds) {
   writerOptions.memoryPool = leafPool_.get();
 
   // Provide Parquet field IDs aligned with the Velox schema tree.
-  std::vector<ParquetFieldId> fieldIds{
+  writerOptions.parquetFieldIds = {
       ParquetFieldId{10, {}},
       ParquetFieldId{20, {ParquetFieldId{21, {}}, ParquetFieldId{22, {}}}},
       ParquetFieldId{30, {ParquetFieldId{31, {}}}},
       ParquetFieldId{40, {ParquetFieldId{41, {}}, ParquetFieldId{42, {}}}},
   };
-  writerOptions.parquetFieldIds =
-      std::make_shared<std::vector<ParquetFieldId>>(fieldIds);
 
   auto writer = std::make_unique<parquet::Writer>(
       std::move(sink), writerOptions, rootPool_, schema);
