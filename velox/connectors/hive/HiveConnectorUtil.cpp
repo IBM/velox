@@ -849,7 +849,6 @@ std::unique_ptr<dwio::common::BufferedInput> createBufferedInput(
 }
 
 namespace {
-
 core::CallTypedExprPtr replaceInputs(
     const core::CallTypedExpr* call,
     std::vector<core::TypedExprPtr>&& inputs) {
@@ -1029,12 +1028,11 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
 
   return expr;
 }
+} // namespace
 
 std::string makeUuid() {
   return boost::lexical_cast<std::string>(boost::uuids::random_generator()());
 }
-
-} // namespace
 
 core::TypedExprPtr extractFiltersFromRemainingFilter(
     const core::TypedExprPtr& expr,
