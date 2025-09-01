@@ -17,6 +17,8 @@
 #pragma once
 
 #include "velox/connectors/hive/HiveDataSink.h"
+#include "velox/connectors/hive/iceberg/DataFileStatsCollector.h"
+#include "velox/connectors/hive/iceberg/IcebergColumnHandle.h"
 #include "velox/connectors/hive/iceberg/TransformFactory.h"
 #include "velox/connectors/hive/iceberg/Transforms.h"
 
@@ -38,7 +40,7 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
   /// @param serdeParameters Additional serialization/deserialization parameters
   /// for the file format.
   IcebergInsertTableHandle(
-      std::vector<HiveColumnHandlePtr> inputColumns,
+      std::vector<IcebergColumnHandlePtr> inputColumns,
       LocationHandlePtr locationHandle,
       std::shared_ptr<const IcebergPartitionSpec> partitionSpec,
       memory::MemoryPool* pool,
@@ -75,6 +77,10 @@ class IcebergDataSink : public HiveDataSink {
 
   void appendData(RowVectorPtr input) override;
 
+  const std::vector<std::shared_ptr<dwio::common::DataFileStatistics>>&
+dataFileStats() const {
+        return dataFileStats_;
+  }
   /// Generates Iceberg-specific commit messages for all writers containing
   /// metadata about written files. Creates a JSON object for each writer
   /// in the format expected by Presto and Spark for Iceberg tables.
@@ -117,9 +123,17 @@ private:
   std::optional<std::string> getPartitionName(
       const HiveWriterId& id) const override;
 
+  void closeInternal() override;
+
   // Below are structures for partitions from all inputs. partitionData_
   // is indexed by partitionId.
   std::vector<std::vector<folly::dynamic>> partitionData_;
+
+  std::vector<std::shared_ptr<dwio::common::DataFileStatistics>> dataFileStats_;
+  std::shared_ptr<
+      std::vector<std::unique_ptr<dwio::common::DataFileStatsSettings>>>
+      statsSettings_;
+  std::unique_ptr<DataFileStatsCollector> icebergStatsCollector_;
 };
 
 } // namespace facebook::velox::connector::hive::iceberg
