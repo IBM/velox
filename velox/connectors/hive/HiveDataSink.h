@@ -743,6 +743,7 @@ class HiveDataSink : public DataSink {
   // Invoked to write 'input' to the specified file writer.
   void write(size_t index, RowVectorPtr input);
 
+  virtual void closeInternal();
   /// Rotates the writer at the given index to a new file. This is called when
   /// the current file exceeds maxTargetFileBytes_. The old writer is closed
   /// and a new writer is created for the same partition/bucket.
