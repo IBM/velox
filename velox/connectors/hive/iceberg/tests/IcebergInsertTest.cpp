@@ -79,14 +79,9 @@ TEST_F(IcebergInsertTest, bigDecimal) {
 #endif
 
 TEST_F(IcebergInsertTest, testSingleColumnAsPartition) {
-  auto rowType =
-    ROW({"c1", "c2", "c3", "c4", "c5", "c6"},
-        {BIGINT(),
-         INTEGER(),
-         SMALLINT(),
-         DECIMAL(18, 5),
-         BOOLEAN(),
-         VARCHAR()});
+  auto rowType = ROW(
+      {"c1", "c2", "c3", "c4", "c5", "c6"},
+      {BIGINT(), INTEGER(), SMALLINT(), DECIMAL(18, 5), BOOLEAN(), VARCHAR()});
   for (auto colIndex = 0; colIndex < rowType->size() - 1; colIndex++) {
     const auto& colName = rowType->nameOf(colIndex);
     const auto outputDirectory = exec::test::TempDirectoryPath::create();
@@ -148,14 +143,9 @@ TEST_F(IcebergInsertTest, testSingleColumnAsPartition) {
 }
 
 TEST_F(IcebergInsertTest, testPartitionNullColumn) {
-  auto rowType =
-  ROW({"c1", "c2", "c3", "c4", "c5", "c6"},
-      {BIGINT(),
-       INTEGER(),
-       SMALLINT(),
-       DECIMAL(18, 5),
-       BOOLEAN(),
-       VARCHAR()});
+  auto rowType = ROW(
+      {"c1", "c2", "c3", "c4", "c5", "c6"},
+      {BIGINT(), INTEGER(), SMALLINT(), DECIMAL(18, 5), BOOLEAN(), VARCHAR()});
   for (auto colIndex = 0; colIndex < rowType->size() - 1; colIndex++) {
     const auto& colName = rowType->nameOf(colIndex);
     const auto colType = rowType->childAt(colIndex);
@@ -209,14 +199,9 @@ TEST_F(IcebergInsertTest, testPartitionNullColumn) {
 }
 
 TEST_F(IcebergInsertTest, testColumnCombinationsAsPartition) {
-  auto rowType =
-  ROW({"c1", "c2", "c3", "c4", "c5", "c6"},
-      {BIGINT(),
-       INTEGER(),
-       SMALLINT(),
-       DECIMAL(18, 5),
-       BOOLEAN(),
-       VARCHAR()});
+  auto rowType = ROW(
+      {"c1", "c2", "c3", "c4", "c5", "c6"},
+      {BIGINT(), INTEGER(), SMALLINT(), DECIMAL(18, 5), BOOLEAN(), VARCHAR()});
   std::vector<std::vector<int32_t>> columnCombinations = {
       {0, 1}, // BIGINT, INTEGER.
       {2, 1}, // SMALLINT, INTEGER.
