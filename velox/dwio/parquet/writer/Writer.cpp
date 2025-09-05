@@ -194,7 +194,7 @@ void validateSchemaRecursive(const RowTypePtr& schema) {
   }
 }
 
-std::shared_ptr<::arrow::Field> updateFieldRecursive(
+std::shared_ptr<::arrow::Field> updateFieldNameAndIdRecursive(
     const std::shared_ptr<::arrow::Field>& field,
     const Type& type,
     const std::string& name = "",
@@ -207,10 +207,10 @@ std::shared_ptr<::arrow::Field> updateFieldRecursive(
         std::dynamic_pointer_cast<::arrow::StructType>(newField->type());
     auto childrenSize = rowType.size();
     std::vector<std::shared_ptr<::arrow::Field>> newFields;
-    newFields.reserve(rowType.size());
-    for (auto i = 0; i < rowType.size(); ++i) {
+    newFields.reserve(childrenSize);
+    for (auto i = 0; i < childrenSize; ++i) {
       const auto* childSetting = fieldId ? &fieldId->children.at(i) : nullptr;
-      newFields.push_back(updateFieldRecursive(
+      newFields.push_back(updateFieldNameAndIdRecursive(
           structType->fields()[i],
           *rowType.childAt(i),
           rowType.nameOf(i),
@@ -224,9 +224,8 @@ std::shared_ptr<::arrow::Field> updateFieldRecursive(
     auto elementType = type.asArray().elementType();
     auto elementField = listType->value_field();
     const auto* childSetting = fieldId ? &fieldId->children.at(0) : nullptr;
-
-    auto updatedElementField =
-        updateFieldRecursive(elementField, *elementType, name, childSetting);
+    auto updatedElementField = updateFieldNameAndIdRecursive(
+        elementField, *elementType, name, childSetting);
     newField = newField->WithType(::arrow::list(updatedElementField));
   } else if (type.isMap()) {
     auto mapType = type.asMap();
@@ -235,12 +234,12 @@ std::shared_ptr<::arrow::Field> updateFieldRecursive(
         std::dynamic_pointer_cast<::arrow::MapType>(newField->type());
     const auto* keySetting = fieldId ? &fieldId->children.at(0) : nullptr;
     const auto* valueSetting = fieldId ? &fieldId->children.at(1) : nullptr;
-    auto newKeyField = updateFieldRecursive(
+    auto newKeyField = updateFieldNameAndIdRecursive(
         arrowMapType->key_field(),
         *mapType.keyType(),
         mapType.nameOf(0),
         keySetting);
-    auto newValueField = updateFieldRecursive(
+    auto newValueField = updateFieldNameAndIdRecursive(
         arrowMapType->item_field(),
         *mapType.valueType(),
         mapType.nameOf(1),
@@ -257,6 +256,7 @@ std::shared_ptr<::arrow::Field> updateFieldRecursive(
     newField =
         newField->WithMetadata(arrow::arrow::FieldIdMetadata(fieldId->fieldId));
   }
+
   return newField;
 }
 
@@ -375,8 +375,8 @@ Writer::Writer(
   setMemoryReclaimers();
   writeInt96AsTimestamp_ = options.writeInt96AsTimestamp;
   arrowMemoryPool_ = options.arrowMemoryPool;
-  dataFileStats_ = std::make_shared<dwio::common::DataFileStatistics>();
   parquetFieldIds_ = options.parquetFieldIds;
+  dataFileStats_ = std::make_shared<dwio::common::DataFileStatistics>();
   statsCollector_ = options.fileStatsCollector;
 }
 
@@ -473,7 +473,7 @@ void Writer::write(const VectorPtr& data) {
   std::vector<std::shared_ptr<::arrow::Field>> newFields;
   auto childSize = schema_->size();
   for (auto i = 0; i < childSize; i++) {
-    newFields.push_back(updateFieldRecursive(
+    newFields.push_back(updateFieldNameAndIdRecursive(
         arrowSchema->fields()[i],
         *schema_->childAt(i),
         schema_->nameOf(i),
