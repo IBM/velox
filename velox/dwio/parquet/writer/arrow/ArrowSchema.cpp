@@ -64,8 +64,6 @@ using ParquetType = Type;
 
 namespace {
 
-static constexpr char FIELD_ID_KEY[] = "PARQUET:field_id";
-
 /// Increments levels according to the cardinality of node.
 void IncrementLevels(LevelInfo& current_levels, const schema::Node& node) {
   if (node.is_repeated()) {
@@ -345,6 +343,8 @@ static Status GetTimestampMetadata(
 
   return Status::OK();
 }
+
+static constexpr char FIELD_ID_KEY[] = "PARQUET:field_id";
 
 int FieldIdFromMetadata(
     const std::shared_ptr<const ::arrow::KeyValueMetadata>& metadata) {
@@ -1214,7 +1214,7 @@ Result<bool> ApplyOriginalMetadata(
 
 } // namespace
 
-std::shared_ptr<::arrow::KeyValueMetadata> FieldIdMetadata(int32_t field_id) {
+std::shared_ptr<::arrow::KeyValueMetadata> FieldIdMetadata(int field_id) {
   if (field_id >= 0) {
     return ::arrow::key_value_metadata({FIELD_ID_KEY}, {ToChars(field_id)});
   } else {
