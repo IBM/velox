@@ -20,8 +20,8 @@ namespace facebook::velox::connector::hive::iceberg {
 
 namespace {
 
-folly::F14FastMap<TransformType, std::string> transformTypeNames() {
-  return {
+const auto& transformTypeNames() {
+  static const folly::F14FastMap<TransformType, std::string_view> kTransformNames = {
       {TransformType::kIdentity, "identity"},
       {TransformType::kHour, "hour"},
       {TransformType::kDay, "day"},
@@ -29,6 +29,7 @@ folly::F14FastMap<TransformType, std::string> transformTypeNames() {
       {TransformType::kYear, "year"},
       {TransformType::kBucket, "bucket"},
       {TransformType::kTruncate, "trunc"}};
+  return kTransformNames;
 }
 
 } // namespace
