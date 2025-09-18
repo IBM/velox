@@ -793,7 +793,8 @@ TypePtr ReaderBase::convertType(
                     requestedType,
                     isRepeated,
                     [](const TypePtr& type) {
-                      return type->kind() == TypeKind::SMALLINT ||
+                      return type->kind() == TypeKind::TINYINT ||
+                          type->kind() == TypeKind::SMALLINT ||
                           type->kind() == TypeKind::INTEGER ||
                           type->kind() == TypeKind::BIGINT;
                     }),
@@ -815,7 +816,9 @@ TypePtr ReaderBase::convertType(
                     requestedType,
                     isRepeated,
                     [](const TypePtr& type) {
-                      return type->kind() == TypeKind::INTEGER ||
+                      return type->kind() == TypeKind::TINYINT ||
+                          type->kind() == TypeKind::SMALLINT ||
+                          type->kind() == TypeKind::INTEGER ||
                           type->kind() == TypeKind::BIGINT;
                     }),
             kTypeMappingErrorFmtStr,
@@ -835,8 +838,12 @@ TypePtr ReaderBase::convertType(
                 isCompatible(
                     requestedType,
                     isRepeated,
-                    [](const TypePtr& type) {
-                      return type->kind() == TypeKind::BIGINT;
+                    [](const TypePtr& type, const TypePtr& requestedType) {
+                      return type->kind() == TypeKind::TINYINT ||
+                          type->kind() == TypeKind::SMALLINT ||
+                          type->kind() == TypeKind::INTEGER ||
+                          type->kind() == TypeKind::BIGINT ||
+                          requestedType->isDecimal();
                     }),
             kTypeMappingErrorFmtStr,
             "BIGINT",
@@ -1007,7 +1014,9 @@ TypePtr ReaderBase::convertType(
                     requestedType,
                     isRepeated,
                     [](const TypePtr& type) {
-                      return type->kind() == TypeKind::INTEGER ||
+                      return type->kind() == TypeKind::TINYINT ||
+                          type->kind() == TypeKind::SMALLINT ||
+                          type->kind() == TypeKind::INTEGER ||
                           type->kind() == TypeKind::BIGINT;
                     }),
             kTypeMappingErrorFmtStr,
@@ -1037,7 +1046,10 @@ TypePtr ReaderBase::convertType(
                     requestedType,
                     isRepeated,
                     [](const TypePtr& type) {
-                      return type->kind() == TypeKind::BIGINT;
+                      return type->kind() == TypeKind::TINYINT ||
+                          type->kind() == TypeKind::SMALLINT ||
+                          type->kind() == TypeKind::INTEGER ||
+                          type->kind() == TypeKind::BIGINT;
                     }),
             kTypeMappingErrorFmtStr,
             "BIGINT",
