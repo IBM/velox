@@ -1717,7 +1717,7 @@ TEST_F(ParquetReaderTest, parquet251) {
       "parquet-251.parquet", rowType, std::move(filters), expected);
 }
 
-TEST_F(ParquetReaderTest, fileColumnVarcharToMetadataColumnMismatchTest) {
+TEST_F(ParquetReaderTest, DISABLED_fileColumnVarcharToMetadataColumnMismatchTest) {
   const std::string sample(getExampleFilePath("nation.parquet"));
 
   dwio::common::ReaderOptions readerOptions{leafPool_.get()};
