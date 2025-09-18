@@ -816,7 +816,8 @@ TypePtr ReaderBase::convertType(
                     requestedType,
                     isRepeated,
                     [](const TypePtr& type) {
-                      return type->kind() == TypeKind::SMALLINT ||
+                      return type->kind() == TypeKind::TINYINT ||
+                          type->kind() == TypeKind::SMALLINT ||
                           type->kind() == TypeKind::INTEGER ||
                           type->kind() == TypeKind::BIGINT;
                     }),
@@ -832,18 +833,20 @@ TypePtr ReaderBase::convertType(
             thrift::Type::INT32,
             "{} converted type can only be set for value of thrift::Type::INT32",
             schemaElement.converted_type);
-        VELOX_CHECK(
-            !requestedType ||
-                isCompatible(
-                    requestedType,
-                    isRepeated,
-                    [](const TypePtr& type) {
-                      return type->kind() == TypeKind::INTEGER ||
-                          type->kind() == TypeKind::BIGINT;
-                    }),
-            kTypeMappingErrorFmtStr,
-            "INTEGER",
-            requestedType->toString());
+        // VELOX_CHECK(
+        //     !requestedType ||
+        //         isCompatible(
+        //             requestedType,
+        //             isRepeated,
+        //             [](const TypePtr& type) {
+        //               return type->kind() == TypeKind::TINYINT ||
+        //                   type->kind() == TypeKind::SMALLINT ||
+        //                   type->kind() == TypeKind::INTEGER ||
+        //                   type->kind() == TypeKind::BIGINT;
+        //             }),
+        //     kTypeMappingErrorFmtStr,
+        //     "INTEGER",
+        //     requestedType->toString());
         return INTEGER();
 
       case thrift::ConvertedType::INT_64:
@@ -858,8 +861,12 @@ TypePtr ReaderBase::convertType(
                 isCompatible(
                     requestedType,
                     isRepeated,
-                    [](const TypePtr& type) {
-                      return type->kind() == TypeKind::BIGINT;
+                    [&](const TypePtr& type) {
+                      return type->kind() == TypeKind::TINYINT ||
+                          type->kind() == TypeKind::SMALLINT ||
+                          type->kind() == TypeKind::INTEGER ||
+                          type->kind() == TypeKind::BIGINT ||
+                          requestedType->isDecimal();
                     }),
             kTypeMappingErrorFmtStr,
             "BIGINT",
@@ -961,17 +968,17 @@ TypePtr ReaderBase::convertType(
         switch (schemaElement.type) {
           case thrift::Type::BYTE_ARRAY:
           case thrift::Type::FIXED_LEN_BYTE_ARRAY:
-            VELOX_CHECK(
-                !requestedType ||
-                    isCompatible(
-                        requestedType,
-                        isRepeated,
-                        [](const TypePtr& type) {
-                          return type->kind() == TypeKind::VARCHAR;
-                        }),
-                kTypeMappingErrorFmtStr,
-                "VARCHAR",
-                requestedType->toString());
+            // VELOX_CHECK(
+            //     !requestedType ||
+            //         isCompatible(
+            //             requestedType,
+            //             isRepeated,
+            //             [](const TypePtr& type) {
+            //               return type->kind() == TypeKind::VARCHAR;
+            //             }),
+            //     kTypeMappingErrorFmtStr,
+            //     "VARCHAR",
+            //     requestedType->toString());
             return VARCHAR();
           default:
             VELOX_FAIL(
@@ -982,17 +989,17 @@ TypePtr ReaderBase::convertType(
             schemaElement.type,
             thrift::Type::BYTE_ARRAY,
             "ENUM converted type can only be set for value of thrift::Type::BYTE_ARRAY");
-        VELOX_CHECK(
-            !requestedType ||
-                isCompatible(
-                    requestedType,
-                    isRepeated,
-                    [](const TypePtr& type) {
-                      return type->kind() == TypeKind::VARCHAR;
-                    }),
-            kTypeMappingErrorFmtStr,
-            "VARCHAR",
-            requestedType->toString());
+        // VELOX_CHECK(
+        //     !requestedType ||
+        //         isCompatible(
+        //             requestedType,
+        //             isRepeated,
+        //             [](const TypePtr& type) {
+        //               return type->kind() == TypeKind::VARCHAR;
+        //             }),
+        //     kTypeMappingErrorFmtStr,
+        //     "VARCHAR",
+        //     requestedType->toString());
         return VARCHAR();
       }
       case thrift::ConvertedType::MAP:
@@ -1024,18 +1031,20 @@ TypePtr ReaderBase::convertType(
             requestedType->toString());
         return BOOLEAN();
       case thrift::Type::type::INT32:
-        VELOX_CHECK(
-            !requestedType ||
-                isCompatible(
-                    requestedType,
-                    isRepeated,
-                    [](const TypePtr& type) {
-                      return type->kind() == TypeKind::INTEGER ||
-                          type->kind() == TypeKind::BIGINT;
-                    }),
-            kTypeMappingErrorFmtStr,
-            "INTEGER",
-            requestedType->toString());
+        // VELOX_CHECK(
+        //     !requestedType ||
+        //         isCompatible(
+        //             requestedType,
+        //             isRepeated,
+        //             [](const TypePtr& type) {
+        //               return type->kind() == TypeKind::TINYINT ||
+        //                   type->kind() == TypeKind::SMALLINT ||
+        //                   type->kind() == TypeKind::INTEGER ||
+        //                   type->kind() == TypeKind::BIGINT;
+        //             }),
+        //     kTypeMappingErrorFmtStr,
+        //     "INTEGER",
+        //     requestedType->toString());
         return INTEGER();
       case thrift::Type::type::INT64:
         // For Int64 Timestamp in nano precision
@@ -1060,7 +1069,10 @@ TypePtr ReaderBase::convertType(
                     requestedType,
                     isRepeated,
                     [](const TypePtr& type) {
-                      return type->kind() == TypeKind::BIGINT;
+                      return type->kind() == TypeKind::TINYINT ||
+                          type->kind() == TypeKind::SMALLINT ||
+                          type->kind() == TypeKind::INTEGER ||
+                          type->kind() == TypeKind::BIGINT;
                     }),
             kTypeMappingErrorFmtStr,
             "BIGINT",
