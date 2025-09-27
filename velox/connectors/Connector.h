@@ -604,7 +604,8 @@ class Connector {
       const RowTypePtr& outputType,
       const ConnectorTableHandlePtr& tableHandle,
       const connector::ColumnHandleMap& columnHandles,
-      ConnectorQueryCtx* connectorQueryCtx) = 0;
+      ConnectorQueryCtx* connectorQueryCtx,
+      bool pushdownCasts = false) = 0;
 
   /// Returns true if addSplit of DataSource can use 'dataSource' from
   /// ConnectorSplit in addSplit(). If so, TableScan can preload splits

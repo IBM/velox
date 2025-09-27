@@ -292,6 +292,110 @@ void FlatVector<T>::copyValuesAndNulls(
   }
 }
 
+namespace {
+
+// Narrow → wide only for integral types (bool excluded).
+template <typename Dst, typename Src>
+inline void copyWideningIntegralRange(
+    Dst* __restrict dst,
+    const Src* __restrict src,
+    vector_size_t targetIndex,
+    vector_size_t sourceIndex,
+    vector_size_t count) {
+  for (vector_size_t i = 0; i < count; ++i) {
+    dst[targetIndex + i] = static_cast<Dst>(src[sourceIndex + i]);
+  }
+}
+
+template <typename T, typename Src>
+inline void copyFromFlatWideningIntegral(
+    const BaseVector* source,
+    FlatVector<T>* self,
+    const folly::Range<const BaseVector::CopyRange*>& ranges,
+    const uint64_t* sourceRawNulls,
+    uint64_t* rawNulls) {
+  static_assert(std::is_integral_v<Src> && !std::is_same_v<Src, bool>);
+  auto* srcFlat = source->asUnchecked<FlatVector<Src>>();
+  if (srcFlat->values() == nullptr) {
+    BaseVector::setNulls(self->BaseVector::mutableRawNulls(), ranges, true);
+    return;
+  }
+
+  const Src* srcValues = srcFlat->rawValues();
+  auto* dst = self->mutableRawValues();
+  applyToEachRange(ranges, [&](auto targetIndex, auto sourceIndex, auto count) {
+    copyWideningIntegralRange<T, Src>(
+        dst, srcValues, targetIndex, sourceIndex, count);
+  });
+
+  if (rawNulls) {
+    if (sourceRawNulls) {
+      BaseVector::copyNulls(rawNulls, sourceRawNulls, ranges);
+    } else {
+      BaseVector::setNulls(rawNulls, ranges, false);
+    }
+  }
+}
+
+template <typename T, typename Src>
+inline void copyFromConstantWideningIntegral(
+    const BaseVector* source,
+    FlatVector<T>* self,
+    const folly::Range<const BaseVector::CopyRange*>& ranges,
+    uint64_t* rawNulls) {
+  static_assert(std::is_integral_v<Src> && !std::is_same_v<Src, bool>);
+  auto* constant = source->asUnchecked<ConstantVector<Src>>();
+  const T widened = static_cast<T>(constant->valueAt(0));
+
+  if constexpr (std::is_same_v<T, bool>) {
+    auto rawValues = reinterpret_cast<uint64_t*>(self->rawValues());
+    applyToEachRange(
+        ranges, [&](auto targetIndex, auto /*sourceIndex*/, auto count) {
+          bits::fillBits(rawValues, targetIndex, targetIndex + count, widened);
+        });
+  } else {
+    applyToEachRow(ranges, [&](auto targetIndex, auto /*sourceIndex*/) {
+      self->mutableRawValues()[targetIndex] = widened;
+    });
+  }
+
+  if (rawNulls) {
+    BaseVector::setNulls(rawNulls, ranges, false);
+  }
+}
+
+template <typename T, typename Src>
+inline void copyFromSimpleWideningIntegral(
+    const BaseVector* source,
+    FlatVector<T>* self,
+    const folly::Range<const BaseVector::CopyRange*>& ranges,
+    uint64_t* rawNulls) {
+  static_assert(std::is_integral_v<Src> && !std::is_same_v<Src, bool>);
+  auto* srcVec = source->asUnchecked<SimpleVector<Src>>();
+
+  uint64_t* rawBoolValues = nullptr;
+  if constexpr (std::is_same_v<T, bool>) {
+    rawBoolValues = reinterpret_cast<uint64_t*>(self->rawValues());
+  }
+
+  applyToEachRow(ranges, [&](auto targetIndex, auto sourceIndex) {
+    if (!source->isNullAt(sourceIndex)) {
+      const auto v = static_cast<T>(srcVec->valueAt(sourceIndex));
+      if constexpr (std::is_same_v<T, bool>) {
+        bits::setBit(rawBoolValues, targetIndex, v);
+      } else {
+        self->mutableRawValues()[targetIndex] = v;
+      }
+      if (rawNulls)
+        bits::clearNull(rawNulls, targetIndex);
+    } else {
+      bits::setNull(rawNulls, targetIndex);
+    }
+  });
+}
+
+} // namespace
+
 template <typename T>
 void FlatVector<T>::copyRanges(
     const BaseVector* source,
@@ -302,7 +406,9 @@ void FlatVector<T>::copyRanges(
   }
 
   source = source->loadedVector();
-  VELOX_CHECK_EQ(BaseVector::typeKind(), source->typeKind());
+  VELOX_CHECK(
+      BaseVector::typeKind() == source->typeKind() ||
+      isWideningIntegerType(this->type(), source->type()));
 
   if constexpr (std::is_same_v<T, StringView>) {
     auto leaf =
@@ -336,44 +442,83 @@ void FlatVector<T>::copyRanges(
   }
 
   if (source->isFlatEncoding()) {
-    auto* flatSource = source->asUnchecked<FlatVector<T>>();
-    if (flatSource->values() == nullptr) {
-      // All source values are null.
-      BaseVector::setNulls(BaseVector::mutableRawNulls(), ranges, true);
-      return;
-    }
+    // If exact type match, keep the fast path:
+    if (BaseVector::typeKind() == source->typeKind()) {
+      auto* flatSource = source->asUnchecked<FlatVector<T>>();
+      if (flatSource->values() == nullptr) {
+        // All source values are null.
+        BaseVector::setNulls(BaseVector::mutableRawNulls(), ranges, true);
+        return;
+      }
 
-    if constexpr (std::is_same_v<T, bool>) {
-      auto rawValues = reinterpret_cast<uint64_t*>(rawValues_);
-      auto* sourceValues = flatSource->template rawValues<uint64_t>();
-      applyToEachRange(
-          ranges, [&](auto targetIndex, auto sourceIndex, auto count) {
-            bits::copyBits(
-                sourceValues, sourceIndex, rawValues, targetIndex, count);
-          });
-    } else {
-      const T* sourceValues = flatSource->rawValues();
-      applyToEachRange(
-          ranges, [&](auto targetIndex, auto sourceIndex, auto count) {
-            if constexpr (Buffer::is_pod_like_v<T>) {
-              memcpy(
-                  &rawValues_[targetIndex],
-                  &sourceValues[sourceIndex],
-                  count * sizeof(T));
-            } else {
-              std::copy(
-                  sourceValues + sourceIndex,
-                  sourceValues + sourceIndex + count,
-                  rawValues_ + targetIndex);
-            }
-          });
-    }
-
-    if (rawNulls) {
-      if (sourceRawNulls) {
-        BaseVector::copyNulls(rawNulls, sourceRawNulls, ranges);
+      if constexpr (std::is_same_v<T, bool>) {
+        auto rawValues = reinterpret_cast<uint64_t*>(rawValues_);
+        auto* sourceValues = flatSource->template rawValues<uint64_t>();
+        applyToEachRange(
+            ranges, [&](auto targetIndex, auto sourceIndex, auto count) {
+              bits::copyBits(
+                  sourceValues, sourceIndex, rawValues, targetIndex, count);
+            });
       } else {
-        BaseVector::setNulls(rawNulls, ranges, false);
+        const T* sourceValues = flatSource->rawValues();
+        if (isWideningIntegerType(this->type(), source->type())) {
+          applyToEachRange(
+              ranges, [&](auto targetIndex, auto sourceIndex, auto count) {
+                for (auto i = 0; i < count; ++i) {
+                  rawValues_[targetIndex + i] =
+                      static_cast<T>(sourceValues[sourceIndex + i]);
+                }
+              });
+        } else {
+          applyToEachRange(
+              ranges, [&](auto targetIndex, auto sourceIndex, auto count) {
+                if constexpr (Buffer::is_pod_like_v<T>) {
+                  memcpy(
+                      &rawValues_[targetIndex],
+                      &sourceValues[sourceIndex],
+                      count * sizeof(T));
+                } else {
+                  std::copy(
+                      sourceValues + sourceIndex,
+                      sourceValues + sourceIndex + count,
+                      rawValues_ + targetIndex);
+                }
+              });
+        }
+      }
+
+      if (rawNulls) {
+        if (sourceRawNulls) {
+          BaseVector::copyNulls(rawNulls, sourceRawNulls, ranges);
+        } else {
+          BaseVector::setNulls(rawNulls, ranges, false);
+        }
+      }
+    } else if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool>) {
+      if (isWideningIntegerType(this->type(), source->type())) {
+        switch (source->typeKind()) {
+          case TypeKind::TINYINT:
+            copyFromFlatWideningIntegral<T, int8_t>(
+                source, this, ranges, sourceRawNulls, rawNulls);
+            break;
+          case TypeKind::SMALLINT:
+            copyFromFlatWideningIntegral<T, int16_t>(
+                source, this, ranges, sourceRawNulls, rawNulls);
+            break;
+          case TypeKind::INTEGER:
+            copyFromFlatWideningIntegral<T, int32_t>(
+                source, this, ranges, sourceRawNulls, rawNulls);
+            break;
+          case TypeKind::BIGINT:
+            copyFromFlatWideningIntegral<T, int64_t>(
+                source, this, ranges, sourceRawNulls, rawNulls);
+            break;
+          default:
+            VELOX_UNSUPPORTED(
+                "FlatVector widening: unsupported {} -> {}",
+                source->typeKind(),
+                BaseVector::typeKind());
+        }
       }
     }
   } else if (source->isConstantEncoding()) {
@@ -381,44 +526,103 @@ void FlatVector<T>::copyRanges(
       BaseVector::setNulls(rawNulls, ranges, true);
       return;
     }
-    auto constant = source->asUnchecked<ConstantVector<T>>();
-    T value = constant->valueAt(0);
-    if constexpr (std::is_same_v<T, bool>) {
-      auto rawValues = reinterpret_cast<uint64_t*>(rawValues_);
-      applyToEachRange(
-          ranges, [&](auto targetIndex, auto /*sourceIndex*/, auto count) {
-            bits::fillBits(rawValues, targetIndex, targetIndex + count, value);
-          });
-    } else {
-      applyToEachRow(ranges, [&](auto targetIndex, auto /*sourceIndex*/) {
-        rawValues_[targetIndex] = value;
-      });
-    }
 
-    if (rawNulls) {
-      BaseVector::setNulls(rawNulls, ranges, false);
+    if (BaseVector::typeKind() == source->typeKind()) {
+      auto constant = source->asUnchecked<ConstantVector<T>>();
+      T value = constant->valueAt(0);
+      if constexpr (std::is_same_v<T, bool>) {
+        auto rawValues = reinterpret_cast<uint64_t*>(rawValues_);
+        applyToEachRange(
+            ranges, [&](auto targetIndex, auto /*sourceIndex*/, auto count) {
+              bits::fillBits(
+                  rawValues, targetIndex, targetIndex + count, value);
+            });
+      } else {
+        applyToEachRow(ranges, [&](auto targetIndex, auto /*sourceIndex*/) {
+          rawValues_[targetIndex] = value;
+        });
+      }
+
+      if (rawNulls) {
+        BaseVector::setNulls(rawNulls, ranges, false);
+      }
+    } else if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool>) {
+      if (isWideningIntegerType(this->type(), source->type())) {
+        switch (source->typeKind()) {
+          case TypeKind::TINYINT:
+            copyFromConstantWideningIntegral<T, int8_t>(
+                source, this, ranges, rawNulls);
+            break;
+          case TypeKind::SMALLINT:
+            copyFromConstantWideningIntegral<T, int16_t>(
+                source, this, ranges, rawNulls);
+            break;
+          case TypeKind::INTEGER:
+            copyFromConstantWideningIntegral<T, int32_t>(
+                source, this, ranges, rawNulls);
+            break;
+          case TypeKind::BIGINT:
+            copyFromConstantWideningIntegral<T, int64_t>(
+                source, this, ranges, rawNulls);
+            break;
+          default:
+            VELOX_UNSUPPORTED(
+                "Constant widening: unsupported {} -> {}",
+                source->typeKind(),
+                BaseVector::typeKind());
+        }
+      }
     }
   } else {
-    auto* sourceVector = source->asUnchecked<SimpleVector<T>>();
-    uint64_t* rawBoolValues = nullptr;
-    if constexpr (std::is_same_v<T, bool>) {
-      rawBoolValues = reinterpret_cast<uint64_t*>(rawValues_);
-    }
-    applyToEachRow(ranges, [&](auto targetIndex, auto sourceIndex) {
-      if (!source->isNullAt(sourceIndex)) {
-        auto sourceValue = sourceVector->valueAt(sourceIndex);
-        if constexpr (std::is_same_v<T, bool>) {
-          bits::setBit(rawBoolValues, targetIndex, sourceValue);
-        } else {
-          rawValues_[targetIndex] = sourceValue;
-        }
-        if (rawNulls) {
-          bits::clearNull(rawNulls, targetIndex);
-        }
-      } else {
-        bits::setNull(rawNulls, targetIndex);
+    // wrapped/simple (e.g., dictionary)
+    if (BaseVector::typeKind() == source->typeKind()) {
+      auto* sourceVector = source->asUnchecked<SimpleVector<T>>();
+      uint64_t* rawBoolValues = nullptr;
+      if constexpr (std::is_same_v<T, bool>) {
+        rawBoolValues = reinterpret_cast<uint64_t*>(rawValues_);
       }
-    });
+      applyToEachRow(ranges, [&](auto targetIndex, auto sourceIndex) {
+        if (!source->isNullAt(sourceIndex)) {
+          auto sourceValue = sourceVector->valueAt(sourceIndex);
+          if constexpr (std::is_same_v<T, bool>) {
+            bits::setBit(rawBoolValues, targetIndex, sourceValue);
+          } else {
+            rawValues_[targetIndex] = sourceValue;
+          }
+          if (rawNulls) {
+            bits::clearNull(rawNulls, targetIndex);
+          }
+        } else {
+          bits::setNull(rawNulls, targetIndex);
+        }
+      });
+    } else if constexpr (std::is_integral_v<T> && !std::is_same_v<T, bool>) {
+      if (isWideningIntegerType(this->type(), source->type())) {
+        switch (source->typeKind()) {
+          case TypeKind::TINYINT:
+            copyFromSimpleWideningIntegral<T, int8_t>(
+                source, this, ranges, rawNulls);
+            break;
+          case TypeKind::SMALLINT:
+            copyFromSimpleWideningIntegral<T, int16_t>(
+                source, this, ranges, rawNulls);
+            break;
+          case TypeKind::INTEGER:
+            copyFromSimpleWideningIntegral<T, int32_t>(
+                source, this, ranges, rawNulls);
+            break;
+          case TypeKind::BIGINT:
+            copyFromSimpleWideningIntegral<T, int64_t>(
+                source, this, ranges, rawNulls);
+            break;
+          default:
+            VELOX_UNSUPPORTED(
+                "Simple widening: unsupported {} -> {}",
+                source->typeKind(),
+                BaseVector::typeKind());
+        }
+      }
+    }
   }
 }
 

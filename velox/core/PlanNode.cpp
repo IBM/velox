@@ -19,6 +19,7 @@
 #include "velox/common/encode/Base64.h"
 #include "velox/core/PlanNode.h"
 #include "velox/vector/VectorSaver.h"
+#include "velox/velox/exec/HashPartitionFunction.h"
 
 namespace facebook::velox::core {
 
@@ -98,6 +99,87 @@ std::unordered_map<V, K> invertMap(const std::unordered_map<K, V>& mapping) {
   }
   return inverted;
 }
+
+// Build a new output type using:
+//  - oldOutput: the original node output
+//  - oldSources: original child nodes
+//  - newSources: new child nodes
+//
+// Rules:
+//  * Keep columns that were in oldOutput (if still present).
+//  * Add columns that appear in newSources but not in oldSources ("new
+//  columns").
+//  * Order is determined by scanning newSources’ schemas left-to-right.
+//  * No vector::insert, only push_back into fresh vectors.
+RowTypePtr recomputeOutputTypeFromSources(
+    const RowTypePtr& oldOutput,
+    const std::vector<PlanNodePtr>& oldSources,
+    const std::vector<PlanNodePtr>& newSources) {
+  VELOX_CHECK_EQ(oldSources.size(), newSources.size());
+
+  // Set of column names that were in the old output.
+  folly::F14FastSet<std::string> oldOutputCols;
+  for (const auto& name : oldOutput->names()) {
+    oldOutputCols.insert(name);
+  }
+
+  // Identify "new" columns: in newSources but not in the corresponding old
+  // source.
+  folly::F14FastSet<std::string> newCols;
+
+  for (size_t i = 0; i < newSources.size(); ++i) {
+    auto oldType =
+        std::dynamic_pointer_cast<const RowType>(oldSources[i]->outputType());
+    auto newType =
+        std::dynamic_pointer_cast<const RowType>(newSources[i]->outputType());
+    VELOX_CHECK_NOT_NULL(oldType);
+    VELOX_CHECK_NOT_NULL(newType);
+
+    for (int c = 0; c < newType->size(); ++c) {
+      const auto& name = newType->nameOf(c);
+      if (!oldType->containsChild(name)) {
+        newCols.insert(name);
+      }
+    }
+  }
+
+  // Now build the final output in the order of newSources’ schemas:
+  // we only push_back, never insert.
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+
+  names.reserve(oldOutput->size() + newCols.size());
+  types.reserve(oldOutput->size() + newCols.size());
+
+  folly::F14FastSet<std::string> added;
+
+  for (size_t i = 0; i < newSources.size(); ++i) {
+    auto newType =
+        std::dynamic_pointer_cast<const RowType>(newSources[i]->outputType());
+    VELOX_CHECK_NOT_NULL(newType);
+
+    for (int c = 0; c < newType->size(); ++c) {
+      const auto& name = newType->nameOf(c);
+
+      if (added.contains(name)) {
+        continue;
+      }
+
+      const bool isOldOutput = oldOutputCols.contains(name);
+      const bool isNewCol = newCols.contains(name);
+
+      // Keep an existing output column, or append a new column.
+      if (isOldOutput || isNewCol) {
+        names.push_back(name);
+        types.push_back(newType->childAt(c));
+        added.insert(name);
+      }
+    }
+  }
+
+  return ROW(std::move(names), std::move(types));
+}
+
 } // namespace
 
 const SortOrder kAscNullsFirst(true, true);
@@ -512,6 +594,14 @@ PlanNodePtr AggregationNode::create(const folly::dynamic& obj, void* context) {
       deserializeSingleSource(obj, context));
 }
 
+PlanNodePtr AggregationNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
+}
+
 namespace {
 RowTypePtr getExpandOutputType(
     const std::vector<std::vector<TypedExprPtr>>& projections,
@@ -615,6 +705,14 @@ PlanNodePtr ExpandNode::create(const folly::dynamic& obj, void* context) {
       std::move(projections),
       std::move(names),
       std::move(source));
+}
+
+PlanNodePtr ExpandNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
 }
 
 namespace {
@@ -732,6 +830,14 @@ PlanNodePtr GroupIdNode::create(const folly::dynamic& obj, void* context) {
       deserializeFields(obj["aggregationInputs"], context),
       obj["groupIdName"].asString(),
       std::move(source));
+}
+
+PlanNodePtr GroupIdNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
 }
 
 const std::vector<PlanNodePtr>& ValuesNode::sources() const {
@@ -1147,6 +1253,14 @@ PlanNodePtr ProjectNode::create(const folly::dynamic& obj, void* context) {
       std::move(source));
 }
 
+PlanNodePtr ProjectNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
+}
+
 namespace {
 // makes a list of all names for use in the ProjectNode.
 std::vector<std::string> allNames(
@@ -1247,6 +1361,15 @@ PlanNodePtr ParallelProjectNode::create(
       std::move(source));
 }
 
+PlanNodePtr ParallelProjectNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1, "LazyDereferenceNode is unary");
+
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
+}
+
 // static
 PlanNodePtr LazyDereferenceNode::create(
     const folly::dynamic& obj,
@@ -1261,6 +1384,15 @@ PlanNodePtr LazyDereferenceNode::create(
       std::move(names),
       std::move(projections),
       std::move(source));
+}
+
+PlanNodePtr LazyDereferenceNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1, "LazyDereferenceNode is unary");
+
+  ProjectNode::Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
 }
 
 const std::vector<PlanNodePtr>& TableScanNode::sources() const {
@@ -1470,6 +1602,14 @@ PlanNodePtr UnnestNode::create(const folly::dynamic& obj, void* context) {
       std::move(source));
 }
 
+PlanNodePtr UnnestNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
+}
+
 AbstractJoinNode::AbstractJoinNode(
     const PlanNodeId& id,
     JoinType joinType,
@@ -1508,6 +1648,12 @@ void AbstractJoinNode::validate() const {
         key->name());
   }
   for (auto i = 0; i < leftKeys_.size(); ++i) {
+    auto leftType = leftKeys_[i]->type();
+    auto rightType = rightKeys_[i]->type();
+    if (isIntegral(leftType) && isIntegral(rightType)) {
+      continue;
+    }
+
     VELOX_CHECK_EQ(
         leftKeys_[i]->type()->kind(),
         rightKeys_[i]->type()->kind(),
@@ -1671,6 +1817,44 @@ PlanNodePtr HashJoinNode::create(const folly::dynamic& obj, void* context) {
       outputType);
 }
 
+namespace {
+std::vector<core::FieldAccessTypedExprPtr> getKeysFromSource(
+    const std::vector<core::FieldAccessTypedExprPtr>& keys,
+    const PlanNodePtr& source) {
+  std::vector<core::FieldAccessTypedExprPtr> result;
+  auto sourceType = source->outputType();
+  for (const auto& key : keys) {
+    auto keyName = key->name();
+    auto keyType = sourceType->findChild(keyName);
+    VELOX_CHECK_NOT_NULL(
+        keyType, "Join key not found in source output: {}", keyName);
+    result.push_back(std::make_shared<FieldAccessTypedExpr>(keyType, keyName));
+  }
+  return result;
+}
+} // namespace
+
+PlanNodePtr HashJoinNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 2);
+
+  std::vector<core::FieldAccessTypedExprPtr> leftKeys =
+      getKeysFromSource(leftKeys_, newSources[0]);
+  std::vector<core::FieldAccessTypedExprPtr> rightKeys =
+      getKeysFromSource(rightKeys_, newSources[1]);
+
+  // Recompute outputType using member helper (no key args needed here).
+  auto newOutputType = recomputeOutputTypeForNewSources(newSources);
+
+  Builder builder(*this);
+  builder.left(std::move(newSources[0]))
+      .right(std::move(newSources[1]))
+      .leftKeys(std::move(leftKeys))
+      .rightKeys(std::move(rightKeys))
+      .outputType(std::move(newOutputType));
+  return builder.build();
+}
+
 MergeJoinNode::MergeJoinNode(
     const PlanNodeId& id,
     JoinType joinType,
@@ -1747,6 +1931,27 @@ PlanNodePtr MergeJoinNode::create(const folly::dynamic& obj, void* context) {
       sources[0],
       sources[1],
       outputType);
+}
+
+PlanNodePtr MergeJoinNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 2);
+
+  std::vector<core::FieldAccessTypedExprPtr> leftKeys =
+      getKeysFromSource(leftKeys_, newSources[0]);
+  std::vector<core::FieldAccessTypedExprPtr> rightKeys =
+      getKeysFromSource(rightKeys_, newSources[1]);
+
+  // Recompute outputType using member helper (no key args needed here).
+  auto newOutputType = recomputeOutputTypeForNewSources(newSources);
+
+  Builder builder(*this);
+  builder.left(std::move(newSources[0]))
+      .right(std::move(newSources[1]))
+      .leftKeys(std::move(leftKeys))
+      .rightKeys(std::move(rightKeys))
+      .outputType(std::move(newOutputType));
+  return builder.build();
 }
 
 IndexLookupJoinNode::IndexLookupJoinNode(
@@ -1873,6 +2078,27 @@ PlanNodePtr IndexLookupJoinNode::create(
       std::move(outputType));
 }
 
+PlanNodePtr IndexLookupJoinNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 2);
+
+  std::vector<core::FieldAccessTypedExprPtr> leftKeys =
+      getKeysFromSource(leftKeys_, newSources[0]);
+  std::vector<core::FieldAccessTypedExprPtr> rightKeys =
+      getKeysFromSource(rightKeys_, newSources[1]);
+
+  // Recompute outputType using member helper (no key args needed here).
+  auto newOutputType = recomputeOutputTypeForNewSources(newSources);
+
+  Builder builder(*this);
+  builder.left(std::move(newSources[0]))
+      .right(std::move(newSources[1]))
+      .leftKeys(std::move(leftKeys))
+      .rightKeys(std::move(rightKeys))
+      .outputType(std::move(newOutputType));
+  return builder.build();
+}
+
 folly::dynamic IndexLookupJoinNode::serialize() const {
   auto obj = serializeBase();
   if (!joinConditions_.empty()) {
@@ -1904,6 +2130,110 @@ void IndexLookupJoinNode::addDetails(std::stringstream& stream) const {
          << " ], filter: ["
          << (filter_ == nullptr ? "null" : filter_->toString())
          << "], hasMarker: [" << (hasMarker_ ? "true" : "false") << "]";
+}
+
+RowTypePtr AbstractJoinNode::recomputeOutputTypeForNewSources(
+    const std::vector<PlanNodePtr>& newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 2);
+
+  const auto& oldOutput =
+      outputType_; // the join node's current (authoritative) output
+  const auto& newLeft = newSources[0]->outputType();
+  const auto& newRight = newSources[1]->outputType();
+
+  // Which sides are visible for this join type?
+  const bool allowLeft = !(isRightSemiFilterJoin() || isRightSemiProjectJoin());
+  const bool allowRight =
+      !(isLeftSemiFilterJoin() || isLeftSemiProjectJoin() || isAntiJoin());
+
+  // Collect *all* child fields from allowed sides (name -> type).
+  folly::F14FastMap<std::string, TypePtr> newFields;
+  auto collect = [&](const RowTypePtr& row, bool allowed) {
+    if (!allowed)
+      return;
+    for (int i = 0; i < row->size(); ++i) {
+      newFields[row->nameOf(i)] = row->childAt(i);
+    }
+  };
+  collect(newLeft, allowLeft);
+  collect(newRight, allowRight);
+
+  // Derive join key names from this node's existing key expressions.
+  // We use them only to *exclude* pure keys that were not previously visible.
+  folly::F14FastSet<std::string> joinKeyNames;
+  for (const auto& k : leftKeys_) {
+    if (auto fa =
+            std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(k)) {
+      joinKeyNames.insert(fa->name());
+    }
+  }
+  for (const auto& k : rightKeys_) {
+    if (auto fa =
+            std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(k)) {
+      joinKeyNames.insert(fa->name());
+    }
+  }
+
+  // If semi-project, temporarily strip trailing match column; we’ll re-append
+  // it last.
+  const bool semiProject = isLeftSemiProjectJoin() || isRightSemiProjectJoin();
+  std::optional<std::string> matchName;
+  int take = oldOutput->size();
+  if (semiProject) {
+    VELOX_CHECK_GT(take, 0);
+    const int matchIdx = take - 1;
+    VELOX_CHECK_EQ(oldOutput->childAt(matchIdx), BOOLEAN());
+    matchName = oldOutput->nameOf(matchIdx);
+    take = matchIdx; // seed without the match flag
+  }
+
+  // Seed with existing output (preserve order & names); update type if widened
+  // upstream.
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+  names.reserve(oldOutput->size() + 8);
+  types.reserve(oldOutput->size() + 8);
+
+  folly::F14FastSet<std::string> seen;
+  for (int i = 0; i < take; ++i) {
+    const auto& n = oldOutput->nameOf(i);
+    auto t = oldOutput->childAt(i);
+    if (auto it = newFields.find(n); it != newFields.end()) {
+      t = it->second; // reflect upstream type change if any
+    }
+    names.push_back(n);
+    types.push_back(t);
+    seen.insert(n);
+  }
+
+  // Append *new* fields from allowed sides, but skip pure join keys
+  // that were not previously visible in oldOutput.
+  auto appendMissingFrom = [&](const RowTypePtr& row, bool allowed) {
+    if (!allowed)
+      return;
+    for (int i = 0; i < row->size(); ++i) {
+      const auto& n = row->nameOf(i);
+      if (!seen.contains(n) && !joinKeyNames.contains(n)) {
+        names.push_back(n);
+        types.push_back(row->childAt(i));
+        seen.insert(n);
+      }
+    }
+  };
+  appendMissingFrom(newLeft, allowLeft);
+  appendMissingFrom(newRight, allowRight);
+
+  // Re-append the semi-project match flag (BOOLEAN) as the very last column.
+  if (matchName.has_value()) {
+    VELOX_CHECK(
+        !seen.contains(*matchName),
+        "Semi-project match column '{}' collides with child columns",
+        *matchName);
+    names.push_back(*matchName);
+    types.push_back(BOOLEAN());
+  }
+
+  return ROW(std::move(names), std::move(types));
 }
 
 void IndexLookupJoinNode::accept(
@@ -2044,6 +2374,21 @@ PlanNodePtr NestedLoopJoinNode::create(
       outputType);
 }
 
+PlanNodePtr NestedLoopJoinNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 2);
+
+  auto updatedOutput =
+      recomputeOutputTypeFromSources(outputType_, sources_, newSources);
+
+  Builder builder(*this);
+  builder.left(std::move(newSources[0]))
+      .right(std::move(newSources[1]))
+      .outputType(std::move(updatedOutput));
+  ;
+  return builder.build();
+}
+
 AssignUniqueIdNode::AssignUniqueIdNode(
     const PlanNodeId& id,
     const std::string& idName,
@@ -2087,6 +2432,14 @@ PlanNodePtr AssignUniqueIdNode::create(
       obj["idName"].asString(),
       obj["taskUniqueId"].asInt(),
       std::move(source));
+}
+
+PlanNodePtr AssignUniqueIdNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
 }
 
 namespace {
@@ -2356,6 +2709,14 @@ PlanNodePtr WindowNode::create(const folly::dynamic& obj, void* context) {
       source);
 }
 
+PlanNodePtr WindowNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
+}
+
 RowTypePtr getMarkDistinctOutputType(
     const RowTypePtr& inputType,
     const std::string& markerName) {
@@ -2403,6 +2764,14 @@ PlanNodePtr MarkDistinctNode::create(const folly::dynamic& obj, void* context) {
 
   return std::make_shared<MarkDistinctNode>(
       deserializePlanNodeId(obj), markerName, distinctKeys, source);
+}
+
+PlanNodePtr MarkDistinctNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
 }
 
 namespace {
@@ -2498,6 +2867,14 @@ PlanNodePtr RowNumberNode::create(const folly::dynamic& obj, void* context) {
       rowNumberColumnName,
       limit,
       source);
+}
+
+PlanNodePtr RowNumberNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
 }
 
 namespace {
@@ -2641,6 +3018,14 @@ PlanNodePtr TopNRowNumberNode::create(
       source);
 }
 
+PlanNodePtr TopNRowNumberNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
+}
+
 void LocalMergeNode::addDetails(std::stringstream& stream) const {
   addSortingKeys(sortingKeys_, sortingOrders_, stream);
 }
@@ -2669,6 +3054,14 @@ PlanNodePtr LocalMergeNode::create(const folly::dynamic& obj, void* context) {
       std::move(sortingKeys),
       std::move(sortingOrders),
       std::move(sources));
+}
+
+PlanNodePtr LocalMergeNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.sources(std::move(newSources));
+  return builder.build();
 }
 
 void TableWriteNode::addDetails(std::stringstream& stream) const {
@@ -2765,6 +3158,14 @@ PlanNodePtr TableWriteNode::create(const folly::dynamic& obj, void* context) {
       deserializeSingleSource(obj, context));
 }
 
+PlanNodePtr TableWriteNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
+}
+
 void TableWriteMergeNode::addDetails(std::stringstream& /* stream */) const {}
 
 folly::dynamic TableWriteMergeNode::serialize() const {
@@ -2799,6 +3200,14 @@ PlanNodePtr TableWriteMergeNode::create(
       outputType,
       std::move(columnStatsSpec),
       deserializeSingleSource(obj, context));
+}
+
+PlanNodePtr TableWriteMergeNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
 }
 
 MergeExchangeNode::MergeExchangeNode(
@@ -2848,6 +3257,19 @@ PlanNodePtr MergeExchangeNode::create(
       serdeKind);
 }
 
+PlanNodePtr MergeExchangeNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  //  VELOX_CHECK_EQ(newSources.size(), 1);
+
+  // TODO: sortingKeys_ and outputType_ need to be constructed from newSources.
+  // All inputs must share the same schema; use the first one.
+  auto newOutputType = newSources[0]->outputType();
+
+  Builder builder(*this);
+  builder.outputType(std::move(newOutputType));
+  return builder.build();
+}
+
 void LocalPartitionNode::addDetails(std::stringstream& stream) const {
   stream << toName(type_);
   if (type_ != Type::kGather) {
@@ -2883,6 +3305,33 @@ PlanNodePtr LocalPartitionNode::create(
       ISerializable::deserialize<PartitionFunctionSpec>(
           obj["partitionFunctionSpec"], context),
       deserializeSources(obj, context));
+}
+
+PlanNodePtr LocalPartitionNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK(!newSources.empty());
+  VELOX_CHECK_EQ(newSources.size(), sources_.size());
+
+  Builder builder(*this);
+  builder.sources(newSources);
+
+  // Only repartition cares about a partition function / key channels.
+  if (type_ == Type::kRepartition && partitionFunctionSpec_ != nullptr) {
+    auto oldInputType =
+        std::dynamic_pointer_cast<const RowType>(sources_[0]->outputType());
+    auto newInputType =
+        std::dynamic_pointer_cast<const RowType>(newSources[0]->outputType());
+
+    // If either is not a RowType (shouldn't really happen), just bail out.
+    if (oldInputType && newInputType && *oldInputType != *newInputType) {
+      if (auto rewritten = partitionFunctionSpec_->rewriteInputType(
+              oldInputType, newInputType)) {
+        builder.partitionFunctionSpec(std::move(rewritten));
+      }
+    }
+  }
+
+  return builder.build();
 }
 
 namespace {
@@ -3018,6 +3467,14 @@ PlanNodePtr EnforceSingleRowNode::create(
       deserializePlanNodeId(obj), deserializeSingleSource(obj, context));
 }
 
+PlanNodePtr EnforceSingleRowNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
+}
+
 namespace {
 const auto& partitionKindNames() {
   static const folly::F14FastMap<PartitionedOutputNode::Kind, std::string_view>
@@ -3089,6 +3546,20 @@ PlanNodePtr PartitionedOutputNode::create(
       deserializeRowType(obj["outputType"]),
       VectorSerde::kindByName(obj["serdeKind"].asString()),
       deserializeSingleSource(obj, context));
+}
+
+PlanNodePtr PartitionedOutputNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  // In this case, the output type is the same as the source's. But we don't
+  // expect the type to be changed so commenting this line out
+  //  auto newOutputType = newSources[0]->outputType();
+
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  // The order may defer, so we will keep using the original output type.
+  //      .outputType(std::move(newOutputType));
+  return builder.build();
 }
 
 SpatialJoinNode::SpatialJoinNode(
@@ -3208,6 +3679,15 @@ PlanNodePtr SpatialJoinNode::create(const folly::dynamic& obj, void* context) {
       outputType);
 }
 
+PlanNodePtr SpatialJoinNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 2);
+
+  Builder builder(*this);
+  builder.left(std::move(newSources[0])).right(std::move(newSources[1]));
+  return builder.build();
+}
+
 TopNNode::TopNNode(
     const PlanNodeId& id,
     const std::vector<FieldAccessTypedExprPtr>& sortingKeys,
@@ -3277,6 +3757,14 @@ PlanNodePtr TopNNode::create(const folly::dynamic& obj, void* context) {
       std::move(source));
 }
 
+PlanNodePtr TopNNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
+}
+
 void LimitNode::addDetails(std::stringstream& stream) const {
   if (isPartial_) {
     stream << "PARTIAL ";
@@ -3313,6 +3801,14 @@ PlanNodePtr LimitNode::create(const folly::dynamic& obj, void* context) {
       std::move(source));
 }
 
+PlanNodePtr LimitNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
+}
+
 void OrderByNode::addDetails(std::stringstream& stream) const {
   if (isPartial_) {
     stream << "PARTIAL ";
@@ -3346,6 +3842,14 @@ PlanNodePtr OrderByNode::create(const folly::dynamic& obj, void* context) {
       std::move(sortingOrders),
       obj["partial"].asBool(),
       std::move(source));
+}
+
+PlanNodePtr OrderByNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder(*this);
+  builder.source(newSources[0]);
+  return builder.build();
 }
 
 void MarkDistinctNode::addDetails(std::stringstream& stream) const {
@@ -3576,6 +4080,11 @@ folly::dynamic PlanNode::serialize() const {
   return obj;
 }
 
+PlanNodePtr PlanNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_UNSUPPORTED("copyWithNewSources is not implemented for {}", name());
+}
+
 const std::vector<PlanNodePtr>& TraceScanNode::sources() const {
   return kEmptySources;
 }
@@ -3651,6 +4160,14 @@ PlanNodePtr FilterNode::create(const folly::dynamic& obj, void* context) {
   auto filter = ISerializable::deserialize<ITypedExpr>(obj["filter"], context);
   return std::make_shared<FilterNode>(
       deserializePlanNodeId(obj), filter, std::move(source));
+}
+
+PlanNodePtr FilterNode::copyWithNewSources(
+    std::vector<PlanNodePtr> newSources) const {
+  VELOX_CHECK_EQ(newSources.size(), 1);
+  Builder builder;
+  builder.id(id()).filter(filter_).source(newSources[0]);
+  return builder.build();
 }
 
 folly::dynamic IndexLookupCondition::serialize() const {

@@ -41,7 +41,8 @@ class HiveDataSource : public DataSource {
       FileHandleFactory* fileHandleFactory,
       folly::Executor* ioExecutor,
       const ConnectorQueryCtx* connectorQueryCtx,
-      const std::shared_ptr<HiveConfig>& hiveConfig);
+      const std::shared_ptr<HiveConfig>& hiveConfig,
+      bool pushdownCasts = false);
 
   void addSplit(std::shared_ptr<ConnectorSplit> split) override;
 
@@ -100,7 +101,7 @@ class HiveDataSource : public DataSource {
 
  protected:
   virtual std::unique_ptr<SplitReader> createSplitReader();
-
+  const connector::ColumnHandleMap assignments_;
   FileHandleFactory* const fileHandleFactory_;
   folly::Executor* const ioExecutor_;
   const ConnectorQueryCtx* const connectorQueryCtx_;
@@ -110,13 +111,15 @@ class HiveDataSource : public DataSource {
   std::shared_ptr<HiveConnectorSplit> split_;
   HiveTableHandlePtr hiveTableHandle_;
   std::shared_ptr<common::ScanSpec> scanSpec_;
+  VectorPtr outputWithoutUpcasts_;
   VectorPtr output_;
   std::unique_ptr<SplitReader> splitReader_;
-
   // Output type from file reader.  This is different from outputType_ that it
   // contains column names before assignment, and columns that only used in
   // remaining filter.
   RowTypePtr readerOutputType_;
+  // The ColumnHandle name, e.g. order_id
+  RowTypePtr readerOutputTypeWithoutUpcasts_;
 
   // Column handles for the partition key columns keyed on partition key column
   // name.
@@ -151,9 +154,15 @@ class HiveDataSource : public DataSource {
   // object.
   void processColumnHandle(const HiveColumnHandlePtr& handle);
 
-  // The row type for the data source output, not including filter-only columns
+  // The row type for the data source output, including filter-only columns
+  // May be aliased, e.g. (order_id_21, order_id_21_upcast). Does not include
+  // filter only columns
   const RowTypePtr outputType_;
+  // Same as outputType_ but the column names are the ColumnHandle names
+  RowTypePtr outputTypeWithoutUpcasts_;
+
   core::ExpressionEvaluator* const expressionEvaluator_;
+  const bool pushdownCasts_;
 
   // Column handles for the Split info columns keyed on their column names.
   std::unordered_map<std::string, HiveColumnHandlePtr> infoColumns_;

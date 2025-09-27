@@ -80,7 +80,23 @@ Exchange::Exchange(
           serdeKind_)},
       processSplits_{operatorCtx_->driverCtx()->driverId == 0},
       driverId_{driverCtx->driverId},
-      exchangeClient_{std::move(exchangeClient)} {}
+      pushDownCasts_{driverCtx->queryConfig().pushdownIntegerUpcastsToSource()},
+      exchangeClient_{std::move(exchangeClient)} {
+  std::vector<std::string> outputNames;
+  std::vector<TypePtr> outputTypes;
+
+  for (int i = 0; i < outputType_->size(); ++i) {
+    const auto& columnName = outputType_->nameOf(i);
+    const auto& columnType = outputType_->childAt(i);
+
+    if (pushDownCasts_ && columnName.ends_with("_upcast")) {
+      continue;
+    }
+    outputNames.push_back(columnName);
+    outputTypes.push_back(columnType);
+  }
+  outputTypeWithoutUpcasts_ = ROW(outputNames, outputTypes);
+}
 
 void Exchange::addRemoteTaskIds(std::vector<std::string>& remoteTaskIds) {
   std::shuffle(std::begin(remoteTaskIds), std::end(remoteTaskIds), rng_);
@@ -134,7 +150,8 @@ BlockingReason Exchange::isBlocked(ContinueFuture* future) {
     return BlockingReason::kNotBlocked;
   }
 
-  // Start fetching data right away. Do not wait for all splits to be available.
+  // Start fetching data right away. Do not wait for all splits to be
+  // available.
   if (!splitFuture_.valid()) {
     getSplits(&splitFuture_);
   }
@@ -175,9 +192,20 @@ bool Exchange::isFinished() {
 RowVectorPtr Exchange::getOutput() {
   auto* serde = getSerde();
   if (serde->supportsAppendInDeserialize()) {
-    return getOutputFromColumnarPages(serde);
+    resultWithoutUpcasts_ = getOutputFromColumnarPages(serde);
+  } else {
+    resultWithoutUpcasts_ = getOutputFromRowPages(serde);
   }
-  return getOutputFromRowPages(serde);
+
+  if (resultWithoutUpcasts_ && resultWithoutUpcasts_->size() > 0 &&
+      pushDownCasts_ &&
+      outputTypeWithoutUpcasts_->size() < outputType_->size()) {
+    widenResults();
+  } else {
+    result_ = resultWithoutUpcasts_;
+  }
+
+  return result_;
 }
 
 RowVectorPtr Exchange::getOutputFromColumnarPages(VectorSerde* serde) {
@@ -195,12 +223,13 @@ RowVectorPtr Exchange::getOutputFromColumnarPages(VectorSerde* serde) {
       : kInitialOutputRows;
 
   // Process pages one-by-one from currentPages_ pointed by columnarPageIdx_.
-  // Within each page, deserialize vectors incrementally until we hit the target
-  // batch size.
+  // Within each page, deserialize vectors incrementally until we hit the
+  // target batch size.
   uint64_t rawInputBytes = 0;
   vector_size_t resultOffset{0};
 
-  // Should be either starting fresh or continuing from a previous partial page
+  // Should be either starting fresh or continuing from a previous partial
+  // page
   VELOX_CHECK(
       inputStream_ == nullptr || columnarPageIdx_ < currentPages_.size());
 
@@ -221,13 +250,21 @@ RowVectorPtr Exchange::getOutputFromColumnarPages(VectorSerde* serde) {
       serde->deserialize(
           inputStream_.get(),
           pool(),
-          outputType_,
-          &result_,
+          outputTypeWithoutUpcasts_,
+          &resultWithoutUpcasts_,
           resultOffset,
           serdeOptions_.get());
 
-      resultOffset = result_->size();
+      resultOffset = resultWithoutUpcasts_->size();
     }
+
+    //      VLOG(google::INFO)
+    //          << "Exchange::getOutputFromColumnarPages with " <<
+    //          resultWithoutUpcasts_->size()
+    //          << " rows, type " << resultWithoutUpcasts_->type()->kind() << "
+    //          value:"
+    //          <<
+    //          resultWithoutUpcasts_->childAt(0)->asFlatVector<int64_t>()->valueAt(0);
 
     // If page is fully consumed
     if (inputStream_->atEnd()) {
@@ -244,11 +281,11 @@ RowVectorPtr Exchange::getOutputFromColumnarPages(VectorSerde* serde) {
     }
   }
 
-  const auto numOutputRows = result_->size();
+  const auto numOutputRows = resultWithoutUpcasts_->size();
   VELOX_CHECK_GT(numOutputRows, 0);
 
   estimatedRowSize_ = std::max(
-      result_->estimateFlatSize() / numOutputRows,
+      resultWithoutUpcasts_->estimateFlatSize() / numOutputRows,
       estimatedRowSize_.value_or(1L));
 
   // If processed all pages, clear the vector and reset state
@@ -262,9 +299,10 @@ RowVectorPtr Exchange::getOutputFromColumnarPages(VectorSerde* serde) {
   auto lockedStats = stats_.wlock();
   lockedStats->rawInputBytes += rawInputBytes;
   lockedStats->rawInputPositions += numOutputRows;
-  lockedStats->addInputVector(result_->estimateFlatSize(), numOutputRows);
+  lockedStats->addInputVector(
+      resultWithoutUpcasts_->estimateFlatSize(), numOutputRows);
 
-  return result_;
+  return resultWithoutUpcasts_;
 }
 
 RowVectorPtr Exchange::getOutputFromRowPages(VectorSerde* serde) {
@@ -295,16 +333,22 @@ RowVectorPtr Exchange::getOutputFromRowPages(VectorSerde* serde) {
       inputStream_.get(),
       rowIterator_,
       numRows,
-      outputType_,
-      &result_,
+      outputTypeWithoutUpcasts_,
+      &resultWithoutUpcasts_,
       pool(),
       serdeOptions_.get());
 
-  const auto numOutputRows = result_->size();
+//  VLOG(2)
+//      << "Exchange::getOutputFromRowPages with "
+//      << resultWithoutUpcasts_->size() << " rows, type "
+//      << resultWithoutUpcasts_->type()->kind() << " value:"
+//      << resultWithoutUpcasts_->childAt(0)->asFlatVector<int64_t>()->valueAt(0);
+
+  const auto numOutputRows = resultWithoutUpcasts_->size();
   VELOX_CHECK_GT(numOutputRows, 0);
 
   estimatedRowSize_ = std::max(
-      result_->estimateFlatSize() / numOutputRows,
+      resultWithoutUpcasts_->estimateFlatSize() / numOutputRows,
       estimatedRowSize_.value_or(1L));
 
   if (inputStream_->atEnd() && rowIterator_ == nullptr) {
@@ -317,7 +361,7 @@ RowVectorPtr Exchange::getOutputFromRowPages(VectorSerde* serde) {
   }
 
   recordInputStats(rawInputBytes);
-  return result_;
+  return resultWithoutUpcasts_;
 }
 
 void Exchange::recordInputStats(uint64_t rawInputBytes) {
@@ -331,6 +375,7 @@ void Exchange::close() {
   SourceOperator::close();
   currentPages_.clear();
   result_ = nullptr;
+  resultWithoutUpcasts_ = nullptr;
 
   // Clean up stateful deserialization state
   inputStream_ = nullptr;
@@ -380,6 +425,53 @@ void Exchange::recordExchangeClientStats() {
 
 VectorSerde* Exchange::getSerde() {
   return getNamedVectorSerde(serdeKind_);
+}
+
+void Exchange::widenResults() {
+  auto rowVector = resultWithoutUpcasts_->asUnchecked<RowVector>();
+
+  // find the upcast columns and add them to result_
+  std::vector<VectorPtr> outputColumns;
+  outputColumns.reserve(outputType_->size());
+
+  for (int i = 0; i < outputType_->size(); ++i) {
+    const auto& columnName = outputType_->nameOf(i);
+    if (columnName.ends_with("_upcast")) {
+      auto originalOutputName =
+          columnName.substr(0, columnName.size() - strlen("_upcast"));
+
+      auto index =
+          outputTypeWithoutUpcasts_->getChildIdxIfExists(originalOutputName);
+      VELOX_CHECK(index.has_value());
+      auto originalColumn = rowVector->childAt(*index);
+
+      std::shared_ptr<BaseVector> casted = nullptr;
+      if (!result_ || result_.use_count() > 1 ||
+          result_->childAt(i)->size() < rowVector->size()) {
+        casted = BaseVector::create(
+            outputType_->childAt(i), originalColumn->size(), pool());
+      } else {
+        // Reuse the original column vector if possible to reduce memory
+        // usage.
+        casted = result_->childAt(i);
+      }
+      casted->copy(originalColumn.get(), 0, 0, originalColumn->size());
+      outputColumns.push_back(casted);
+
+    } else {
+      auto index = outputTypeWithoutUpcasts_->getChildIdxIfExists(columnName);
+      VELOX_CHECK(index.has_value());
+      auto originalColumn = rowVector->childAt(*index);
+      outputColumns.push_back(originalColumn);
+    }
+  }
+
+  result_ = std::make_shared<RowVector>(
+      pool(),
+      outputType_,
+      resultWithoutUpcasts_->nulls(),
+      resultWithoutUpcasts_->size(),
+      std::move(outputColumns));
 }
 
 } // namespace facebook::velox::exec

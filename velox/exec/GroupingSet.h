@@ -154,7 +154,6 @@ class GroupingSet {
   }
 
   std::optional<int64_t> estimateOutputRowSize() const;
-
  private:
   bool isDistinct() const {
     return aggregates_.empty();

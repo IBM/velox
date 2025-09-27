@@ -148,7 +148,7 @@ class HashProbe : public Operator {
   // arbitration.
   RowVectorPtr getOutputInternal(bool toSpillOutput);
 
-  // Check if output_ can be re-used and if not make a new one.
+  // Check if outputWithoutUpcasts_ can be re-used and if not make a new one.
   void prepareOutput(vector_size_t size);
 
   // Populate output columns.
@@ -157,7 +157,7 @@ class HashProbe : public Operator {
   // Populate 'match' output column for the left semi join project,
   void fillLeftSemiProjectMatchColumn(vector_size_t size);
 
-  // Clears the columns of 'output_' that are projected from
+  // Clears the columns of 'outputWithoutUpcasts_' that are projected from
   // 'input_'. This should be done when preparing to produce a next
   // batch of output to drop any lingering references to row
   // number mappings or input vectors. In this way input vectors do
@@ -277,7 +277,7 @@ class HashProbe : public Operator {
   // spill them on to disk in case the output is too large to fit in memory in
   // some edge case, like one input row has many matches with the build side.
   // The function returns true if it has read the spilled output and saves in
-  // 'output_'.
+  // 'outputWithoutUpcasts_'.
   bool maybeReadSpillOutput();
 
   // Invoked after finishes processing the probe inputs and there is spill data
@@ -492,7 +492,7 @@ class HashProbe : public Operator {
   // checked if there is a carryover.  Use a temporary buffer in this case.
   BufferPtr tempOutputRowMapping_;
 
-  // maps from column index in 'table_' to channel in 'output_'.
+  // maps from column index in 'table_' to channel in 'outputWithoutUpcasts_'.
   std::vector<IdentityProjection> tableOutputProjections_;
 
   // Rows of table found by join probe, later filtered by 'filter_'.

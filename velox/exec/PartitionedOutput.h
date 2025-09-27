@@ -228,12 +228,12 @@ class PartitionedOutput : public Operator {
   // Contains pointers to 'rowSize_' elements. 'sizePointers_[i]' contains a
   // pointer to 'rowSize_[i]'.
   std::vector<vector_size_t*> sizePointers_;
-  // The estimated row size for each row. Index maps back to 'output_' index
+  // The estimated row size for each row. Index maps back to 'outputWithoutUpcasts_' index
   std::vector<vector_size_t> rowSize_;
   std::vector<std::unique_ptr<detail::Destination>> destinations_;
   bool replicatedAny_{false};
   RowVectorPtr output_;
-  // This is only set with current 'output_' in case of compact row serde
+  // This is only set with current 'outputWithoutUpcasts_' in case of compact row serde
   // format. It is used to accelerate serialized row size calculation and the
   // actual serialization processing.
   //

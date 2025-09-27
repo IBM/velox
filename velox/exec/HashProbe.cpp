@@ -133,6 +133,33 @@ HashProbe::HashProbe(
       filterResult_(1),
       outputTableRowsCapacity_(outputBatchSize_) {
   VELOX_CHECK_NOT_NULL(joinBridge_);
+
+//  // Log outputType_ and probeType_ for debugging.
+//  VELOX_CHECK_NOT_NULL(outputType_);
+//  VELOX_CHECK_NOT_NULL(probeType_);
+//  // log PlanNodeId for debugging.
+//
+//  // log join keys for debugging.
+//  std::vector<std::string> leftKeyNames;
+//  for (const auto& key : joinNode_->leftKeys()) {
+//    leftKeyNames.push_back(key->name());
+//  }
+//  std::vector<std::string> rightKeyNames;
+//  for (const auto& key : joinNode_->rightKeys()) {
+//    rightKeyNames.push_back(key->name());
+//  }
+//
+//  VLOG(2) << "HashProbe planNodeId_: " << joinNode_->id()
+//          << " outputType_: " << outputType_->toString()
+//          << " probeType_: " << probeType_->toString()
+//          << " left keys: " << folly::join(", ", leftKeyNames)
+//          << " right keys: " << folly::join(", ", rightKeyNames)
+//          << " left source id " << joinNode_->sources()[0]->id()
+//          << " left output type: "
+//          << joinNode_->sources()[0]->outputType()->toString()
+//          << " right source id " << joinNode_->sources()[1]->id()
+//          << " right output type: "
+//          << joinNode_->sources()[1]->outputType()->toString();
 }
 
 void HashProbe::initialize() {
@@ -331,7 +358,7 @@ std::optional<uint64_t> HashProbe::estimatedRowSize(
 
 std::optional<RowColumn::Stats> HashProbe::columnStats(
     int32_t columnIndex) const {
-  std::vector<RowColumn::Stats> columnStats;
+   std::vector<RowColumn::Stats> columnStats;
   const auto rowContainers = table_->allRows();
   for (const auto* rowContainer : rowContainers) {
     VELOX_CHECK_NOT_NULL(rowContainer);
@@ -354,6 +381,7 @@ void HashProbe::initializeResultIter() {
   for (const auto& projection : tableOutputProjections_) {
     listColumns.push_back(projection.inputChannel);
   }
+
   std::vector<vector_size_t> varSizeListColumns;
   uint64_t fixedSizeListColumnsSizeSum{0};
   varSizeListColumns.reserve(tableOutputProjections_.size());

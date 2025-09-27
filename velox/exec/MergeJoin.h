@@ -211,19 +211,19 @@ class MergeJoin : public Operator {
       const std::vector<column_index_t>& keys,
       Match& match);
 
-  // Ensures `output_` is ready to receive records via `addOutput()` or
+  // Ensures `outputWithoutUpcasts_` is ready to receive records via `addOutput()` or
   // `addOutputRowForLeftJoin()`. Initialize vectors using `outputBatchSize_`.
-  // Returns true is the output_ needs to be returned/produced first, and false
+  // Returns true is the outputWithoutUpcasts_ needs to be returned/produced first, and false
   // in case it is ready to take records.
   bool prepareOutput(const RowVectorPtr& left, const RowVectorPtr& right);
 
   // Appends a cartesian product of the current set of matching rows, leftMatch_
   // x rightMatch_ for left join and rightMatch_ x leftMatch_ for right join, to
-  // output_. Returns true if output_ is full. Sets leftMatchCursor_ and
-  // rightMatchCursor_ if output_ filled up before all the rows were added.
+  // outputWithoutUpcasts_. Returns true if outputWithoutUpcasts_ is full. Sets leftMatchCursor_ and
+  // rightMatchCursor_ if outputWithoutUpcasts_ filled up before all the rows were added.
   // Fills up output starting from leftMatchCursor_ and rightMatchCursor_
   // positions if these are set. Clears leftMatch_ and rightMatch_ if all rows
-  // were added. Updates leftMatchCursor_ and rightMatchCursor_ if output_
+  // were added. Updates leftMatchCursor_ and rightMatchCursor_ if outputWithoutUpcasts_
   // filled up before all rows were added.
   bool addToOutput();
 
@@ -583,7 +583,7 @@ class MergeJoin : public Operator {
   // Join filter input type.
   RowTypePtr filterInputType_;
 
-  // Maps 'filterInputType_' channels to the corresponding channels in output_,
+  // Maps 'filterInputType_' channels to the corresponding channels in outputWithoutUpcasts_,
   // if any.
   folly::F14FastMap<column_index_t, column_index_t> filterInputToOutputChannel_;
 
@@ -621,7 +621,7 @@ class MergeJoin : public Operator {
 
   RowVectorPtr output_;
 
-  // Number of rows accumulated in the output_.
+  // Number of rows accumulated in the outputWithoutUpcasts_.
   vector_size_t outputSize_;
 
   // A future that will be completed when right side input becomes available.

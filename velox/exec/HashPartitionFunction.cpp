@@ -180,4 +180,52 @@ core::PartitionFunctionSpecPtr HashPartitionFunctionSpec::deserialize(
   return std::make_shared<HashPartitionFunctionSpec>(
       ISerializable::deserialize<RowType>(obj["inputType"]), keys, constValues);
 }
+
+std::shared_ptr<core::PartitionFunctionSpec> HashPartitionFunctionSpec::rewriteInputType(
+    const RowTypePtr& oldInputType,
+    const RowTypePtr& newInputType) const {
+  // If the layout is identical, no change.
+  if (*oldInputType == *newInputType && inputType_->equivalent(*newInputType)) {
+    return nullptr;
+  }
+
+  std::vector<column_index_t> newKeyChannels;
+  newKeyChannels.reserve(keyChannels_.size());
+  bool changed = false;
+
+  for (auto channel : keyChannels_) {
+    VELOX_CHECK_LT(
+        channel,
+        oldInputType->size(),
+        "Partition key channel index {} is out of bounds for old input type {}",
+        channel,
+        oldInputType->toString());
+
+    const auto& name = oldInputType->nameOf(channel);
+    auto newIndexOpt = newInputType->getChildIdxIfExists(name);
+    VELOX_USER_CHECK(
+        newIndexOpt.has_value(),
+        "Failed to find partition key column '{}' in LocalPartition new input type {}",
+        name,
+        newInputType->toString());
+
+    auto newIndex = static_cast<column_index_t>(*newIndexOpt);
+    newKeyChannels.push_back(newIndex);
+    if (newIndex != channel) {
+      changed = true;
+    }
+  }
+
+  // If indexes and type didn't really change, just keep the old spec.
+  if (!changed && inputType_->equivalent(*newInputType)) {
+    return nullptr;
+  }
+
+  // Build a new spec with updated inputType_ and keyChannels_.
+  return std::make_shared<HashPartitionFunctionSpec>(
+      newInputType,
+      std::move(newKeyChannels),
+      constValues_ /* unchanged */);
+}
+
 } // namespace facebook::velox::exec

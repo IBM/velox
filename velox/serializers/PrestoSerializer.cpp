@@ -156,6 +156,15 @@ void PrestoVectorSerde::deserialize(
         header.compressedSize);
   }
 
+//  LOG(INFO) << "Deserializing page: "
+//            << " codecMarker=" << header.pageCodecMarker
+//            << " numRows=" << header.numRows
+//            << " uncompressedSize=" << header.uncompressedSize
+//            << " compressedSize=" << header.compressedSize
+//            << " checksum=" << header.checksum
+//            << " actualChecksum=" << actualCheckSum
+//            << " remainingSize=" << source->remainingSize();
+
   VELOX_CHECK_EQ(
       header.checksum, actualCheckSum, "Received corrupted serialized page.");
 

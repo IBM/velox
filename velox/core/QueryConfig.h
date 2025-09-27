@@ -754,6 +754,9 @@ class QueryConfig {
   /// estimates.
   static constexpr const char* kRowSizeTrackingMode = "row_size_tracking_mode";
 
+  static constexpr const char* kPushdownIntegerUpcastsToSource =
+      "pushdown_integer_upcasts_to_source";
+
   enum class RowSizeTrackingMode {
     DISABLED = 0,
     EXCLUDE_DELTA_SPLITS = 1,
@@ -1355,6 +1358,10 @@ class QueryConfig {
 
   std::string clientTags() const {
     return get<std::string>(kClientTags, "");
+  }
+
+  bool pushdownIntegerUpcastsToSource() const {
+    return get<bool>(kPushdownIntegerUpcastsToSource, false);
   }
 
   template <typename T>

@@ -95,6 +95,10 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
       const folly::dynamic& obj,
       void* context);
 
+ std::shared_ptr<core::PartitionFunctionSpec> rewriteInputType(
+     const RowTypePtr& oldInputType,
+     const RowTypePtr& newInputType) const override;
+
  private:
   const RowTypePtr inputType_;
   const std::vector<column_index_t> keyChannels_;

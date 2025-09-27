@@ -212,7 +212,7 @@ class IndexLookupJoin : public Operator {
   // for output rows without lookup matches.
   void prepareOutputRowMappings(size_t outputBatchSize);
 
-  // Prepare 'output_' for the next output batch with size of 'numOutputRows'.
+  // Prepare 'outputWithoutUpcasts_' for the next output batch with size of 'numOutputRows'.
   void prepareOutput(vector_size_t numOutputRows);
 
   // Invoked to ensure the match column is created to store the output match

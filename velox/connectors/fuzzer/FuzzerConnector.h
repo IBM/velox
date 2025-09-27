@@ -111,7 +111,8 @@ class FuzzerConnector final : public Connector {
       const RowTypePtr& outputType,
       const ConnectorTableHandlePtr& tableHandle,
       const connector::ColumnHandleMap& /*columnHandles*/,
-      ConnectorQueryCtx* connectorQueryCtx) override final {
+      ConnectorQueryCtx* connectorQueryCtx,
+      bool pushdownCasts = false) override final {
     return std::make_unique<FuzzerDataSource>(
         outputType, tableHandle, connectorQueryCtx->memoryPool());
   }
