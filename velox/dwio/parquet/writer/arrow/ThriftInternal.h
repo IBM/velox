@@ -385,6 +385,9 @@ static inline facebook::velox::parquet::thrift::Statistics toThrift(
   if (stats.hasDistinctCount) {
     Statistics.__set_distinct_count(stats.distinctCount);
   }
+  if (stats.has_nan_count) {
+    statistics.__set_nan_count(stats.nan_count);
+  }
 
   return Statistics;
 }
