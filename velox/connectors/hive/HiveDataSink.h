@@ -562,7 +562,8 @@ class HiveDataSink : public DataSink {
       CommitStrategy commitStrategy,
       const std::shared_ptr<const HiveConfig>& hiveConfig,
       uint32_t bucketCount,
-      std::unique_ptr<core::PartitionFunction> bucketFunction);
+      std::unique_ptr<core::PartitionFunction> bucketFunction,
+      const std::vector<column_index_t>& dataChannels);
 
   void appendData(RowVectorPtr input) override;
 
@@ -669,7 +670,7 @@ class HiveDataSink : public DataSink {
   // to each corresponding (bucketed) partition based on the partition and
   // bucket ids calculated by 'computePartitionAndBucketIds'. The function also
   // ensures that there is a writer created for each (bucketed) partition.
-  void splitInputRowsAndEnsureWriters();
+  virtual void splitInputRowsAndEnsureWriters(RowVectorPtr input);
 
   // Makes sure to create one writer for the given writer id. The function
   // returns the corresponding index in 'writers_'.
@@ -678,6 +679,9 @@ class HiveDataSink : public DataSink {
   // Appends a new writer for the given 'id'. The function returns the index of
   // the newly created writer in 'writers_'.
   uint32_t appendWriter(const HiveWriterId& id);
+
+  virtual std::optional<std::string> getPartitionName(
+      const HiveWriterId& id) const;
 
   // Creates and configures WriterOptions based on file format.
   // Sets up compression, schema, and other writer configuration based on the
@@ -701,6 +705,15 @@ class HiveDataSink : public DataSink {
   std::unique_ptr<facebook::velox::dwio::common::Writer>
   maybeCreateBucketSortWriter(
       std::unique_ptr<facebook::velox::dwio::common::Writer> writer);
+
+  std::string makePartitionDirectory(
+      const std::string& tableDirectory,
+      const std::optional<std::string>& partitionSubdirectory) const;
+
+  void
+  updatePartitionRows(uint32_t index, vector_size_t numRows, vector_size_t row);
+
+  void extendBuffersForPartitionedTables();
 
   HiveWriterParameters getWriterParameters(
       const std::optional<std::string>& partition,
