@@ -16,25 +16,103 @@
 
 #include "velox/connectors/hive/iceberg/IcebergDataSink.h"
 #include "velox/common/base/Fs.h"
+#include "velox/connectors/hive/HiveConnectorUtil.h"
 
 namespace facebook::velox::connector::hive::iceberg {
+
+namespace {
+
+std::string toJson(const std::vector<folly::dynamic>& partitionValues) {
+  folly::dynamic jsonObject = folly::dynamic::object();
+  folly::dynamic valuesArray = folly::dynamic::array();
+  for (const auto& value : partitionValues) {
+    valuesArray.push_back(value);
+  }
+  jsonObject["partitionValues"] = valuesArray;
+  return folly::toJson(jsonObject);
+}
+
+template <TypeKind Kind>
+folly::dynamic extractPartitionValue(
+    const DecodedVector* block,
+    vector_size_t row) {
+  using T = typename TypeTraits<Kind>::NativeType;
+  return block->valueAt<T>(row);
+}
+
+template <>
+folly::dynamic extractPartitionValue<TypeKind::VARCHAR>(
+    const DecodedVector* block,
+    vector_size_t row) {
+  return block->toString(row);
+}
+
+template <>
+folly::dynamic extractPartitionValue<TypeKind::VARBINARY>(
+    const DecodedVector* block,
+    vector_size_t row) {
+  VELOX_NYI("Partition on varbinary column is not supported yet.");
+}
+
+class IcebergFileNameGenerator : public FileNameGenerator {
+ public:
+  IcebergFileNameGenerator() {}
+
+  std::pair<std::string, std::string> gen(
+      std::optional<uint32_t> bucketId,
+      const std::shared_ptr<const HiveInsertTableHandle> insertTableHandle,
+      const ConnectorQueryCtx& connectorQueryCtx,
+      bool commitRequired) const override;
+
+  folly::dynamic serialize() const override;
+
+  std::string toString() const override;
+};
+
+std::pair<std::string, std::string> IcebergFileNameGenerator::gen(
+    std::optional<uint32_t> bucketId,
+    const std::shared_ptr<const HiveInsertTableHandle> insertTableHandle,
+    const ConnectorQueryCtx& connectorQueryCtx,
+    bool commitRequired) const {
+  auto targetFileName = insertTableHandle->locationHandle()->targetFileName();
+  if (targetFileName.empty()) {
+    targetFileName = fmt::format("{}", makeUuid());
+  }
+
+  return {
+      fmt::format("{}{}", targetFileName, ".parquet"),
+      fmt::format("{}{}", targetFileName, ".parquet")};
+}
+
+folly::dynamic IcebergFileNameGenerator::serialize() const {
+  VELOX_UNREACHABLE("Unexpected code path, implement serialize() first.");
+}
+
+std::string IcebergFileNameGenerator::toString() const {
+  return "IcebergFileNameGenerator";
+}
+
+} // namespace
 
 IcebergInsertTableHandle::IcebergInsertTableHandle(
     std::vector<HiveColumnHandlePtr> inputColumns,
     LocationHandlePtr locationHandle,
+    std::shared_ptr<const IcebergPartitionSpec> partitionSpec,
     dwio::common::FileFormat tableStorageFormat,
+    std::shared_ptr<HiveBucketProperty> bucketProperty,
     std::optional<common::CompressionKind> compressionKind,
     const std::unordered_map<std::string, std::string>& serdeParameters)
     : HiveInsertTableHandle(
           std::move(inputColumns),
           std::move(locationHandle),
           tableStorageFormat,
-          nullptr,
+          std::move(bucketProperty),
           compressionKind,
           serdeParameters,
           nullptr,
           false,
-          std::make_shared<const HiveInsertFileNameGenerator>()) {
+          std::make_shared<const IcebergFileNameGenerator>()),
+      partitionSpec_(std::move(partitionSpec)) {
   VELOX_USER_CHECK(
       !inputColumns_.empty(),
       "Input columns cannot be empty for Iceberg tables.");
@@ -48,16 +126,45 @@ IcebergDataSink::IcebergDataSink(
     const ConnectorQueryCtx* connectorQueryCtx,
     CommitStrategy commitStrategy,
     const std::shared_ptr<const HiveConfig>& hiveConfig)
+: IcebergDataSink(
+        std::move(inputType),
+        insertTableHandle,
+        connectorQueryCtx,
+        commitStrategy,
+        hiveConfig,
+        [&insertTableHandle]() {
+          std::vector<column_index_t> channels(
+              insertTableHandle->inputColumns().size());
+          std::iota(channels.begin(), channels.end(), 0);
+          return channels;
+        }()) {}
+
+IcebergDataSink::IcebergDataSink(
+    RowTypePtr inputType,
+    std::shared_ptr<const HiveInsertTableHandle> insertTableHandle,
+    const ConnectorQueryCtx* connectorQueryCtx,
+    CommitStrategy commitStrategy,
+    const std::shared_ptr<const HiveConfig>& hiveConfig,
+    const std::vector<column_index_t>& dataChannels)
     : HiveDataSink(
-          std::move(inputType),
+          inputType,
           insertTableHandle,
           connectorQueryCtx,
           commitStrategy,
           hiveConfig,
           0,
-          nullptr) {}
+          nullptr,
+          dataChannels) {
+  if (isPartitioned()) {
+    partitionData_.resize(maxOpenWriters_);
+  }
+}
 
 std::vector<std::string> IcebergDataSink::commitMessage() const {
+  auto icebergInsertTableHandle =
+      std::dynamic_pointer_cast<const IcebergInsertTableHandle>(
+          insertTableHandle_);
+
   std::vector<std::string> commitTasks;
   commitTasks.reserve(writerInfo_.size());
 
@@ -75,14 +182,76 @@ std::vector<std::string> IcebergDataSink::commitMessage() const {
       ("fileSizeInBytes", ioStats_.at(i)->rawBytesWritten())
       ("metrics",
         folly::dynamic::object("recordCount", info->numWrittenRows))
-      ("partitionSpecJson", 0)
+      ("partitionSpecJson", icebergInsertTableHandle->partitionSpec()->specId)
       ("fileFormat", "PARQUET")
       ("content", "DATA");
     // clang-format on
+    if (!(partitionData_.empty() || partitionData_[i].empty())) {
+      commitData["partitionDataJson"] = toJson(partitionData_[i]);
+    }
     auto commitDataJson = folly::toJson(commitData);
     commitTasks.push_back(commitDataJson);
   }
   return commitTasks;
+}
+
+void IcebergDataSink::splitInputRowsAndEnsureWriters(RowVectorPtr input) {
+  VELOX_CHECK(isPartitioned());
+
+  std::fill(partitionSizes_.begin(), partitionSizes_.end(), 0);
+
+  const auto numRows = partitionIds_.size();
+  for (auto row = 0; row < numRows; ++row) {
+    auto id = getIcebergWriterId(row);
+    uint32_t index = ensureWriter(id);
+
+    updatePartitionRows(index, numRows, row);
+
+    if (!partitionData_[index].empty()) {
+      continue;
+    }
+
+    std::vector<folly::dynamic> partitionValues(partitionChannels_.size());
+
+    for (auto i = 0; i < partitionChannels_.size(); ++i) {
+      auto block = input->childAt(partitionChannels_[i]);
+      if (block->type()->isDecimal()) {
+        VELOX_NYI("Partition on decimal column is not supported yet.");
+      }
+      DecodedVector decoded(*block);
+      partitionValues[i] = VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
+          extractPartitionValue, block->typeKind(), &decoded, row);
+    }
+
+    partitionData_[index] = partitionValues;
+  }
+
+  for (auto i = 0; i < partitionSizes_.size(); ++i) {
+    if (partitionSizes_[i] != 0) {
+      VELOX_CHECK_NOT_NULL(partitionRows_[i]);
+      partitionRows_[i]->setSize(partitionSizes_[i] * sizeof(vector_size_t));
+    }
+  }
+}
+
+HiveWriterId IcebergDataSink::getIcebergWriterId(size_t row) const {
+  std::optional<uint32_t> partitionId;
+  if (isPartitioned()) {
+    VELOX_CHECK_LT(partitionIds_[row], std::numeric_limits<uint32_t>::max());
+    partitionId = static_cast<uint32_t>(partitionIds_[row]);
+  }
+
+  return HiveWriterId{partitionId, std::nullopt};
+}
+
+std::optional<std::string> IcebergDataSink::getPartitionName(
+    const HiveWriterId& id) const {
+  std::optional<std::string> partitionName;
+  if (isPartitioned()) {
+    partitionName =
+        partitionIdGenerator_->partitionName(id.partitionId.value(), "null");
+  }
+  return partitionName;
 }
 
 } // namespace facebook::velox::connector::hive::iceberg
