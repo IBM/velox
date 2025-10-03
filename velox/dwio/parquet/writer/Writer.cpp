@@ -410,6 +410,8 @@ Writer::Writer(
   writeInt96AsTimestamp_ = options.writeInt96AsTimestamp;
   arrowMemoryPool_ = options.arrowMemoryPool;
   parquetFieldIds_ = std::move(options.parquetFieldIds);
+  dataFileStats_ = std::make_shared<dwio::common::DataFileStatistics>();
+  statsCollector_ = options.fileStatsCollector;
 }
 
 Writer::Writer(
@@ -497,6 +499,11 @@ void Writer::newRowGroup(int32_t numRows) {
 void Writer::close() {
   if (arrowContext_->writer) {
     PARQUET_THROW_NOT_OK(arrowContext_->writer->close());
+    if (statsCollector_) {
+      auto fileMetadata = arrowContext_->writer->metadata();
+      statsCollector_->collectStats(
+          static_cast<const void*>(&fileMetadata), dataFileStats_);
+    }
     arrowContext_->writer.reset();
   }
   PARQUET_THROW_NOT_OK(stream_->Close());
