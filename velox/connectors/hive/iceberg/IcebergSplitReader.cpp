@@ -114,8 +114,8 @@ void IcebergSplitReader::prepareSplit(
           ioExecutor_,
           connectorQueryCtx_,
           hiveConfig_,
+          ioStatistics_,
           ioStats_,
-          fsStats_,
           hiveSplit_->connectorId);
       equalityDeleteReader->readDeleteValues(subfieldFilters, conjunctInputs);
     }
