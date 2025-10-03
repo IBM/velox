@@ -13,3 +13,29 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+#pragma once
+
+#include <cstdint>
+#include <optional>
+#include <string>
+
+namespace facebook::velox::parquet {
+
+class UnicodeUtil {
+ public:
+  static std::string_view truncateStringMin(
+      const char* input,
+      int32_t inputLength,
+      int32_t numCodePoints);
+
+  static std::string truncateStringMax(
+      const char* input,
+      int32_t inputLength,
+      int32_t numCodePoints);
+
+ private:
+  UnicodeUtil() = delete;
+};
+
+} // namespace facebook::velox::parquet
