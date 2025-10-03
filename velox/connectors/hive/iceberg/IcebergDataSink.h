@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/connectors/hive/HiveDataSink.h"
+#include "velox/connectors/hive/iceberg/PartitionSpec.h"
 
 namespace facebook::velox::connector::hive::iceberg {
 
@@ -38,9 +39,19 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
   IcebergInsertTableHandle(
       std::vector<HiveColumnHandlePtr> inputColumns,
       LocationHandlePtr locationHandle,
-      dwio::common::FileFormat tableStorageFormat,
+      std::shared_ptr<const IcebergPartitionSpec> partitionSpec,
+      dwio::common::FileFormat tableStorageFormat =
+          dwio::common::FileFormat::PARQUET,
+      std::shared_ptr<HiveBucketProperty> bucketProperty = nullptr,
       std::optional<common::CompressionKind> compressionKind = {},
       const std::unordered_map<std::string, std::string>& serdeParameters = {});
+
+  std::shared_ptr<const IcebergPartitionSpec> partitionSpec() const {
+    return partitionSpec_;
+  }
+
+private:
+  std::shared_ptr<const IcebergPartitionSpec> partitionSpec_;
 };
 
 using IcebergInsertTableHandlePtr =
@@ -76,6 +87,26 @@ class IcebergDataSink : public HiveDataSink {
   /// @return Vector of JSON strings, one per writer, formatted according to
   /// Presto and Spark Iceberg commit protocol.
   std::vector<std::string> commitMessage() const override;
+
+private:
+    IcebergDataSink(
+        RowTypePtr inputType,
+        std::shared_ptr<const HiveInsertTableHandle> insertTableHandle,
+        const ConnectorQueryCtx* connectorQueryCtx,
+        CommitStrategy commitStrategy,
+        const std::shared_ptr<const HiveConfig>& hiveConfig,
+        const std::vector<column_index_t>& dataChannels);
+
+    void splitInputRowsAndEnsureWriters(RowVectorPtr input) override;
+
+  HiveWriterId getIcebergWriterId(size_t row) const;
+
+  std::optional<std::string> getPartitionName(
+      const HiveWriterId& id) const override;
+
+  // Below are structures for partitions from all inputs. partitionData_
+  // is indexed by partitionId.
+  std::vector<std::vector<folly::dynamic>> partitionData_;
 };
 
 } // namespace facebook::velox::connector::hive::iceberg
