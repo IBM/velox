@@ -811,6 +811,11 @@ Each query can override the config by setting corresponding query session proper
      - 0
      - Maximum number of output rows to return per index lookup request. The limit is applied to the actual output rows
        after filtering. 0 means no limit (default).
+   * - fanout-enabled
+     - fanout_enabled
+     - bool
+     - true
+     - Controls the writer mode, whether the fanout mode writer is enabled, default value is true, setting to false means clustered mode. Currently applies only to the Iceberg writer.
 
 ``ORC File Format Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
