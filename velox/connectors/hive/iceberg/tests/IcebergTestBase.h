@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include "velox/connectors/hive/iceberg/IcebergDataSink.h"
+#include "velox/connectors/hive/iceberg/IcebergSplit.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
@@ -54,9 +55,13 @@ class IcebergTestBase : public exec::test::HiveConnectorTestBase {
   dwio::common::FileFormat fileFormat_{dwio::common::FileFormat::DWRF};
 
  private:
+    std::shared_ptr<IcebergPartitionSpec> createPartitionSpec(
+    const std::vector<std::string>& transformSpecs);
+
   IcebergInsertTableHandlePtr createIcebergInsertTableHandle(
       const RowTypePtr& rowType,
-      const std::string& outputDirectoryPath);
+      const std::string& outputDirectoryPath,
+      const std::vector<std::string>& partitionTransforms = {});
 
   std::vector<std::string> listPartitionDirectories(
       const std::string& dataPath);
