@@ -40,7 +40,7 @@ class EqualityDeleteFileReader {
       const ConnectorQueryCtx* connectorQueryCtx,
       const std::shared_ptr<const HiveConfig>& hiveConfig,
       const std::shared_ptr<io::IoStatistics> ioStats,
-      const std::shared_ptr<filesystems::File::IoStats>& fsStats,
+      const std::shared_ptr<IoStats>& fsStats,
       const std::string& connectorId);
 
   /// Reads the delete values from the equality delete file, and interprets them
