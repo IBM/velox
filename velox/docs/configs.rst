@@ -838,6 +838,11 @@ Each query can override the config by setting corresponding query session proper
       decompression and decode CPU time metrics for each column, reported as runtime metrics in the format
       ``column_<nodeId>.<type>.decompressCPUTimeNanos`` and ``column_<nodeId>.<type>.decodeCPUTimeNanos``.
       Useful for performance analysis and identifying slow columns.
+   * - fanout-enabled
+     - fanout_enabled
+     - bool
+     - true
+     - Controls the writer mode, whether the fanout mode writer is enabled, default value is true, setting to false means clustered mode. Currently applies only to the Iceberg writer.
 
 ``ORC File Format Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
