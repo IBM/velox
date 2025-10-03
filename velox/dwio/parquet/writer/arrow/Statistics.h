@@ -170,7 +170,7 @@ class PARQUET_EXPORT EncodedStatistics {
   }
 
   bool isSet() const {
-    return hasMin || hasMax || hasNullCount || hasDistinctCount;
+    return hasMin || hasMax || hasNullCount || hasDistinctCount || hasNanCount;
   }
 
   bool isSigned() const {
@@ -333,6 +333,14 @@ class PARQUET_EXPORT Statistics {
   ///         bound can be computed.
   virtual std::optional<std::string> icebergUpperBoundExclusive(
       int32_t truncateTo) const = 0;
+  /// \brief Compatible minimum value with iceberg
+  virtual std::string MinValue() const = 0;
+
+  /// \brief Compatible maximum value with iceberg
+  virtual std::string MaxValue() const = 0;
+
+  /// \brief The finalized encoded form of the statistics for transport
+  virtual EncodedStatistics Encode() = 0;
 
   /// \brief The finalized encoded form of the statistics for transport.
   virtual EncodedStatistics encode() = 0;
@@ -354,6 +362,24 @@ class PARQUET_EXPORT Statistics {
   /// \brief Return true if this object's min is less than the other's min.
   /// \param[in] other The Statistics object to compare against.
   virtual bool minLessThan(const Statistics& other) const = 0;
+
+  /// \brief Return true if this object is greater than other
+  virtual bool CompareMax(const Statistics& other) const = 0;
+
+  /// \brief Return true if this object is less than other
+  virtual bool CompareMin(const Statistics& other) const = 0;
+
+  static std::shared_ptr<Statistics> CompareAndGetMax(
+      const std::shared_ptr<Statistics>& stats1,
+      const std::shared_ptr<Statistics>& stats2) {
+    return stats1->CompareMax(*stats2) ? stats1 : stats2;
+  }
+
+  static std::shared_ptr<Statistics> CompareAndGetMin(
+      const std::shared_ptr<Statistics>& stats1,
+      const std::shared_ptr<Statistics>& stats2) {
+    return stats1->CompareMin(*stats2) ? stats1 : stats2;
+  }
 
  protected:
   static std::shared_ptr<Statistics> make(
