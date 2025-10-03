@@ -21,6 +21,7 @@
 #include "velox/common/testutil/TempDirectoryPath.h"
 #include "velox/connectors/hive/iceberg/IcebergConfig.h"
 #include "velox/connectors/hive/iceberg/IcebergDataSink.h"
+#include "velox/connectors/hive/iceberg/IcebergSplit.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
 #include "velox/vector/fuzzer/VectorFuzzer.h"
 #ifdef VELOX_ENABLE_PARQUET
@@ -56,7 +57,8 @@ class IcebergTestBase : public exec::test::HiveConnectorTestBase {
   std::shared_ptr<IcebergDataSink> createIcebergDataSink(
       const RowTypePtr& rowType,
       const std::string& outputDirectoryPath,
-      const std::vector<std::string>& partitionTransforms = {});
+      const std::vector<PartitionField>& partitionTransforms = {},
+      const std::vector<std::string>& sortedBy = {});
 
   std::vector<std::shared_ptr<ConnectorSplit>> createSplitsForDirectory(
       const std::string& directory);
@@ -67,22 +69,29 @@ class IcebergTestBase : public exec::test::HiveConnectorTestBase {
       const std::string& key,
       const std::string& value);
 
-  dwio::common::FileFormat fileFormat_{dwio::common::FileFormat::DWRF};
+  std::shared_ptr<IcebergPartitionSpec> createPartitionSpec(
+      const std::vector<PartitionField>& transformSpecs,
+      const RowTypePtr& rowType);
+
+  void setupMemoryPools();
+
+  dwio::common::FileFormat fileFormat_{dwio::common::FileFormat::PARQUET};
+  RowTypePtr rowType_;
+  std::shared_ptr<memory::MemoryPool> opPool_;
+  std::shared_ptr<config::ConfigBase> connectorSessionProperties_;
 
  private:
   IcebergInsertTableHandlePtr createIcebergInsertTableHandle(
       const RowTypePtr& rowType,
-      const std::string& outputDirectoryPath);
+      const std::string& outputDirectoryPath,
+      const std::vector<PartitionField>& partitionTransforms = {},
+      const std::vector<std::string>& sortedBy = {});
 
   std::vector<std::string> listPartitionDirectories(
       const std::string& dataPath);
 
-  void setupMemoryPools();
-
   std::shared_ptr<memory::MemoryPool> root_;
-  std::shared_ptr<memory::MemoryPool> opPool_;
   std::shared_ptr<memory::MemoryPool> connectorPool_;
-  std::shared_ptr<config::ConfigBase> connectorSessionProperties_;
   std::shared_ptr<HiveConfig> connectorConfig_;
   std::unique_ptr<ConnectorQueryCtx> connectorQueryCtx_;
   VectorFuzzer::Options fuzzerOptions_;
