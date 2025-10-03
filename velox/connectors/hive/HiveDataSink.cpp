@@ -136,14 +136,12 @@ std::vector<column_index_t> getPartitionChannels(
 
 // Returns the column indices of non-partition data columns.
 std::vector<column_index_t> getNonPartitionChannels(
-    const std::vector<column_index_t>& partitionChannels,
-    const column_index_t childrenSize) {
+    const std::shared_ptr<const HiveInsertTableHandle>& insertTableHandle) {
   std::vector<column_index_t> dataChannels;
-  dataChannels.reserve(childrenSize - partitionChannels.size());
 
-  for (column_index_t i = 0; i < childrenSize; i++) {
-    if (std::find(partitionChannels.cbegin(), partitionChannels.cend(), i) ==
-        partitionChannels.cend()) {
+  for (column_index_t i = 0; i < insertTableHandle->inputColumns().size();
+       i++) {
+    if (!insertTableHandle->inputColumns()[i]->isPartitionKey()) {
       dataChannels.push_back(i);
     }
   }
@@ -158,10 +156,6 @@ std::string makePartitionDirectory(
     return fs::path(tableDirectory) / partitionSubdirectory.value();
   }
   return tableDirectory;
-}
-
-std::string makeUuid() {
-  return boost::lexical_cast<std::string>(boost::uuids::random_generator()());
 }
 
 std::unordered_map<LocationHandle::TableType, std::string> tableTypeNames() {
@@ -241,6 +235,28 @@ uint64_t getFinishTimeSliceLimitMsFromHiveConfig(
 FOLLY_ALWAYS_INLINE int32_t
 getBucketCount(const HiveBucketProperty* bucketProperty) {
   return bucketProperty == nullptr ? 0 : bucketProperty->bucketCount();
+}
+
+std::vector<column_index_t> computePartitionChannels(
+    const std::vector<std::shared_ptr<const HiveColumnHandle>>& inputColumns) {
+  std::vector<column_index_t> channels;
+  for (auto i = 0; i < inputColumns.size(); i++) {
+    if (inputColumns[i]->isPartitionKey()) {
+      channels.push_back(i);
+    }
+  }
+  return channels;
+}
+
+std::vector<column_index_t> computeNonPartitionChannels(
+    const std::vector<std::shared_ptr<const HiveColumnHandle>>& inputColumns) {
+  std::vector<column_index_t> channels;
+  for (auto i = 0; i < inputColumns.size(); i++) {
+    if (!inputColumns[i]->isPartitionKey()) {
+      channels.push_back(i);
+    }
+  }
+  return channels;
 }
 
 } // namespace
@@ -425,6 +441,18 @@ HiveDataSink::HiveDataSink(
               ? createBucketFunction(
                     *insertTableHandle->bucketProperty(),
                     inputType)
+              : nullptr,
+          getPartitionChannels(insertTableHandle),
+          getNonPartitionChannels(insertTableHandle),
+          !getPartitionChannels(insertTableHandle).empty()
+              ? std::make_unique<PartitionIdGenerator>(
+                    inputType,
+                    getPartitionChannels(insertTableHandle),
+                    hiveConfig->maxPartitionsPerWriters(
+                        connectorQueryCtx->sessionProperties()),
+                    connectorQueryCtx->memoryPool(),
+                    hiveConfig->isPartitionPathAsLowerCase(
+                        connectorQueryCtx->sessionProperties()))
               : nullptr) {}
 
 HiveDataSink::HiveDataSink(
@@ -434,7 +462,10 @@ HiveDataSink::HiveDataSink(
     CommitStrategy commitStrategy,
     const std::shared_ptr<const HiveConfig>& hiveConfig,
     uint32_t bucketCount,
-    std::unique_ptr<core::PartitionFunction> bucketFunction)
+    std::unique_ptr<core::PartitionFunction> bucketFunction,
+    const std::vector<column_index_t>& partitionChannels,
+    const std::vector<column_index_t>& dataChannels,
+    std::unique_ptr<PartitionIdGenerator> partitionIdGenerator)
     : inputType_(std::move(inputType)),
       insertTableHandle_(std::move(insertTableHandle)),
       connectorQueryCtx_(connectorQueryCtx),
@@ -443,19 +474,9 @@ HiveDataSink::HiveDataSink(
       updateMode_(getUpdateMode()),
       maxOpenWriters_(hiveConfig_->maxPartitionsPerWriters(
           connectorQueryCtx->sessionProperties())),
-      partitionChannels_(getPartitionChannels(insertTableHandle_)),
-      partitionIdGenerator_(
-          !partitionChannels_.empty()
-              ? std::make_unique<PartitionIdGenerator>(
-                    inputType_,
-                    partitionChannels_,
-                    maxOpenWriters_,
-                    connectorQueryCtx_->memoryPool(),
-                    hiveConfig_->isPartitionPathAsLowerCase(
-                        connectorQueryCtx->sessionProperties()))
-              : nullptr),
-      dataChannels_(
-          getNonPartitionChannels(partitionChannels_, inputType_->size())),
+      partitionChannels_(partitionChannels),
+      partitionIdGenerator_(std::move(partitionIdGenerator)),
+      dataChannels_(dataChannels),
       bucketCount_(static_cast<int32_t>(bucketCount)),
       bucketFunction_(std::move(bucketFunction)),
       writerFactory_(
@@ -536,6 +557,8 @@ void HiveDataSink::appendData(RowVectorPtr input) {
   // Compute partition and bucket numbers.
   computePartitionAndBucketIds(input);
 
+  splitInputRowsAndEnsureWriters(input);
+
   // All inputs belong to a single non-bucketed partition. The partition id
   // must be zero.
   if (!isBucketed() && partitionIdGenerator_->numPartitions() == 1) {
@@ -543,8 +566,6 @@ void HiveDataSink::appendData(RowVectorPtr input) {
     write(index, input);
     return;
   }
-
-  splitInputRowsAndEnsureWriters();
 
   for (auto index = 0; index < writers_.size(); ++index) {
     const vector_size_t partitionSize = partitionSizes_[index];
@@ -975,7 +996,7 @@ uint32_t HiveDataSink::appendWriter(const HiveWriterId& id) {
 
   std::optional<std::string> partitionName;
   if (isPartitioned()) {
-    partitionName = getPartitionName(id.partitionId.value());
+    partitionName = getPartitionName(id);
   }
 
   // Without explicitly setting flush policy, the default memory based flush
@@ -1031,6 +1052,16 @@ uint32_t HiveDataSink::appendWriter(const HiveWriterId& id) {
   return writerIndexMap_[id];
 }
 
+std::optional<std::string> HiveDataSink::getPartitionName(
+    const HiveWriterId& id) const {
+  std::optional<std::string> partitionName;
+  if (isPartitioned()) {
+    partitionName =
+        partitionIdGenerator_->partitionName(id.partitionId.value());
+  }
+  return partitionName;
+}
+
 std::unique_ptr<facebook::velox::dwio::common::Writer>
 HiveDataSink::maybeCreateBucketSortWriter(
     std::unique_ptr<facebook::velox::dwio::common::Writer> writer) {
@@ -1059,6 +1090,13 @@ HiveDataSink::maybeCreateBucketSortWriter(
       sortWriterFinishTimeSliceLimitMs_);
 }
 
+void HiveDataSink::extendBuffersForPartitionedTables() {
+  // Extends the buffer used for partition rows calculations.
+  partitionSizes_.emplace_back(0);
+  partitionRows_.emplace_back(nullptr);
+  rawPartitionRows_.emplace_back(nullptr);
+}
+
 HiveWriterId HiveDataSink::getWriterId(size_t row) const {
   std::optional<int32_t> partitionId;
   if (isPartitioned()) {
@@ -1073,7 +1111,25 @@ HiveWriterId HiveDataSink::getWriterId(size_t row) const {
   return HiveWriterId{partitionId, bucketId};
 }
 
-void HiveDataSink::splitInputRowsAndEnsureWriters() {
+void HiveDataSink::updatePartitionRows(
+    uint32_t index,
+    vector_size_t numRows,
+    vector_size_t row) {
+  VELOX_DCHECK_LT(index, partitionSizes_.size());
+  VELOX_DCHECK_EQ(partitionSizes_.size(), partitionRows_.size());
+  VELOX_DCHECK_EQ(partitionRows_.size(), rawPartitionRows_.size());
+  if (FOLLY_UNLIKELY(partitionRows_[index] == nullptr) ||
+      (partitionRows_[index]->capacity() < numRows * sizeof(vector_size_t))) {
+    partitionRows_[index] =
+        allocateIndices(numRows, connectorQueryCtx_->memoryPool());
+    rawPartitionRows_[index] =
+        partitionRows_[index]->asMutable<vector_size_t>();
+  }
+  rawPartitionRows_[index][partitionSizes_[index]] = row;
+  ++partitionSizes_[index];
+}
+
+void HiveDataSink::splitInputRowsAndEnsureWriters(RowVectorPtr /* input */) {
   VELOX_CHECK(isPartitioned() || isBucketed());
   if (isBucketed() && isPartitioned()) {
     VELOX_CHECK_EQ(bucketIds_.size(), partitionIds_.size());
@@ -1087,18 +1143,7 @@ void HiveDataSink::splitInputRowsAndEnsureWriters() {
     const auto id = getWriterId(row);
     const uint32_t index = ensureWriter(id);
 
-    VELOX_DCHECK_LT(index, partitionSizes_.size());
-    VELOX_DCHECK_EQ(partitionSizes_.size(), partitionRows_.size());
-    VELOX_DCHECK_EQ(partitionRows_.size(), rawPartitionRows_.size());
-    if (FOLLY_UNLIKELY(partitionRows_[index] == nullptr) ||
-        (partitionRows_[index]->capacity() < numRows * sizeof(vector_size_t))) {
-      partitionRows_[index] =
-          allocateIndices(numRows, connectorQueryCtx_->memoryPool());
-      rawPartitionRows_[index] =
-          partitionRows_[index]->asMutable<vector_size_t>();
-    }
-    rawPartitionRows_[index][partitionSizes_[index]] = row;
-    ++partitionSizes_[index];
+    updatePartitionRows(index, numRows, row);
   }
 
   for (uint32_t i = 0; i < partitionSizes_.size(); ++i) {
