@@ -17,10 +17,31 @@
 #pragma once
 
 #include "velox/connectors/hive/HiveDataSink.h"
+#include "velox/connectors/hive/iceberg/DataFileStatsCollector.h"
+#include "velox/connectors/hive/iceberg/IcebergColumnHandle.h"
+#include "velox/connectors/hive/iceberg/TransformFactory.h"
+#include "velox/connectors/hive/iceberg/Transforms.h"
 
 namespace facebook::velox::connector::hive::iceberg {
 
-/// Represents a request for Iceberg write.
+class IcebergSortingColumn : public ISerializable {
+ public:
+  IcebergSortingColumn(
+      const std::string& sortColumn,
+      const core::SortOrder& sortOrder);
+
+  const std::string& sortColumn() const;
+
+  const core::SortOrder& sortOrder() const;
+
+  folly::dynamic serialize() const override;
+
+ private:
+  const std::string sortColumn_;
+  const core::SortOrder sortOrder_;
+};
+
+// Represents a request for Iceberg write.
 class IcebergInsertTableHandle final : public HiveInsertTableHandle {
  public:
   /// @param inputColumns Columns from the table schema to write.
@@ -32,15 +53,40 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
   /// @param locationHandle Contains the target location information including:
   /// - Base directory path where data files will be written.
   /// - File naming scheme and temporary directory paths.
+  /// @param tableStorageFormat File format to use for writing data files.
+  /// @param partitionSpec Optional partition specification defining how to
+  /// partition the data. If nullptr, the table is unpartitioned and all data
+  /// is written to a single directory.
   /// @param compressionKind Optional compression to apply to data files.
   /// @param serdeParameters Additional serialization/deserialization parameters
   /// for the file format.
   IcebergInsertTableHandle(
-      std::vector<HiveColumnHandlePtr> inputColumns,
+      std::vector<IcebergColumnHandlePtr> inputColumns,
       LocationHandlePtr locationHandle,
-      dwio::common::FileFormat tableStorageFormat,
+      std::shared_ptr<const IcebergPartitionSpec> partitionSpec,
+      memory::MemoryPool* pool,
+      dwio::common::FileFormat tableStorageFormat =
+          dwio::common::FileFormat::PARQUET,
+      const std::vector<IcebergSortingColumn>& sortedBy = {},
       std::optional<common::CompressionKind> compressionKind = {},
       const std::unordered_map<std::string, std::string>& serdeParameters = {});
+
+  std::shared_ptr<const IcebergPartitionSpec> partitionSpec() const {
+    return partitionSpec_;
+  }
+
+  const std::vector<std::shared_ptr<Transform>>& columnTransforms() const {
+    return columnTransforms_;
+  }
+
+  const std::vector<IcebergSortingColumn>& sortedBy() const {
+    return sortedBy_;
+  }
+
+ private:
+  const std::shared_ptr<const IcebergPartitionSpec> partitionSpec_;
+  const std::vector<std::shared_ptr<Transform>> columnTransforms_;
+  const std::vector<IcebergSortingColumn> sortedBy_;
 };
 
 using IcebergInsertTableHandlePtr =
@@ -55,6 +101,12 @@ class IcebergDataSink : public HiveDataSink {
       CommitStrategy commitStrategy,
       const std::shared_ptr<const HiveConfig>& hiveConfig);
 
+  void appendData(RowVectorPtr input) override;
+
+  const std::vector<std::shared_ptr<dwio::common::DataFileStatistics>>&
+  dataFileStats() const {
+    return dataFileStats_;
+  }
   /// Generates Iceberg-specific commit messages for all writers containing
   /// metadata about written files. Creates a JSON object for each writer
   /// in the format expected by Presto and Spark for Iceberg tables.
@@ -76,6 +128,58 @@ class IcebergDataSink : public HiveDataSink {
   /// @return Vector of JSON strings, one per writer, formatted according to
   /// Presto and Spark Iceberg commit protocol.
   std::vector<std::string> commitMessage() const override;
+
+  bool finish() override;
+
+ private:
+  IcebergDataSink(
+      RowTypePtr inputType,
+      IcebergInsertTableHandlePtr insertTableHandle,
+      const ConnectorQueryCtx* connectorQueryCtx,
+      CommitStrategy commitStrategy,
+      const std::shared_ptr<const HiveConfig>& hiveConfig,
+      const std::vector<column_index_t>& partitionChannels,
+      const std::vector<column_index_t>& dataChannels);
+
+  void splitInputRowsAndEnsureWriters(RowVectorPtr input) override;
+
+  void computePartition(const RowVectorPtr& input);
+
+  HiveWriterId getIcebergWriterId(size_t row) const;
+
+  std::shared_ptr<dwio::common::WriterOptions> createWriterOptions()
+      const override;
+
+  std::optional<std::string> getPartitionName(
+      const HiveWriterId& id) const override;
+
+  std::unique_ptr<dwio::common::Writer> maybeCreateBucketSortWriter(
+      std::unique_ptr<dwio::common::Writer> writer);
+
+  void buildPartitionData(int32_t index);
+
+  void clusteredWrite(RowVectorPtr input, int32_t writerIdx);
+
+  void closeInternal() override;
+
+  void closeWriter(int32_t index);
+
+  bool finishWriter(int32_t index);
+
+  // Below are structures for partitions from all inputs. partitionData_
+  // is indexed by partitionId.
+  std::vector<std::vector<folly::dynamic>> partitionData_;
+
+  std::vector<std::shared_ptr<dwio::common::DataFileStatistics>> dataFileStats_;
+  std::shared_ptr<
+      std::vector<std::unique_ptr<dwio::common::DataFileStatsSettings>>>
+      statsSettings_;
+  std::unique_ptr<DataFileStatsCollector> icebergStatsCollector_;
+
+  // Below are structures for clustered mode writer.
+  const bool fanoutEnabled_;
+  uint32_t currentWriterId_;
+  std::unordered_set<uint32_t> completedWriterIds_;
 };
 
 } // namespace facebook::velox::connector::hive::iceberg
