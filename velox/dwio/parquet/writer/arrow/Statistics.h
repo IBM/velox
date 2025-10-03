@@ -172,7 +172,8 @@ class PARQUET_EXPORT EncodedStatistics {
   }
 
   bool is_set() const {
-    return has_min || has_max || has_null_count || has_distinct_count;
+    return has_min || has_max || has_null_count || has_distinct_count ||
+        has_nan_count;
   }
 
   bool is_signed() const {
@@ -299,6 +300,12 @@ class PARQUET_EXPORT Statistics {
   /// \brief Plain-encoded maximum value
   virtual std::string EncodeMax() const = 0;
 
+  /// \brief Compatible minimum value with iceberg
+  virtual std::string MinValue() const = 0;
+
+  /// \brief Compatible maximum value with iceberg
+  virtual std::string MaxValue() const = 0;
+
   /// \brief The finalized encoded form of the statistics for transport
   virtual EncodedStatistics Encode() = 0;
 
@@ -310,6 +317,24 @@ class PARQUET_EXPORT Statistics {
 
   /// \brief Check two Statistics for equality
   virtual bool Equals(const Statistics& other) const = 0;
+
+  /// \brief Return true if this object is greater than other
+  virtual bool CompareMax(const Statistics& other) const = 0;
+
+  /// \brief Return true if this object is less than other
+  virtual bool CompareMin(const Statistics& other) const = 0;
+
+  static std::shared_ptr<Statistics> CompareAndGetMax(
+      const std::shared_ptr<Statistics>& stats1,
+      const std::shared_ptr<Statistics>& stats2) {
+    return stats1->CompareMax(*stats2) ? stats1 : stats2;
+  }
+
+  static std::shared_ptr<Statistics> CompareAndGetMin(
+      const std::shared_ptr<Statistics>& stats1,
+      const std::shared_ptr<Statistics>& stats2) {
+    return stats1->CompareMin(*stats2) ? stats1 : stats2;
+  }
 
  protected:
   static std::shared_ptr<Statistics> Make(
