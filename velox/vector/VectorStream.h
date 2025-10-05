@@ -225,9 +225,11 @@ class VectorSerde {
 
     Options(
         common::CompressionKind _compressionKind,
-        float _minCompressionRatio)
+        float _minCompressionRatio,
+        bool _exchangeChecksum)
         : compressionKind(_compressionKind),
-          minCompressionRatio(_minCompressionRatio) {}
+          minCompressionRatio(_minCompressionRatio),
+          exchangeChecksum(_exchangeChecksum) {}
 
     virtual ~Options() = default;
 
@@ -237,6 +239,7 @@ class VectorSerde {
     /// than this causes subsequent compression attempts to be skipped. The more
     /// times compression misses the target the less frequently it is tried.
     float minCompressionRatio{0.8};
+    bool exchangeChecksum{false};
   };
 
   Kind kind() const {

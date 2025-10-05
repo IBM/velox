@@ -863,6 +863,9 @@ class QueryConfig {
     ENABLED_FOR_ALL = 2,
   };
 
+  static constexpr const char* kExchangeChecksum =
+      "exchange_checksum";
+
   bool selectiveNimbleReaderEnabled() const {
     return get<bool>(kSelectiveNimbleReaderEnabled, true);
   }
@@ -1524,6 +1527,10 @@ class QueryConfig {
 
   uint32_t joinBuildVectorHasherMaxNumDistinct() const {
     return get<uint32_t>(kJoinBuildVectorHasherMaxNumDistinct, 1'000'000);
+  }
+
+  bool isExchangeChecksumEnabled() const {
+    return get<bool>(kExchangeChecksum, false);
   }
 
   template <typename T>

@@ -586,7 +586,8 @@ std::unique_ptr<Operator> BlockedOperatorFactory::toOperator(
 std::unique_ptr<VectorSerde::Options> getVectorSerdeOptions(
     common::CompressionKind compressionKind,
     VectorSerde::Kind kind,
-    std::optional<float> minCompressionRatio) {
+    std::optional<float> minCompressionRatio,
+    bool exchangeChecksum) {
   std::unique_ptr<VectorSerde::Options> options =
       kind == VectorSerde::Kind::kPresto
       ? std::make_unique<serializer::presto::PrestoVectorSerde::PrestoOptions>()
@@ -595,6 +596,7 @@ std::unique_ptr<VectorSerde::Options> getVectorSerdeOptions(
   if (minCompressionRatio.has_value()) {
     options->minCompressionRatio = minCompressionRatio.value();
   }
+  options->exchangeChecksum = exchangeChecksum;
   return options;
 }
 

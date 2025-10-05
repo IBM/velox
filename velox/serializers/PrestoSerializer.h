@@ -57,8 +57,12 @@ class PrestoVectorSerde : public VectorSerde {
         common::CompressionKind _compressionKind,
         float _minCompressionRatio = 0.8,
         bool _nullsFirst = false,
-        bool _preserveEncodings = false)
-        : VectorSerde::Options(_compressionKind, _minCompressionRatio),
+        bool _preserveEncodings = false,
+        bool _exchangeChecksum = false)
+        : VectorSerde::Options(
+              _compressionKind,
+              _minCompressionRatio,
+              _exchangeChecksum),
           useLosslessTimestamp(_useLosslessTimestamp),
           nullsFirst(_nullsFirst),
           preserveEncodings(_preserveEncodings) {}

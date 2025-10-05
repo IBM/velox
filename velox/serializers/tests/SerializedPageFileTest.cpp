@@ -102,7 +102,8 @@ class SerializedPageFileTest : public ::testing::TestWithParam<TestParams>,
             false); // preserveEncodings
       case SerdeType::kCompactRow:
       case SerdeType::kUnsafeRow:
-        return std::make_unique<VectorSerde::Options>(compressionKind_, 0.8);
+        return std::make_unique<VectorSerde::Options>(
+            compressionKind_, 0.8, false);
     }
     return nullptr;
   }
