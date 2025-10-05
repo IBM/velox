@@ -225,9 +225,11 @@ class VectorSerde {
 
     Options(
         common::CompressionKind _compressionKind,
-        float _minCompressionRatio)
+        float _minCompressionRatio,
+        bool _exchangeChecksum)
         : compressionKind(_compressionKind),
-          minCompressionRatio(_minCompressionRatio) {}
+          minCompressionRatio(_minCompressionRatio),
+          exchangeChecksum(_exchangeChecksum) {}
 
     virtual ~Options() = default;
 
@@ -240,6 +242,8 @@ class VectorSerde {
 
     /// Minimum page size to attempt compression.
     int32_t minCompressionPageSizeBytes{0};
+
+    bool exchangeChecksum{false};
   };
 
   const std::string& kind() const {

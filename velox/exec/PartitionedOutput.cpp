@@ -130,7 +130,12 @@ BlockingReason Destination::flush(
 
   // Upper limit of message size with no columns.
   constexpr int32_t kMinMessageSize = 128;
-  auto listener = bufferManager.newListener();
+
+  std::unique_ptr<OutputStreamListener> listener(nullptr);
+  if (serdeOptions_->exchangeChecksum) {
+    listener = bufferManager.newListener();
+  }
+
   IOBufOutputStream stream(
       *current_->pool(),
       listener.get(),
@@ -236,7 +241,10 @@ PartitionedOutput::PartitionedOutput(
           PartitionedOutput::minCompressionRatio(),
           operatorCtx_->driverCtx()
               ->queryConfig()
-              .minShuffleCompressionPageSizeBytes())) {
+              .minShuffleCompressionPageSizeBytes(),
+          operatorCtx_->driverCtx()
+              ->queryConfig()
+              .isExchangeChecksumEnabled())) {
   if (!planNode->isPartitioned()) {
     VELOX_USER_CHECK_EQ(numDestinations_, 1);
   }

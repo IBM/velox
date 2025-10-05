@@ -74,7 +74,8 @@ class UnsafeRowSerializerTest : public ::testing::Test,
     appendRow_ = GetParam().appendRow;
     compressionKind_ = GetParam().compressionKind;
     microBatchDeserialize_ = GetParam().microBatchDeserialize;
-    options_ = std::make_unique<VectorSerde::Options>(compressionKind_, 0.8);
+    options_ =
+        std::make_unique<VectorSerde::Options>(compressionKind_, 0.8, false);
   }
 
   void TearDown() override {

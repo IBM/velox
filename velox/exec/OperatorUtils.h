@@ -329,6 +329,7 @@ std::unique_ptr<VectorSerde::Options> getVectorSerdeOptions(
     common::CompressionKind compressionKind,
     const std::string& kind,
     std::optional<float> minCompressionRatio = std::nullopt,
-    int32_t minCompressionPageSizeBytes = 0);
+    int32_t minCompressionPageSizeBytes = 0,
+    bool exchangeChecksum = false);
 
 } // namespace facebook::velox::exec
