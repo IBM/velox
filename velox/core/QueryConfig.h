@@ -721,6 +721,9 @@ class QueryConfig {
   static constexpr const char* kRowSizeTrackingEnabled =
       "row_size_tracking_enabled";
 
+  static constexpr const char* kDisableCrc32ForShuffle =
+      "disable_crc32_for_shuffle";
+
   bool selectiveNimbleReaderEnabled() const {
     return get<bool>(kSelectiveNimbleReaderEnabled, false);
   }
@@ -1294,6 +1297,10 @@ class QueryConfig {
 
   std::string clientTags() const {
     return get<std::string>(kClientTags, "");
+  }
+
+  bool isDisableCrc32ForShuffleEnabled() const {
+    return get<bool>(kDisableCrc32ForShuffle, false);
   }
 
   template <typename T>
