@@ -721,6 +721,9 @@ class QueryConfig {
   static constexpr const char* kRowSizeTrackingEnabled =
       "row_size_tracking_enabled";
 
+  static constexpr const char* kExchangeChecksum =
+      "exchange_checksum";
+
   bool selectiveNimbleReaderEnabled() const {
     return get<bool>(kSelectiveNimbleReaderEnabled, false);
   }
@@ -1294,6 +1297,10 @@ class QueryConfig {
 
   std::string clientTags() const {
     return get<std::string>(kClientTags, "");
+  }
+
+  bool isExchangeChecksumEnabled() const {
+    return get<bool>(kExchangeChecksum, false);
   }
 
   template <typename T>

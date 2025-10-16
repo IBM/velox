@@ -30,6 +30,7 @@ std::unique_ptr<VectorSerde::Options> getVectorSerdeOptions(
   options->compressionKind =
       common::stringToCompressionKind(queryConfig.shuffleCompressionKind());
   options->minCompressionRatio = PartitionedOutput::minCompressionRatio();
+  options->exchangeChecksum = queryConfig.isExchangeChecksumEnabled();
   return options;
 }
 } // namespace
@@ -126,7 +127,12 @@ BlockingReason Destination::flush(
 
   // Upper limit of message size with no columns.
   constexpr int32_t kMinMessageSize = 128;
-  auto listener = bufferManager.newListener();
+
+  std::unique_ptr<OutputStreamListener> listener(nullptr);
+  if (serdeOptions_->exchangeChecksum) {
+    listener = bufferManager.newListener();
+  }
+
   IOBufOutputStream stream(
       *current_->pool(),
       listener.get(),
