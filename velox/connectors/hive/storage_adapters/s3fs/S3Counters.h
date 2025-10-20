@@ -53,4 +53,6 @@ constexpr std::string_view kMetricS3GetObjectErrors{
 constexpr std::string_view kMetricS3GetObjectRetries{
     "velox.s3_get_object_retries"};
 
+constexpr std::string_view kMetricS3ClientRetries{"velox.s3_client_retries"};
+
 } // namespace facebook::velox::filesystems

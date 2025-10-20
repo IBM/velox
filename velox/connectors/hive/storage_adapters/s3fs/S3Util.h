@@ -27,6 +27,7 @@
 #include <folly/Uri.h>
 
 #include "velox/common/base/Exceptions.h"
+#include "velox/connectors/hive/storage_adapters/s3fs/S3Counters.h"
 
 #include <aws/core/utils/stream/PreallocatedStreamBuf.h>
 

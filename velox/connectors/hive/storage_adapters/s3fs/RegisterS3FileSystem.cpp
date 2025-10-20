@@ -159,6 +159,7 @@ void registerS3Metrics() {
   DEFINE_METRIC(kMetricS3GetMetadataErrors, velox::StatType::COUNT);
   DEFINE_METRIC(kMetricS3GetObjectRetries, velox::StatType::COUNT);
   DEFINE_METRIC(kMetricS3GetMetadataRetries, velox::StatType::COUNT);
+  DEFINE_METRIC(kMetricS3ClientRetries, velox::StatType::COUNT);
 #endif
 }
 
