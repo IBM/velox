@@ -12,8 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-blank_issues_enabled: false
-contact_links:
-  - name: Velox Discussions
-    url: https://github.com/facebookincubator/velox/discussions
-    about: Ask questions or discuss new feature ideas here.
+blank_issues_enabled: true
