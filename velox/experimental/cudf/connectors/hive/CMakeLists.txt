@@ -28,5 +28,5 @@ set_target_properties(velox_cudf_hive_connector PROPERTIES CUDA_ARCHITECTURES na
 target_link_libraries(
   velox_cudf_hive_connector
   PRIVATE velox_hive_connector
-  PUBLIC cudf::cudf velox_cudf_expression
+  PUBLIC cudf::cudf ucxx::ucxx velox_cudf_expression
 )
