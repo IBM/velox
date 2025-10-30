@@ -193,6 +193,8 @@ class PartitionedOutput : public Operator {
     return minCompressionRatio_;
   }
 
+  const bool eagerFlush_;
+
  private:
   void initializeInput(RowVectorPtr input);
 
@@ -218,7 +220,6 @@ class PartitionedOutput : public Operator {
   const std::weak_ptr<exec::OutputBufferManager> bufferManager_;
   const std::function<void()> bufferReleaseFn_;
   const int64_t maxBufferedBytes_;
-  const bool eagerFlush_;
   VectorSerde* const serde_;
   const std::unique_ptr<VectorSerde::Options> serdeOptions_;
 

@@ -40,6 +40,8 @@ class ExchangeClient : public std::enable_shared_from_this<ExchangeClient> {
       bool lazyFetching = false)
       : taskId_{std::move(taskId)},
         destination_(destination),
+        numberOfConsumers_(numberOfConsumers),
+        executor_(executor),
         maxQueuedBytes_{maxQueuedBytes},
         requestDataSizesMaxWaitSec_{requestDataSizesMaxWaitSec},
         pool_(pool),
@@ -122,6 +124,12 @@ class ExchangeClient : public std::enable_shared_from_this<ExchangeClient> {
     return remoteTaskIds_;
   }
 
+  // Handy for ad-hoc logging.
+  const std::string taskId_;
+  const int destination_;
+  const int32_t numberOfConsumers_;
+  folly::Executor* const executor_;
+
  private:
   struct RequestSpec {
     std::shared_ptr<ExchangeSource> source;
@@ -174,7 +182,6 @@ class ExchangeClient : public std::enable_shared_from_this<ExchangeClient> {
   const std::chrono::seconds requestDataSizesMaxWaitSec_;
 
   memory::MemoryPool* const pool_;
-  folly::Executor* const executor_;
   const std::shared_ptr<ExchangeQueue> queue_;
 
   std::unordered_set<std::string> remoteTaskIds_;

@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+#include "velox/experimental/cudf-exchange/CudfExchange.h"
+#include "velox/experimental/cudf-exchange/CudfExchangeClient.h"
+#include "velox/experimental/cudf-exchange/CudfPartitionedOutput.h"
+#include "velox/experimental/cudf-exchange/ExchangeClientFacade.h"
 #include "velox/experimental/cudf/CudfConfig.h"
 #include "velox/experimental/cudf/connectors/hive/CudfHiveConnector.h"
 #include "velox/experimental/cudf/connectors/hive/CudfHiveDataSource.h"
@@ -39,13 +43,16 @@
 #include "velox/exec/AssignUniqueId.h"
 #include "velox/exec/CallbackSink.h"
 #include "velox/exec/Driver.h"
+#include "velox/exec/Exchange.h"
 #include "velox/exec/FilterProject.h"
 #include "velox/exec/HashAggregation.h"
 #include "velox/exec/HashBuild.h"
 #include "velox/exec/HashProbe.h"
 #include "velox/exec/Limit.h"
+#include "velox/exec/Merge.h"
 #include "velox/exec/Operator.h"
 #include "velox/exec/OrderBy.h"
+#include "velox/exec/PartitionedOutput.h"
 #include "velox/exec/StreamingAggregation.h"
 #include "velox/exec/TableScan.h"
 #include "velox/exec/Task.h"
@@ -60,6 +67,12 @@
 #include <iostream>
 
 static const std::string kCudfAdapterName = "cuDF";
+DEFINE_bool(velox_cudf_enabled, true, "Enable cuDF-Velox acceleration");
+DEFINE_string(velox_cudf_memory_resource, "async", "Memory resource for cuDF");
+DEFINE_bool(velox_cudf_debug, false, "Enable debug printing");
+DEFINE_bool(velox_cudf_exchange, true, "Enable cuDF exchange");
+
+using namespace facebook::velox::cudf_exchange;
 
 namespace facebook::velox::cudf_velox {
 
@@ -286,6 +299,7 @@ bool CompileState::compile(bool allowCpuFallback) {
     }
   }
 
+  VLOG(3) << "- CompileState::compile";
   return replacementsMade;
 }
 
@@ -406,6 +420,9 @@ void CudfConfig::initialize(
   }
   if (config.find(kCudfLogFallback) != config.end()) {
     logFallback = folly::to<bool>(config[kCudfLogFallback]);
+  }
+  if (config.find(kCudfExchange) != config.end()) {
+    exchange = folly::to<bool>(config[kCudfExchange]);
   }
 }
 
