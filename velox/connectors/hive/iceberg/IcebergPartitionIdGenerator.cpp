@@ -84,8 +84,7 @@ IcebergPartitionIdGenerator::IcebergPartitionIdGenerator(
     hashers_.emplace_back(
         exec::VectorHasher::create(columnTransform->resultType(), i++));
     VELOX_USER_CHECK(
-        exec::VectorHasher::typeKindSupportsValueIds(
-            columnTransform->resultType()->kind()),
+        hashers_.back()->typeSupportsValueIds(),
         "Unsupported partition type: {}.",
         columnTransform->resultType()->toString());
     partitionKeyTypes.emplace_back(columnTransform->resultType());
