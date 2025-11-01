@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#include "velox/experimental/cudf-exchange/CudfExchange.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeClient.h"
 #include "velox/experimental/cudf-exchange/CudfPartitionedOutput.h"
 #include "velox/experimental/cudf-exchange/ExchangeClientFacade.h"
