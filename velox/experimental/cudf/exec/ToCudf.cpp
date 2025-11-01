@@ -404,7 +404,7 @@ bool CompileState::compile(bool allowCpuFallback) {
         keepOperator = 1;
       } else {
         replaceOp.push_back(std::make_unique<CudfPartitionedOutput>(
-            id, ctx, planNode, partitionOp->eagerFlush_));
+            id, ctx, planNode, partitionOp->getEagerFlush()));
       }
     } else if (auto exchangeOp = dynamic_cast<exec::Exchange*>(oper)) {
       auto planNode = std::dynamic_pointer_cast<const core::ExchangeNode>(
@@ -423,15 +423,15 @@ bool CompileState::compile(bool allowCpuFallback) {
           // HttpExchangeClient to the facade, preventing that it is closed when
           // the ExchangeOperator is destructed after being replace by the
           // CombinedCudfHttpExchange.
-          auto veloxExchangeClient = std::move(exchangeOp->exchangeClient_);
+          auto veloxExchangeClient = exchangeOp->releaseExchangeClient();
           VELOX_CHECK_NOT_NULL(
               veloxExchangeClient, "Velox exchange client can't be null.");
           // create new cudfExchangeClient
           auto cudfClient = std::make_shared<CudfExchangeClient>(
               oper->taskId(),
-              veloxExchangeClient->destination_,
-              veloxExchangeClient->numberOfConsumers_,
-              veloxExchangeClient->executor_);
+              veloxExchangeClient->getDestination(),
+              veloxExchangeClient->getNumberOfConsumers(),
+              veloxExchangeClient->getExecutor());
           client = std::make_shared<ExchangeClientFacade>(
               std::move(cudfClient), std::move(veloxExchangeClient));
           TaskPlanNodeKey key(oper->taskId(), oper->planNodeId());
@@ -439,8 +439,8 @@ bool CompileState::compile(bool allowCpuFallback) {
         } else {
           client = clientIter->second;
           // prevent closing of HttpExchangeClient when ExchangeOperator is
-          // destructed after being replaced by the CombinedCudfHttpExchange
-          exchangeOp->exchangeClient_.reset();
+          // destructed after being replaced by the ExchangeClientFacade
+          exchangeOp->resetExchangeClient();
         }
         replaceOp.push_back(std::make_unique<CombinedCudfHttpExchange>(
             id, ctx, planNode, client));
