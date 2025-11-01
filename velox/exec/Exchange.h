@@ -64,7 +64,13 @@ class Exchange : public SourceOperator {
 
   bool isFinished() override;
 
-  std::shared_ptr<ExchangeClient> exchangeClient_;
+  std::shared_ptr<ExchangeClient> releaseExchangeClient() {
+    return std::move(exchangeClient_);
+  }
+
+  void resetExchangeClient() {
+    exchangeClient_.reset();
+  }
 
  protected:
   virtual VectorSerde* getSerde();
@@ -109,6 +115,8 @@ class Exchange : public SourceOperator {
   const int driverId_;
 
   bool noMoreSplits_ = false;
+
+  std::shared_ptr<ExchangeClient> exchangeClient_;
 
   // A future received from Task::getSplitOrFuture(). It will be complete when
   // there are more splits available or no-more-splits signal has arrived.
