@@ -125,10 +125,13 @@ velox_link_libraries(
   velox_time
   velox_test_util
   velox_vector
-  velox_arrow_bridge
-  velox_common_compression
-  cudf::cudf
 )
+
+if(${VELOX_ENABLE_CUDF})
+  velox_link_libraries(
+    velox_exec
+    cudf::cudf)
+endif()
 
 velox_add_library(velox_cursor Cursor.cpp)
 
