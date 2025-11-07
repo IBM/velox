@@ -15,7 +15,6 @@
  */
 
 #include "velox/connectors/hive/iceberg/tests/IcebergTestBase.h"
-#include "velox/exec/tests/utils/AssertQueryBuilder.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 
 namespace facebook::velox::connector::hive::iceberg {
@@ -25,19 +24,25 @@ class IcebergInsertTest : public test::IcebergTestBase {
  protected:
   void test(const RowTypePtr& rowType, double nullRatio = 0.0) {
     const auto outputDirectory = exec::test::TempDirectoryPath::create();
-    const auto dataPath = outputDirectory->getPath();
+    const auto dataPath = fmt::format("{}", outputDirectory->getPath());
     constexpr int32_t numBatches = 10;
     constexpr int32_t vectorSize = 5'000;
     const auto vectors =
         createTestData(rowType, numBatches, vectorSize, nullRatio);
-    const auto& dataSink =
-        createDataSinkAndAppendData(rowType, vectors, dataPath);
-    const auto commitTasks = dataSink->close();
+    auto dataSink =
+        createIcebergDataSink(rowType, outputDirectory->getPath(), {});
 
+    for (const auto& vector : vectors) {
+      dataSink->appendData(vector);
+    }
+
+    ASSERT_TRUE(dataSink->finish());
+    const auto commitTasks = dataSink->close();
+    createDuckDbTable(vectors);
     auto splits = createSplitsForDirectory(dataPath);
     ASSERT_EQ(splits.size(), commitTasks.size());
     auto plan = exec::test::PlanBuilder().tableScan(rowType).planNode();
-    exec::test::AssertQueryBuilder(plan).splits(splits).assertResults(vectors);
+    assertQuery(plan, splits, "SELECT * FROM tmp");
   }
 };
 
