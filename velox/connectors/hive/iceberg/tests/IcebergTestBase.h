@@ -29,13 +29,6 @@
 
 namespace facebook::velox::connector::hive::iceberg::test {
 
-struct PartitionField {
-  // 0-based column index.
-  int32_t id;
-  TransformType type;
-  std::optional<int32_t> parameter;
-};
-
 class IcebergTestBase : public exec::test::HiveConnectorTestBase {
  protected:
   void SetUp() override;
@@ -48,33 +41,22 @@ class IcebergTestBase : public exec::test::HiveConnectorTestBase {
       vector_size_t rowsPerBatch,
       double nullRatio = 0.0);
 
-  std::shared_ptr<IcebergDataSink> createDataSink(
+  std::shared_ptr<IcebergDataSink> createIcebergDataSink(
       const RowTypePtr& rowType,
       const std::string& outputDirectoryPath,
-      const std::vector<PartitionField>& partitionFields = {});
-
-  std::shared_ptr<IcebergDataSink> createDataSinkAndAppendData(
-      const RowTypePtr& rowType,
-      const std::vector<RowVectorPtr>& vectors,
-      const std::string& dataPath,
-      const std::vector<PartitionField>& partitionFields = {});
+      const std::vector<std::string>& partitionTransforms = {});
 
   std::vector<std::shared_ptr<ConnectorSplit>> createSplitsForDirectory(
       const std::string& directory);
 
   std::vector<std::string> listFiles(const std::string& dirPath);
 
-  std::shared_ptr<IcebergPartitionSpec> createPartitionSpec(
-      const std::vector<PartitionField>& partitionFields,
-      const RowTypePtr& rowType);
-
   dwio::common::FileFormat fileFormat_{dwio::common::FileFormat::DWRF};
 
  private:
-  IcebergInsertTableHandlePtr createInsertTableHandle(
+  IcebergInsertTableHandlePtr createIcebergInsertTableHandle(
       const RowTypePtr& rowType,
-      const std::string& outputDirectoryPath,
-      const std::vector<PartitionField>& partitionFields = {});
+      const std::string& outputDirectoryPath);
 
   std::vector<std::string> listPartitionDirectories(
       const std::string& dataPath);
