@@ -18,7 +18,6 @@
 #include "velox/common/compression/Compression.h"
 #include "velox/connectors/Connector.h"
 #include "velox/connectors/hive/HiveConfig.h"
-#include "velox/connectors/hive/HivePartitionName.h"
 #include "velox/connectors/hive/PartitionIdGenerator.h"
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/dwio/common/Options.h"
@@ -549,17 +548,6 @@ class HiveDataSink : public DataSink {
   };
   static std::string stateString(State state);
 
-  /// Creates a HiveDataSink for writing data to Hive table files.
-  ///
-  /// @param inputType The schema of input data rows to be written.
-  /// @param insertTableHandle Metadata about the table write operation,
-  /// including storage format, compression, bucketing, and partitioning
-  /// configuration.
-  /// @param connectorQueryCtx Query context with session properties, memory
-  /// pools, and spill configuration.
-  /// @param commitStrategy Strategy for committing written data (kNoCommit or
-  /// kTaskCommit).
-  /// @param hiveConfig Hive connector configuration.
   HiveDataSink(
       RowTypePtr inputType,
       std::shared_ptr<const HiveInsertTableHandle> insertTableHandle,
@@ -575,40 +563,6 @@ class HiveDataSink : public DataSink {
       const std::shared_ptr<const HiveConfig>& hiveConfig,
       uint32_t bucketCount,
       std::unique_ptr<core::PartitionFunction> bucketFunction);
-
-  /// Constructor with explicit bucketing and partitioning parameters.
-  ///
-  /// @param inputType The schema of input data rows to be written.
-  /// @param insertTableHandle Metadata about the table write operation,
-  /// including storage format, compression, location, and serialization
-  /// parameters.
-  /// @param connectorQueryCtx Query context with session properties, memory
-  /// pools, and spill configuration.
-  /// @param commitStrategy Strategy for committing written data (kNoCommit or
-  /// kTaskCommit). Determines whether temporary files need to be renamed on
-  /// commit.
-  /// @param hiveConfig Hive connector configuration with settings for max
-  /// partitions, bucketing limits etc.
-  /// @param bucketCount Number of buckets for bucketed tables (0 if not
-  /// bucketed). Must be less than the configured max bucket count.
-  /// @param bucketFunction Function to compute bucket IDs from row data
-  /// (nullptr if not bucketed). Used to distribute rows across buckets.
-  /// @param partitionChannels Column indices used for partitioning (empty if
-  /// not partitioned). These columns are extracted to determine partition
-  /// directories.
-  /// @param partitionIdGenerator Generates partition IDs from partition column
-  /// values (nullptr if not partitioned). Compute partition key combinations to
-  /// unique IDs.
-  HiveDataSink(
-      RowTypePtr inputType,
-      std::shared_ptr<const HiveInsertTableHandle> insertTableHandle,
-      const ConnectorQueryCtx* connectorQueryCtx,
-      CommitStrategy commitStrategy,
-      const std::shared_ptr<const HiveConfig>& hiveConfig,
-      uint32_t bucketCount,
-      std::unique_ptr<core::PartitionFunction> bucketFunction,
-      const std::vector<column_index_t>& partitionChannels,
-      std::unique_ptr<PartitionIdGenerator> partitionIdGenerator);
 
   void appendData(RowVectorPtr input) override;
 
@@ -705,7 +659,7 @@ class HiveDataSink : public DataSink {
   uint64_t getCurrentFileBytes(size_t writerIndex) const;
 
   // Compute the partition id and bucket id for each row in 'input'.
-  virtual void computePartitionAndBucketIds(const RowVectorPtr& input);
+  void computePartitionAndBucketIds(const RowVectorPtr& input);
 
   // Get the HiveWriter corresponding to the row
   // from partitionIds and bucketIds.
