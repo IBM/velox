@@ -425,9 +425,7 @@ HiveDataSink::HiveDataSink(
               ? createBucketFunction(
                     *insertTableHandle->bucketProperty(),
                     inputType)
-              : nullptr,
-          getPartitionChannels(insertTableHandle),
-          nullptr) {}
+              : nullptr) {}
 
 HiveDataSink::HiveDataSink(
     RowTypePtr inputType,
@@ -437,27 +435,6 @@ HiveDataSink::HiveDataSink(
     const std::shared_ptr<const HiveConfig>& hiveConfig,
     uint32_t bucketCount,
     std::unique_ptr<core::PartitionFunction> bucketFunction)
-    : HiveDataSink(
-          std::move(inputType),
-          insertTableHandle,
-          connectorQueryCtx,
-          commitStrategy,
-          hiveConfig,
-          bucketCount,
-          std::move(bucketFunction),
-          getPartitionChannels(insertTableHandle),
-          nullptr) {}
-
-HiveDataSink::HiveDataSink(
-    RowTypePtr inputType,
-    std::shared_ptr<const HiveInsertTableHandle> insertTableHandle,
-    const ConnectorQueryCtx* connectorQueryCtx,
-    CommitStrategy commitStrategy,
-    const std::shared_ptr<const HiveConfig>& hiveConfig,
-    uint32_t bucketCount,
-    std::unique_ptr<core::PartitionFunction> bucketFunction,
-    const std::vector<column_index_t>& partitionChannels,
-    std::unique_ptr<PartitionIdGenerator> partitionIdGenerator)
     : inputType_(std::move(inputType)),
       insertTableHandle_(std::move(insertTableHandle)),
       connectorQueryCtx_(connectorQueryCtx),
@@ -466,15 +443,16 @@ HiveDataSink::HiveDataSink(
       updateMode_(getUpdateMode()),
       maxOpenWriters_(hiveConfig_->maxPartitionsPerWriters(
           connectorQueryCtx->sessionProperties())),
-      partitionChannels_(partitionChannels),
+      partitionChannels_(getPartitionChannels(insertTableHandle_)),
       partitionIdGenerator_(
-          partitionIdGenerator ? std::move(partitionIdGenerator)
-              : !partitionChannels_.empty()
+          !partitionChannels_.empty()
               ? std::make_unique<PartitionIdGenerator>(
                     inputType_,
                     partitionChannels_,
                     maxOpenWriters_,
-                    connectorQueryCtx_->memoryPool())
+                    connectorQueryCtx_->memoryPool(),
+                    hiveConfig_->isPartitionPathAsLowerCase(
+                        connectorQueryCtx->sessionProperties()))
               : nullptr),
       dataChannels_(
           getNonPartitionChannels(partitionChannels_, inputType_->size())),
@@ -1051,15 +1029,6 @@ uint32_t HiveDataSink::appendWriter(const HiveWriterId& id) {
 
   writerIndexMap_.emplace(id, writers_.size() - 1);
   return writerIndexMap_[id];
-}
-
-std::string HiveDataSink::getPartitionName(uint32_t partitionId) const {
-  VELOX_CHECK_NOT_NULL(partitionIdGenerator_);
-
-  return HivePartitionName::partitionName(
-      partitionId,
-      partitionIdGenerator_->partitionValues(),
-      partitionKeyAsLowerCase_);
 }
 
 std::unique_ptr<facebook::velox::dwio::common::Writer>
