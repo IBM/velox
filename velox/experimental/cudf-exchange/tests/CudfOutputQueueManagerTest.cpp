@@ -23,9 +23,11 @@
 #include <rmm/device_buffer.hpp>
 #include <memory>
 #include <vector>
+#include "CudfTestHelpers.h"
 #include "folly/experimental/EventCount.h"
 #include "velox/common/memory/MemoryPool.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
+#include "velox/experimental/cudf-exchange/tests/CudfTestHelpers.h"
 
 using namespace facebook::velox::cudf_exchange;
 using namespace facebook::velox;
@@ -34,11 +36,7 @@ using namespace facebook::velox::core;
 
 class CudfOutputQueueManagerTest : public testing::Test {
  protected:
-  CudfOutputQueueManagerTest() {
-    std::vector<std::string> names = {"c0", "c1"};
-    std::vector<TypePtr> types = {INTEGER(), DOUBLE()};
-    rowType_ = ROW(std::move(names), std::move(types));
-  }
+  CudfOutputQueueManagerTest() {}
 
   static void SetUpTestCase() {
     memory::MemoryManager::testingSetInstance(memory::MemoryManager::Options{});
@@ -58,59 +56,18 @@ class CudfOutputQueueManagerTest : public testing::Test {
       queueManager_->removeTask(taskId);
     }
 
-    const size_t vectorSize = 10;
-    auto intVec = BaseVector::create(INTEGER(), vectorSize, pool_.get());
-    auto dblVec = BaseVector::create(DOUBLE(), vectorSize, pool_.get());
-
-    // Wrap the vector (column) in a RowVector.
-    auto rowVector = std::make_shared<RowVector>(
-        pool_.get(), // pool where allocations will be made.
-        rowType_, // input row type (defined above).
-        BufferPtr(nullptr), // no nulls on this example.
-        vectorSize, // length of the vectors.
-        std::vector<VectorPtr>{intVec, dblVec}); // the input vector data.
-
-    auto planFragment =
-        exec::test::PlanBuilder().values({rowVector}).planFragment();
-
-    std::unordered_map<std::string, std::string> configSettings;
-    auto queryCtx = core::QueryCtx::create(
-        executor_.get(), core::QueryConfig(std::move(configSettings)));
-
-    auto task = Task::create(
-        taskId,
-        std::move(planFragment),
-        0,
-        std::move(queryCtx),
-        Task::ExecutionMode::kParallel);
+    auto task = createSourceTask(taskId, pool_, CudfTestData::kTestRowType);
 
     queueManager_->initializeTask(task, numDestinations, numDrivers);
     return task;
   }
 
   std::unique_ptr<cudf::packed_columns> makePackedColumns(std::size_t numRows) {
-    // Create two numeric columns using cudf::make_numeric_column
-    auto col1 = cudf::make_numeric_column(
-        cudf::data_type{cudf::type_id::INT32},
-        numRows,
-        cudf::mask_state::UNALLOCATED);
-    auto col2 = cudf::make_numeric_column(
-        cudf::data_type{cudf::type_id::FLOAT64},
-        numRows,
-        cudf::mask_state::UNALLOCATED);
-
-    // Table will contain arbitrary values.
-
-    // Build cudf::table
-    std::vector<std::unique_ptr<cudf::column>> columns;
-    columns.push_back(std::move(col1));
-    columns.push_back(std::move(col2));
-    auto table = std::make_unique<cudf::table>(std::move(columns));
-
-    cudf::packed_columns packed = cudf::pack(table->view());
-
-    return std::unique_ptr<cudf::packed_columns>(new cudf::packed_columns(
-        std::move(packed.metadata), std::move(packed.gpu_data)));
+    rmm::cuda_stream_view stream = rmm::cuda_stream_default;
+    auto cols = facebook::velox::cudf_exchange::makePackedColumns(
+        numRows, CudfTestData::kTestRowType, stream);
+    stream.synchronize();
+    return cols;
   }
 
   void enqueue(const std::string& taskId, vector_size_t size) {
@@ -264,12 +221,8 @@ class CudfOutputQueueManagerTest : public testing::Test {
     fetchedPackedColumns = received;
   }
 
-  std::shared_ptr<folly::Executor> executor_{
-      std::make_shared<folly::CPUThreadPoolExecutor>(
-          std::thread::hardware_concurrency())};
   std::shared_ptr<facebook::velox::memory::MemoryPool> pool_;
   std::shared_ptr<CudfOutputQueueManager> queueManager_;
-  RowTypePtr rowType_;
 };
 
 TEST_F(CudfOutputQueueManagerTest, basicPartitioned) {

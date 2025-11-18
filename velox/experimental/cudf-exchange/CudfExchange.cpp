@@ -44,10 +44,7 @@ CudfExchange::CudfExchange(
     // MergeExchange. Create a new exchange client.
     auto task = operatorCtx_->task();
     exchangeClient_ = std::make_shared<CudfExchangeClient>(
-        task->taskId(),
-        task->destination(),
-        1, // number of consumers, is always 1.
-        task->queryCtx()->executor());
+        task->taskId(), task->destination(), 1);
   }
 }
 

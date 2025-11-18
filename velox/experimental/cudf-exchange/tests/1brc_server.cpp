@@ -47,17 +47,37 @@
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
+using namespace facebook::velox::core;
 
-DEFINE_string(inputfile, "measurements-100.parquet ", "input parquet file");
+static const uint64_t FOUR_GBYTES = 4294967296;
+
+std::string kDummyCoordinatorUrl{"localhost:1/nowhere"};
+
+DEFINE_string(
+    inputfiles,
+    "measurements1.parquet,measurements2.parquet",
+    "list of input parquet files");
 DEFINE_uint32(
     port,
     24356 + 3,
     "Port number"); // "+3" accounts for the hack for Presto ! See
                     // cudf-exchange/CudfExchangeSource.cpp
 DEFINE_string(taskId, "task0", "task id");
-DEFINE_uint32(cudfChunkSizeGB, 1, "cuDF Parquet chunk size to read in GB");
-DEFINE_int32(cuda_device, 0, "Cuda device or -1 for not setting the device");
+DEFINE_uint32(cudfChunkSizeMB, 1024, "cuDF Parquet chunk size to read in GB");
+DEFINE_int32(cuda_device, -1, "Cuda device or -1 for not setting the device");
 DEFINE_bool(use_hive, false, "Use Hive Connector");
+
+std::vector<std::string> splitString(const std::string& s, char delimiter) {
+  std::vector<std::string> tokens;
+  std::stringstream ss(s);
+  std::string item;
+  while (std::getline(ss, item, delimiter)) {
+    if (!item.empty()) {
+      tokens.push_back(item);
+    }
+  }
+  return tokens;
+}
 
 int main(int argc, char** argv) {
   // Velox Tasks/Operators are based on folly's async framework, so we need to
@@ -152,10 +172,11 @@ int main(int argc, char** argv) {
   }
 
   std::unordered_map<std::string, std::string> c = {};
-  LOG(INFO) << "reading " << FLAGS_cudfChunkSizeGB << "GB chunks at once";
+  LOG(INFO) << "reading " << FLAGS_cudfChunkSizeMB << "MB chunks at once";
   c[facebook::velox::cudf_velox::connector::parquet::ParquetConfig::
         kMaxChunkReadLimit] =
-      std::to_string(FLAGS_cudfChunkSizeGB * 1024 * 1024 * 1024);
+      // std::to_string(512 *1024 * 1024);
+      std::to_string(FLAGS_cudfChunkSizeMB * 1024 * 1024);
   std::shared_ptr<const facebook::velox::config::ConfigBase> properties =
       std::make_shared<const facebook::velox::config::ConfigBase>(std::move(c));
 
@@ -168,7 +189,7 @@ int main(int argc, char** argv) {
   facebook::velox::cudf_velox::registerCudf();
 
   int kNumDestinations = 1;
-  int kNumDrivers = 1;
+  int kNumDrivers = 4;
   // Define a query plan that reads data from parquet.
   core::PlanNodeId scanNodeId;
   core::PlanNodeId partitionNodeId;
@@ -192,7 +213,10 @@ int main(int argc, char** argv) {
       std::make_shared<folly::CPUThreadPoolExecutor>(
           std::thread::hardware_concurrency()));
 
-  std::unordered_map<std::string, std::string> configSettings;
+  // std::unordered_map<std::string, std::string> configSettings
+  // {{facebook::velox::core::QueryConfig::kMaxOutputBufferSize,
+  // std::to_string(FOUR_GBYTES*10)}};
+  std::unordered_map<std::string, std::string> configSettings{};
   auto queryCtx = core::QueryCtx::create(
       executor.get(), core::QueryConfig(std::move(configSettings)));
 
@@ -213,32 +237,36 @@ int main(int argc, char** argv) {
   // above, the local file path (the "file:" prefix specifies which FileSystem
   // to use; local, in this case), and the file format (PARQUET).
 
-  auto filePath = "file:" + std::filesystem::path(FLAGS_inputfile).string();
-  VLOG(3) << "Reading parquet file: " << filePath;
-
   std::shared_ptr<facebook::velox::connector::ConnectorSplit> connectorSplit;
 
-  if (FLAGS_use_hive) {
-    connectorSplit = std::make_shared<connector::hive::HiveConnectorSplit>(
-        kHiveConnectorId, filePath, dwio::common::FileFormat::PARQUET);
-  } else {
-    connectorSplit = std::make_shared<
-        facebook::velox::cudf_velox::connector::parquet::ParquetConnectorSplit>(
-        "test-parquet", std::filesystem::path(FLAGS_inputfile).string(), 0);
-  }
+  auto inputFileNames = splitString(FLAGS_inputfiles, ',');
+  for (auto& filename : inputFileNames) {
+    auto filePath = "file:" + std::filesystem::path(filename).string();
+    VLOG(3) << "Reading parquet file: " << filePath;
 
-  // Wrap it in a `Split` object and add to the task. We need to specify to
-  // which operator we're adding the split (that's why we captured the
-  // TableScan's id above). Here we could pump subsequent split/files into
-  // the TableScan.
-  readerTask->addSplit(scanNodeId, exec::Split{std::move(connectorSplit)});
+    if (FLAGS_use_hive) {
+      connectorSplit = std::make_shared<connector::hive::HiveConnectorSplit>(
+          kHiveConnectorId, filePath, dwio::common::FileFormat::PARQUET);
+    } else {
+      connectorSplit = std::make_shared<facebook::velox::cudf_velox::connector::
+                                            parquet::ParquetConnectorSplit>(
+          "test-parquet", std::filesystem::path(filename).string(), 0);
+    }
+
+    // Wrap it in a `Split` object and add to the task. We need to specify to
+    // which operator we're adding the split (that's why we captured the
+    // TableScan's id above). Here we could pump subsequent split/files into
+    // the TableScan.
+    readerTask->addSplit(scanNodeId, exec::Split{std::move(connectorSplit)});
+  }
 
   // Signal that no more splits will be added. After this point, calling
   // next() on the task will start the readerPlan execution using the current
   // thread.
   readerTask->noMoreSplits(scanNodeId);
 
-  auto communicator = cudf_exchange::Communicator::initAndGet(FLAGS_port);
+  auto communicator =
+      cudf_exchange::Communicator::initAndGet(FLAGS_port, kDummyCoordinatorUrl);
 
   // start communicator in separate thread.
   std::thread serverThread(

@@ -102,7 +102,6 @@ void CudfExchangeSource::process() {
     case ReceiverState::WaitingForMetadata:
       // Waiting for metadata is handled by an upcall from UCXX. Nothing to do
       break;
-      break;
     case ReceiverState::WaitingForData:
       // Waiting for data is handled by an upcall from UCXX. Nothing to do.
       break;
@@ -115,7 +114,10 @@ void CudfExchangeSource::process() {
 
 void CudfExchangeSource::cleanUp() {
   uint32_t value = static_cast<uint32_t>(getState());
-  VLOG(3) << "In CudfExchangeSource::cleanUp state == " << value;
+  if (value != static_cast<uint32_t>(ReceiverState::Done)) {
+    // Unexpected cleanup
+    VLOG(3) << "In CudfExchangeSource::cleanUp state == " << value;
+  }
 
   if (!request_->isCompleted()) {
     // The Task has failed and we may need to cancel outstanding requests
@@ -126,6 +128,9 @@ void CudfExchangeSource::cleanUp() {
   if (endpointRef_) {
     endpointRef_->removeCommElem(getSelfPtr());
     endpointRef_ = nullptr;
+  }
+  if (communicator_) {
+    communicator_->unregister(getSelfPtr());
   }
 }
 

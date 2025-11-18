@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "velox/experimental/cudf-exchange/CombinedCudfHttpExchange.h"
+#include "velox/experimental/cudf-exchange/HybridExchange.h"
 #include "velox/experimental/cudf-exchange/Communicator.h"
 #include "velox/experimental/cudf-exchange/ExchangeClientFacade.h"
 #include "velox/experimental/cudf-exchange/NetUtil.h"
@@ -38,9 +38,9 @@ std::unique_ptr<VectorSerde::Options> getVectorSerdeOptions(
 }
 } // namespace
 
-// --- Implementation of the CombinedCudfHttpExchange operator.
+// --- Implementation of the HybridExchange operator.
 
-CombinedCudfHttpExchange::CombinedCudfHttpExchange(
+HybridExchange::HybridExchange(
     int32_t operatorId,
     DriverCtx* driverCtx,
     const std::shared_ptr<const core::PlanNode>& planNode,
@@ -73,20 +73,19 @@ CombinedCudfHttpExchange::CombinedCudfHttpExchange(
     auto client = std::make_shared<CudfExchangeClient>(
         task->taskId(),
         task->destination(),
-        1, // number of consumers, is always 1.
-        task->queryCtx()->executor());
+        1 // number of consumers, is always 1.
+    );
     exchangeClient_ =
         std::make_shared<ExchangeClientFacade>(std::move(client), nullptr);
     exchangeClient_->activateCudfExchangeClient();
   }
 }
 
-CombinedCudfHttpExchange::~CombinedCudfHttpExchange() {
+HybridExchange::~HybridExchange() {
   close();
 }
 
-void CombinedCudfHttpExchange::addRemoteTaskIds(
-    std::vector<std::string>& remoteTaskIds) {
+void HybridExchange::addRemoteTaskIds(std::vector<std::string>& remoteTaskIds) {
   std::shuffle(std::begin(remoteTaskIds), std::end(remoteTaskIds), rng_);
   for (const std::string& remoteTaskId : remoteTaskIds) {
     exchangeClient_->addRemoteTaskId(remoteTaskId);
@@ -94,7 +93,7 @@ void CombinedCudfHttpExchange::addRemoteTaskIds(
   stats_.wlock()->numSplits += remoteTaskIds.size();
 }
 
-bool CombinedCudfHttpExchange::getSplits(ContinueFuture* future) {
+bool HybridExchange::getSplits(ContinueFuture* future) {
   if (!processSplits_) {
     return false;
   }
@@ -130,7 +129,7 @@ bool CombinedCudfHttpExchange::getSplits(ContinueFuture* future) {
   }
 }
 
-bool CombinedCudfHttpExchange::resultIsEmpty() {
+bool HybridExchange::resultIsEmpty() {
   auto checkEmpty = [](auto&& res) -> bool {
     // std::decay_t makes sure that references, const, const references etc.
     // are "decayed" into the base type to allow for the type comparison.
@@ -144,7 +143,7 @@ bool CombinedCudfHttpExchange::resultIsEmpty() {
   return std::visit(checkEmpty, currentData_);
 }
 
-void CombinedCudfHttpExchange::emptyResult() {
+void HybridExchange::emptyResult() {
   auto empty = [](auto&& res) -> void {
     // std::decay_t makes sure that references, const, const references etc.
     // are "decayed" into the base type to allow for the type comparison.
@@ -158,15 +157,15 @@ void CombinedCudfHttpExchange::emptyResult() {
   return std::visit(empty, currentData_);
 }
 
-const SerPageVector* CombinedCudfHttpExchange::getResultPages() {
+const SerPageVector* HybridExchange::getResultPages() {
   return std::get_if<SerPageVector>(&currentData_);
 }
 
-const PackedColPtr* CombinedCudfHttpExchange::getResultPackedColumns() {
+const PackedColPtr* HybridExchange::getResultPackedColumns() {
   return std::get_if<PackedColPtr>(&currentData_);
 }
 
-BlockingReason CombinedCudfHttpExchange::isBlocked(ContinueFuture* future) {
+BlockingReason HybridExchange::isBlocked(ContinueFuture* future) {
   if (!resultIsEmpty() || atEnd_) {
     return BlockingReason::kNotBlocked;
   }
@@ -204,7 +203,7 @@ BlockingReason CombinedCudfHttpExchange::isBlocked(ContinueFuture* future) {
   return BlockingReason::kWaitForProducer;
 }
 
-bool CombinedCudfHttpExchange::isFinished() {
+bool HybridExchange::isFinished() {
   return atEnd_ && resultIsEmpty();
 }
 
@@ -226,8 +225,7 @@ std::unique_ptr<folly::IOBuf> mergePages(
 }
 } // namespace
 
-RowVectorPtr CombinedCudfHttpExchange::getOutputFromPages(
-    const SerPageVector* pages) {
+RowVectorPtr HybridExchange::getOutputFromPages(const SerPageVector* pages) {
   VELOX_CHECK_NOT_NULL(pages, "Pages shouldn't be null here.");
   auto* serde = getNamedVectorSerde(serdeKind_);
   RowVectorPtr result = nullptr;
@@ -275,7 +273,7 @@ RowVectorPtr CombinedCudfHttpExchange::getOutputFromPages(
   return cudfFromVelox->getOutput();
 }
 
-RowVectorPtr CombinedCudfHttpExchange::getOutputFromCompactRows(
+RowVectorPtr HybridExchange::getOutputFromCompactRows(
     VectorSerde* serde,
     const SerPageVector* pages) {
   uint64_t rawInputBytes{0};
@@ -327,7 +325,7 @@ RowVectorPtr CombinedCudfHttpExchange::getOutputFromCompactRows(
   return result;
 }
 
-RowVectorPtr CombinedCudfHttpExchange::getOutputFromUnsafeRows(
+RowVectorPtr HybridExchange::getOutputFromUnsafeRows(
     VectorSerde* serde,
     const SerPageVector* pages) {
   uint64_t rawInputBytes{0};
@@ -346,7 +344,7 @@ RowVectorPtr CombinedCudfHttpExchange::getOutputFromUnsafeRows(
   return result;
 }
 
-RowVectorPtr CombinedCudfHttpExchange::getOutputFromPackedColumns(
+RowVectorPtr HybridExchange::getOutputFromPackedColumns(
     const PackedColPtr* colsPtr) {
   if (*colsPtr == nullptr) {
     return nullptr;
@@ -372,7 +370,7 @@ RowVectorPtr CombinedCudfHttpExchange::getOutputFromPackedColumns(
   return result;
 }
 
-RowVectorPtr CombinedCudfHttpExchange::getOutput() {
+RowVectorPtr HybridExchange::getOutput() {
   const PackedColPtr* cols = getResultPackedColumns();
   if (cols) {
     return getOutputFromPackedColumns(cols);
@@ -380,7 +378,7 @@ RowVectorPtr CombinedCudfHttpExchange::getOutput() {
   return getOutputFromPages(getResultPages());
 }
 
-void CombinedCudfHttpExchange::recordInputStats(
+void HybridExchange::recordInputStats(
     uint64_t rawInputBytes,
     RowVectorPtr result) {
   auto lockedStats = stats_.wlock();
@@ -390,7 +388,7 @@ void CombinedCudfHttpExchange::recordInputStats(
   lockedStats->addInputVector(result->estimateFlatSize(), result->size());
 }
 
-void CombinedCudfHttpExchange::close() {
+void HybridExchange::close() {
   SourceOperator::close();
   emptyResult();
   bool usesHttp = false;
@@ -411,7 +409,7 @@ void CombinedCudfHttpExchange::close() {
   }
 }
 
-void CombinedCudfHttpExchange::recordExchangeClientStats() {
+void HybridExchange::recordExchangeClientStats() {
   if (!processSplits_) {
     return;
   }

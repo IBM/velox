@@ -42,6 +42,32 @@
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 
+std::string kDummyCoordinatorUrl{"localhost:1/nowhere"};
+
+DEFINE_uint32(srv_port, 13131, "Unused communicator listening port");
+DEFINE_string(
+    nodes,
+    "http://127.0.0.1:24356",
+    "Comma separated list of remote nodes"); // Address of Remote Server
+DEFINE_string(taskId, "task0", "task id"); // Task of Remote Server
+DEFINE_uint32(
+    destination,
+    0,
+    "destination"); // Partition number on Remote Server
+DEFINE_int32(cuda_device, -1, "Cuda device or -1 for not setting the device");
+
+std::vector<std::string> splitString(const std::string& s, char delimiter) {
+  std::vector<std::string> tokens;
+  std::stringstream ss(s);
+  std::string item;
+  while (std::getline(ss, item, delimiter)) {
+    if (!item.empty()) {
+      tokens.push_back(item);
+    }
+  }
+  return tokens;
+}
+
 exec::Split remoteSplit(const std::string& taskId) {
   return exec::Split(
       std::make_shared<facebook::velox::exec::RemoteConnectorSplit>(taskId));
@@ -72,19 +98,6 @@ BlockingReason
 my_callback(RowVectorPtr data, bool drained, ContinueFuture* future) {
   return facebook::velox::exec::BlockingReason::kNotBlocked;
 }
-
-DEFINE_uint32(
-    port,
-    24356,
-    "Port number (don't correct for +3)"); // Port of Remote Server
-DEFINE_uint32(srv_port, 13131, "Unused communicator listening port");
-DEFINE_string(hostname, "127.0.0.1", "Host name"); // Address of Remote Server
-DEFINE_string(taskId, "task0", "task id"); // Task of Remote Server
-DEFINE_uint32(
-    destination,
-    0,
-    "destination"); // Partition number on Remote Server
-DEFINE_int32(cuda_device, 0, "Cuda device or -1 for not setting the device");
 
 int main(int argc, char** argv) {
   // Velox Tasks/Operators are based on folly's async framework, so we need to
@@ -196,37 +209,55 @@ int main(int argc, char** argv) {
       my_callback);
 
   // Start communicator.
-  auto communicator = cudf_exchange::Communicator::initAndGet(FLAGS_srv_port);
+  ContinueFuture future;
+  auto communicator = cudf_exchange::Communicator::initAndGet(
+      FLAGS_srv_port, kDummyCoordinatorUrl, &future);
 
   // start communicator in separate thread.
   std::thread serverThread(
       &cudf_exchange::Communicator::run, communicator.get());
 
-  // Add a remote split such that the processor task starts fetching data from
-  // the reader task.
+  future.wait(); // wait for communicator to start up.
 
-  std::string remoteUrl = "http://" + FLAGS_hostname + ":" +
-      std::to_string(FLAGS_port - 3) + "/v1/task/" + FLAGS_taskId +
-      "/results/" + std::to_string(FLAGS_destination);
+  /*std::chrono::time_point<std::chrono::high_resolution_clock> startTime =
+      std::chrono::high_resolution_clock::now();*/
 
-  VLOG(3) << "Adding split: " << remoteUrl;
-  processorTask->addSplit("0", remoteSplit(remoteUrl));
+  // Add remote splits such that the processor task starts fetching data from
+  // the remote reader task.
+  auto baseUrls = splitString(FLAGS_nodes, ',');
+
+  for (auto& baseUrl : baseUrls) {
+    std::string remoteUrl = baseUrl + "/v1/task/" + FLAGS_taskId + "/results/" +
+        std::to_string(FLAGS_destination);
+
+    VLOG(3) << "Adding split: " << remoteUrl;
+    processorTask->addSplit("0", remoteSplit(remoteUrl));
+  }
   processorTask->noMoreSplits("0");
 
   // Start the processor task with some number of drivers.
   VLOG(3) << "Starting tasks";
+
+  std::chrono::time_point<std::chrono::high_resolution_clock> startTime =
+      std::chrono::high_resolution_clock::now();
   processorTask->start(kNumDrivers);
 
   processorTask->taskCompletionFuture().wait();
-  VLOG(3) << "processing task done.";
+
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration = end - startTime;
+  auto durationCount =
+      std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
 
   /*std::cout << facebook::velox::exec::printPlanWithStats(
                    *processorPlan.planNode, processorTask->taskStats(), true)
             << std::endl;*/
 
   // cat the contents of the generated file.
-  print_file_contents(absTempDirPath);
+  // print_file_contents(absTempDirPath);
 
+  VLOG(0) << "*** processing task done in: " << durationCount
+          << " milliseconds";
   // Clean up
   std::cout << "Going to clean-up" << std::endl;
 

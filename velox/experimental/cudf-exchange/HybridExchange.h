@@ -37,7 +37,7 @@ namespace facebook::velox::cudf_exchange {
 /// "show schemas in catalog;" where the query plan contains
 /// exchanges from other workers that are using CudfExchange
 /// and also an exchange from the coordinator that is based
-/// on HTTP. The CombinedCudfHttpExchange assumes that it will always
+/// on HTTP. The HybridExchange assumes that it will always
 /// only get remote splits to other worker nodes or only ever
 /// to the coordinator but never a combination of the two.
 /// The decision is taken when the first remote split is added.
@@ -50,16 +50,16 @@ namespace facebook::velox::cudf_exchange {
 /// The return type of the getOutput method is always a CudfVector.
 /// If data origins from the HTTP ExchangeClient, then this data is
 /// converted into a CudfVector using the CudfFromVelox operator.
-class CombinedCudfHttpExchange : public SourceOperator {
+class HybridExchange : public SourceOperator {
  public:
-  CombinedCudfHttpExchange(
+  HybridExchange(
       int32_t operatorId,
       DriverCtx* driverCtx,
       const std::shared_ptr<const core::PlanNode>& planNode,
       std::shared_ptr<ExchangeClientFacade> exchangeClientFacade,
-      const std::string& operatorType = "CombinedCudfHttpExchange");
+      const std::string& operatorType = "HybridExchange");
 
-  ~CombinedCudfHttpExchange() override;
+  ~HybridExchange() override;
 
   BlockingReason isBlocked(ContinueFuture* future) override;
 

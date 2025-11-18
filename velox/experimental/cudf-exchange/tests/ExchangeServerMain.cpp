@@ -43,13 +43,16 @@ DEFINE_uint32(num_dests, 1, "Number of destinations (partitions)");
 DEFINE_uint32(num_chunks, 5, "Number of chunks");
 DEFINE_uint32(rows, 1'000'000'000, "Number of rows");
 
+std::string kDummyCoordinatorUrl{"localhost:1/nowhere"};
+
 class CudfExchangeServerTest {
  public:
   CudfExchangeServerTest()
-      : executor_(std::make_shared<folly::CPUThreadPoolExecutor>(
-            std::thread::hardware_concurrency())) {
+      : executor_(
+            std::make_shared<folly::CPUThreadPoolExecutor>(
+                std::thread::hardware_concurrency())) {
     memory::MemoryManager::testingSetInstance(memory::MemoryManager::Options{});
-    server_ = Communicator::initAndGet(FLAGS_port);
+    server_ = Communicator::initAndGet(FLAGS_port, kDummyCoordinatorUrl);
     pool_ = facebook::velox::memory::memoryManager()->addLeafPool();
     queueManager_ = CudfOutputQueueManager::getInstanceRef();
     // rowType_ needed for plan fragment which is needed for the task.
