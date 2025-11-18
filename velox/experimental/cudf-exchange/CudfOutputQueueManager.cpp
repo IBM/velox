@@ -29,7 +29,7 @@ CudfOutputQueueManager::getInstanceRef() {
   // In C++11, the static local variable is guaranteed to only be initialized
   // once even in a multi-threaded context.
   static std::shared_ptr<CudfOutputQueueManager> instance =
-      std::shared_ptr<CudfOutputQueueManager>(new CudfOutputQueueManager());
+      std::make_shared<CudfOutputQueueManager>();
   return instance;
 }
 

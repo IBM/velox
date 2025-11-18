@@ -47,13 +47,16 @@ DEFINE_string(hostname, "127.0.0.1", "Host name");
 DEFINE_string(taskId, "task0", "task id");
 DEFINE_uint32(destination, 0, "destination");
 
+std::string kDummyCoordinatorUrl{"localhost:1/nowhere"};
+
 // Client Side Part of a Simple (Velox Independent) Cudf Exchange
 class CudfExchangeClientTest {
  public:
   CudfExchangeClientTest(uint32_t destination)
       : destination_(destination),
-        executor_(std::make_shared<folly::CPUThreadPoolExecutor>(
-            std::thread::hardware_concurrency())) {
+        executor_(
+            std::make_shared<folly::CPUThreadPoolExecutor>(
+                std::thread::hardware_concurrency())) {
     memory::MemoryManager::testingSetInstance(memory::MemoryManager::Options{});
     pool_ = facebook::velox::memory::memoryManager()->addLeafPool();
     // rowType_ needed for plan fragment which is needed for the task.
@@ -86,10 +89,7 @@ class CudfExchangeClientTest {
 
     // create the exchange client.
     client_ = std::make_shared<CudfExchangeClient>(
-        taskId,
-        destination_,
-        1, /* number of consumers */
-        executor_.get());
+        taskId, destination_, 1 /* number of consumers */);
 
     // Create (fake) DriverCtx
     driverCtx_ = std::make_unique<DriverCtx>(
@@ -186,7 +186,8 @@ int main(int argc, char** argv) {
   rmm::mr::set_current_device_resource(&mr);
 
   // initialize the communicator with some listener port (that won't be used).
-  auto communicator = Communicator::initAndGet(FLAGS_srv_port);
+  auto communicator =
+      Communicator::initAndGet(FLAGS_srv_port, kDummyCoordinatorUrl);
   // start the communicator in a thread
   std::thread commThread(
       &Communicator::run, communicator.get()); // Create and start the thread

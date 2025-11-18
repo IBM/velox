@@ -31,7 +31,8 @@ std::shared_ptr<Communicator> Communicator::instancePtr_ = nullptr;
 /* static */
 std::shared_ptr<Communicator> Communicator::initAndGet(
     uint16_t port,
-    std::string coordinatorURL) {
+    const std::string& coordinatorURL,
+    ContinueFuture* future) {
   if (!FLAGS_velox_cudf_exchange) {
     return nullptr;
   }
@@ -39,6 +40,9 @@ std::shared_ptr<Communicator> Communicator::initAndGet(
     instancePtr_ = std::shared_ptr<Communicator>(new Communicator());
     instancePtr_->port_ = port;
     instancePtr_->coordinatorURL_ = coordinatorURL;
+    if (future) {
+      *future = instancePtr_->promise_.getSemiFuture();
+    }
   });
   VELOX_CHECK(
       instancePtr_->port_ == port,
@@ -76,6 +80,7 @@ Communicator::~Communicator() {
 /// All operations of the communicator will be carried out in the thread
 /// that calls run.
 void Communicator::run() {
+  running_.store(true);
   // Force CUDA context creation
   cudaFree(0);
 
@@ -94,8 +99,9 @@ void Communicator::run() {
   ucxx::AmReceiverCallbackInfo info(kAmCallbackOwner, kAmCallbackId);
   worker_->registerAmReceiverCallback(info, &Acceptor::cStyleAMCallback);
 
+  promise_.setValue();
+
   VLOG(3) << "Communicator running.";
-  running_.store(true);
   while (running_) {
     try {
       // wait for progress.

@@ -34,24 +34,12 @@ class CudfExchangeClient
       std::string taskId,
       int destination,
       int32_t numberOfConsumers,
-      folly::Executor* executor,
       int32_t requestDataSizesMaxWaitSec = 10)
       : taskId_{std::move(taskId)},
         destination_(destination),
         maxQueuedColumns_(kDefaultMaxQueuedColumns),
         kRequestDataSizesMaxWaitSec_(requestDataSizesMaxWaitSec),
-        executor_(executor),
         queue_(std::make_shared<CudfExchangeQueue>(numberOfConsumers)) {
-    VELOX_CHECK_NOT_NULL(executor_);
-    // NOTE: the executor is used to run async response callback from the
-    // cudf exchange source. The provided executor must not be
-    // folly::InlineLikeExecutor, otherwise it might cause potential deadlock as
-    // the response callback in exchange client might call back into the
-    // exchange source under uncertain execution context. For instance, the
-    // exchange client might inline close the exchange source from a background
-    // thread of the exchange source, and the close needs to wait for this
-    // background thread to complete first.
-    VELOX_CHECK_NULL(dynamic_cast<const folly::InlineLikeExecutor*>(executor_));
     VELOX_CHECK_GE(
         destination, 0, "Exchange client destination must not be negative");
   }
@@ -106,7 +94,6 @@ class CudfExchangeClient
   const int32_t maxQueuedColumns_;
   const std::chrono::seconds kRequestDataSizesMaxWaitSec_;
 
-  folly::Executor* const executor_;
   const std::shared_ptr<CudfExchangeQueue> queue_;
 
   std::unordered_set<std::string> remoteTaskIds_;

@@ -18,6 +18,7 @@
 #include <ucxx/api.h>
 #include <cstdint>
 #include <string>
+#include "velox/common/future/VeloxPromise.h"
 #include "velox/experimental/cudf-exchange/Acceptor.h"
 #include "velox/experimental/cudf-exchange/CommElement.h"
 #include "velox/experimental/cudf-exchange/WorkQueue.h"
@@ -53,9 +54,15 @@ class Communicator {
   const ucxx::AmReceiverCallbackOwnerType kAmCallbackOwner = "velox";
   const ucxx::AmReceiverCallbackIdType kAmCallbackId = 123;
 
+  /// @brief Method to initialize the communicator and get a reference to it.
+  /// @param port The port to listen on.
+  /// @param coordinatorURL The URL of the coordinator
+  /// @param future An optional future that will be set when the communicator
+  /// is running and ready to accept connections.
   static std::shared_ptr<Communicator> initAndGet(
       uint16_t port,
-      std::string coordinatorURL);
+      const std::string& coordinatorURL,
+      ContinueFuture* future = nullptr);
 
   /// @brief Method to get the Communicator reference
   static std::shared_ptr<Communicator> getInstance();
@@ -127,6 +134,7 @@ class Communicator {
   std::string coordinatorURL_;
   std::atomic<bool> running_;
   Acceptor acceptor_;
+  ContinuePromise promise_{"Communicator::run"};
 
   // the set of elements known to the communicator.
   // The elements_ set makes sure that there exists a shared_ptr to

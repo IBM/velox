@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 add_library(
-  velox_cudf_exchange OBJECT
+  velox_cudf_exchange
+  OBJECT
   CudfPartitionedOutput.cpp
   CudfOutputQueueManager.cpp
   CudfQueues.cpp
   CudfExchange.cpp
-  CombinedCudfHttpExchange.cpp
+  HybridExchange.cpp
   ExchangeClientFacade.cpp
   CudfExchangeProtocol.cpp
   CudfExchangeSource.cpp
@@ -27,19 +28,16 @@ add_library(
   Communicator.cpp
   Acceptor.cpp
   EndpointRef.cpp
-  NetUtil.cpp)
+  NetUtil.cpp
+)
 
 find_package(ucx REQUIRED)
 
 target_link_libraries(
   velox_cudf_exchange
   PUBLIC ucxx::ucxx ucx::ucp ucx::ucs
-  PRIVATE
-    cudf::cudf
-    CUDA::cudart
-    CUDA::cuda_driver
-    Folly::folly
-    velox_core)
+  PRIVATE cudf::cudf CUDA::cudart CUDA::cuda_driver Folly::folly velox_core
+)
 
 if(VELOX_BUILD_TESTING)
   add_subdirectory(tests)
