@@ -68,6 +68,9 @@ class HashBuild final : public Operator {
   }
 
   bool needsInput() const override {
+    if (reusedHashTableAddress_ != nullptr) {
+      return false;
+    }
     return !noMoreInput_;
   }
 
@@ -339,6 +342,8 @@ class HashBuild final : public Operator {
   // than this many rows are unique, build hash table in addInput phase is not
   // worthwhile.
   const int32_t abandonBuildNoDupHashMinPct_;
+
+  void* reusedHashTableAddress_;
 };
 
 inline std::ostream& operator<<(std::ostream& os, HashBuild::State state) {

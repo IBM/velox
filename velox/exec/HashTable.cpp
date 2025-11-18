@@ -15,6 +15,8 @@
  */
 
 #include "velox/exec/HashTable.h"
+#include <mutex>
+#include <thread>
 #include "velox/common/base/AsyncSource.h"
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/base/Portability.h"
@@ -52,13 +54,15 @@ HashTable<ignoreNullKeys>::HashTable(
     bool isJoinBuild,
     bool hasProbedFlag,
     uint32_t minTableSizeForParallelJoinBuild,
-    memory::MemoryPool* pool)
+    memory::MemoryPool* pool,
+    bool reused)
     : BaseHashTable(std::move(hashers)),
       pool_(pool),
       minTableSizeForParallelJoinBuild_(minTableSizeForParallelJoinBuild),
       isJoinBuild_(isJoinBuild),
       joinBuildNoDuplicates_(!allowDuplicates),
-      buildPartitionBounds_(raw_vector<PartitionBoundIndexType>(pool)) {
+      buildPartitionBounds_(raw_vector<PartitionBoundIndexType>(pool)),
+      reused_(reused) {
   std::vector<TypePtr> keys;
   for (auto& hasher : hashers_) {
     keys.push_back(hasher->type());
@@ -754,6 +758,7 @@ void HashTable<ignoreNullKeys>::clear(bool freeTable) {
       capacity_ = 0;
     }
   }
+
   numDistinct_ = 0;
   numTombstones_ = 0;
 }
@@ -1721,78 +1726,82 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
     int8_t spillInputStartPartitionBit,
     folly::Executor* executor,
     bool dropDuplicates) {
-  buildExecutor_ = executor;
-  if (dropDuplicates) {
-    if (table_ != nullptr) {
-      // Reset table_ and capacity_ to trigger rehash.
-      rows_->pool()->freeContiguous(tableAllocation_);
-      table_ = nullptr;
-      capacity_ = 0;
+  std::lock_guard<std::mutex> l(mutex_);
+  if (!prepared_) {
+    buildExecutor_ = executor;
+    if (dropDuplicates) {
+      if (table_ != nullptr) {
+        // Reset table_ and capacity_ to trigger rehash.
+        rows_->pool()->freeContiguous(tableAllocation_);
+        table_ = nullptr;
+        capacity_ = 0;
+      }
+      // Call analyze to insert all unique values in row container to the
+      // table hashers' uniqueValues_;
+      analyze();
     }
-    // Call analyze to insert all unique values in row container to the
-    // table hashers' uniqueValues_;
-    analyze();
-  }
-  otherTables_.reserve(tables.size());
-  for (auto& table : tables) {
-    otherTables_.emplace_back(
-        std::unique_ptr<HashTable<ignoreNullKeys>>(
-            dynamic_cast<HashTable<ignoreNullKeys>*>(table.release())));
-  }
-
-  // If there are multiple tables, we need to merge the 'columnHasNulls' flags
-  // from the containers of each table and store them in the main table. This
-  // is necessary because, when extracting results, 'rows' may contain row
-  // pointers from multiple containers. We need to ensure the correctness of
-  // the 'columnHasNulls' flags.
-  for (int i = 0; i < rows_->columnTypes().size(); ++i) {
-    columnHasNulls_.emplace_back(rows_->columnHasNulls(i));
-    for (auto& other : otherTables_) {
-      columnHasNulls_[i] =
-          columnHasNulls_[i] || other->rows()->columnHasNulls(i);
+    otherTables_.reserve(tables.size());
+    for (auto& table : tables) {
+      otherTables_.emplace_back(std::unique_ptr<HashTable<ignoreNullKeys>>(
+          dynamic_cast<HashTable<ignoreNullKeys>*>(table.release())));
     }
-  }
 
-  bool useValueIds = mayUseValueIds(*this);
-  if (useValueIds) {
-    for (auto& other : otherTables_) {
-      if (!mayUseValueIds(*other)) {
-        useValueIds = false;
-        break;
+    // If there are multiple tables, we need to merge the 'columnHasNulls' flags
+    // from the containers of each table and store them in the main table. This
+    // is necessary because, when extracting results, 'rows' may contain row
+    // pointers from multiple containers. We need to ensure the correctness of
+    // the 'columnHasNulls' flags.
+    for (int i = 0; i < rows_->columnTypes().size(); ++i) {
+      columnHasNulls_.emplace_back(rows_->columnHasNulls(i));
+      for (auto& other : otherTables_) {
+        columnHasNulls_[i] =
+            columnHasNulls_[i] || other->rows()->columnHasNulls(i);
       }
     }
+
+    bool useValueIds = mayUseValueIds(*this);
     if (useValueIds) {
       for (auto& other : otherTables_) {
-        if (dropDuplicates) {
-          // Before merging with the current hashers, all values in the row
-          // containers of other table need to be inserted into uniqueValues_.
-          other->analyze();
-        }
-        for (auto i = 0; i < hashers_.size(); ++i) {
-          hashers_[i]->merge(*other->hashers_[i]);
-          if (!hashers_[i]->mayUseValueIds()) {
-            useValueIds = false;
-            break;
-          }
-        }
-        if (!useValueIds) {
+        if (!mayUseValueIds(*other)) {
+          useValueIds = false;
           break;
         }
       }
+      if (useValueIds) {
+        for (auto& other : otherTables_) {
+          if (dropDuplicates) {
+            // Before merging with the current hashers, all values in the row
+            // containers of other table need to be inserted into uniqueValues_.
+            other->analyze();
+          }
+          for (auto i = 0; i < hashers_.size(); ++i) {
+            hashers_[i]->merge(*other->hashers_[i]);
+            if (!hashers_[i]->mayUseValueIds()) {
+              useValueIds = false;
+              break;
+            }
+          }
+          if (!useValueIds) {
+            break;
+          }
+        }
+      }
     }
-  }
-  numDistinct_ = rows()->numRows();
-  for (const auto& other : otherTables_) {
-    numDistinct_ += other->rows()->numRows();
-  }
-  if (!useValueIds) {
-    if (hashMode_ != HashMode::kHash) {
-      setHashMode(HashMode::kHash, 0, spillInputStartPartitionBit);
+    numDistinct_ = rows()->numRows();
+    for (const auto& other : otherTables_) {
+      numDistinct_ += other->rows()->numRows();
+    }
+    if (!useValueIds) {
+      if (hashMode_ != HashMode::kHash) {
+        setHashMode(HashMode::kHash, 0, spillInputStartPartitionBit);
+      } else {
+        checkSize(0, true, spillInputStartPartitionBit);
+      }
     } else {
-      checkSize(0, true, spillInputStartPartitionBit);
+      decideHashMode(0, spillInputStartPartitionBit);
     }
-  } else {
-    decideHashMode(0, spillInputStartPartitionBit);
+
+    prepared_ = true;
   }
 }
 
