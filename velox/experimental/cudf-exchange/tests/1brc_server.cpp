@@ -17,6 +17,7 @@
 #include "velox/common/file/FileSystems.h"
 #include "velox/common/memory/Memory.h"
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/dwio/parquet/RegisterParquetReader.h"
 #include "velox/dwio/text/RegisterTextWriter.h"
 #include "velox/exec/Exchange.h"
@@ -28,7 +29,9 @@
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/experimental/cudf-exchange/Communicator.h"
 #include "velox/experimental/cudf-exchange/CudfOutputQueueManager.h"
-#include "velox/experimental/cudf/connectors/parquet/ParquetConnector.h"
+#include "velox/experimental/cudf/CudfConfig.h"
+#include "velox/experimental/cudf/connectors/hive/CudfHiveConfig.h"
+#include "velox/experimental/cudf/connectors/hive/CudfHiveConnector.h"
 #include "velox/experimental/cudf/exec/ToCudf.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
@@ -48,6 +51,8 @@
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
 using namespace facebook::velox::core;
+using namespace facebook::velox::connector;
+using namespace facebook::velox::cudf_velox::connector::hive;
 
 static const uint64_t FOUR_GBYTES = 4294967296;
 
@@ -63,9 +68,8 @@ DEFINE_uint32(
     "Port number"); // "+3" accounts for the hack for Presto ! See
                     // cudf-exchange/CudfExchangeSource.cpp
 DEFINE_string(taskId, "task0", "task id");
-DEFINE_uint32(cudfChunkSizeMB, 1024, "cuDF Parquet chunk size to read in GB");
+DEFINE_uint32(cudfChunkSizeMB, 1024, "cuDF Parquet chunk size to read in MB");
 DEFINE_int32(cuda_device, -1, "Cuda device or -1 for not setting the device");
-DEFINE_bool(use_hive, false, "Use Hive Connector");
 
 std::vector<std::string> splitString(const std::string& s, char delimiter) {
   std::vector<std::string> tokens;
@@ -99,46 +103,52 @@ int main(int argc, char** argv) {
   }
 
   // Default memory allocator used throughout this example.
-  const memory::MemoryManagerOptions options;
+  const memory::MemoryManager::Options options;
   memory::MemoryManager::initialize(options);
   auto pool = memory::memoryManager()->addLeafPool();
 
+  // Create IO executor for connector operations
+  std::shared_ptr<folly::Executor> ioExecutor(
+      std::make_shared<folly::CPUThreadPoolExecutor>(
+          std::thread::hardware_concurrency()));
+
   // In order to read and write data and files from storage, we need to use a
-  // Connector. Let's instantiate and register a HiveConnector for this
-  // example:
+  // Connector. Let's instantiate and register a CudfHiveConnector for this
+  // example. The CudfHiveConnector provides GPU-accelerated parquet reading.
 
   // We need a connector id string to identify the connector.
-  const std::string kHiveConnectorId = "test-hive";
+  const std::string kCudfHiveConnectorId = "test-hive";
 
-  // Register the Hive Connector Factory.
-  connector::registerConnectorFactory(
-      std::make_shared<connector::hive::HiveConnectorFactory>());
-  // Create a new connector instance from the connector factory and register
-  // it:
-  auto hiveConnector =
-      connector::getConnectorFactory(
-          connector::hive::HiveConnectorFactory::kHiveConnectorName)
-          ->newConnector(
-              kHiveConnectorId,
-              std::make_shared<config::ConfigBase>(
-                  std::unordered_map<std::string, std::string>()));
-  connector::registerConnector(hiveConnector);
+  // Configure the CudfHiveConnector with chunk size settings
+  std::unordered_map<std::string, std::string> connectorConfig{};
+  LOG(INFO) << "reading " << FLAGS_cudfChunkSizeMB << "MB chunks at once";
+  connectorConfig[CudfHiveConfig::kMaxChunkReadLimit] =
+      std::to_string(FLAGS_cudfChunkSizeMB * 1024 * 1024);
+
+  // Create and register a new CudfHiveConnector instance using the new API
+  CudfHiveConnectorFactory factory;
+  auto cudfHiveConnector = factory.newConnector(
+      kCudfHiveConnectorId,
+      std::make_shared<config::ConfigBase>(std::move(connectorConfig)),
+      ioExecutor.get());
+  connector::registerConnector(cudfHiveConnector);
+
+  // Register parquet reader factory for CPU fallback if needed
   parquet::registerParquetReaderFactory();
 
   // To be able to read local files, we need to register the local file
-  // filesystem. We also need to register the dwrf reader factory as well as a
-  // write protocol, in this case commit is not required:
+  // filesystem. We also need to register functions and serializers:
 
   filesystems::registerLocalFileSystem();
-  // dwio::common::registerFileSinks();
   functions::prestosql::registerAllScalarFunctions();
   aggregate::prestosql::registerAllAggregateFunctions();
   parse::registerTypeResolver();
-  // text::registerTextWriterFactory();
-  //  The following registers a LocalExchangeSource that directly taps into the
-  //  node's OutputBufferManager to request pages for the given destination.
+
+  // The following registers a LocalExchangeSource that directly taps into the
+  // node's OutputBufferManager to request pages for the given destination.
   exec::ExchangeSource::registerFactory(
       facebook::velox::exec::test::createLocalExchangeSource);
+
   // Register the presto serialized/deserializer.
   if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kPresto)) {
     serializer::presto::PrestoVectorSerde::registerNamedVectorSerde();
@@ -148,49 +158,16 @@ int main(int argc, char** argv) {
         registerNamedVectorSerde();
   }
 
-  // Register the CUDF Parquet reader
-  // It notices its existence with a hardcoded name "test-parquet"
-  // set NOT means it will not be recognized
-  const char* kCudfParquetConnectorName = "test-parquet";
-  if (FLAGS_use_hive) {
-    kCudfParquetConnectorName = "NOT-test-parquet";
-    facebook::velox::cudf_velox::CudfOptions::getInstance()
-        .setParquetConnectorRegistered(false);
-
-  } else {
-    facebook::velox::cudf_velox::CudfOptions::getInstance()
-        .setParquetConnectorRegistered(true);
-  }
-  if (!facebook::velox::connector::hasConnectorFactory(
-          kCudfParquetConnectorName)) {
-    facebook::velox::connector::registerConnectorFactory(
-        std::make_shared<facebook::velox::cudf_velox::connector::parquet::
-                             ParquetConnectorFactory>(
-            kCudfParquetConnectorName));
-    // This is how ToCudf recognizes that we are using the
-    // cudf-based parquet reader that produces Cudf vectors.
-  }
-
-  std::unordered_map<std::string, std::string> c = {};
-  LOG(INFO) << "reading " << FLAGS_cudfChunkSizeMB << "MB chunks at once";
-  c[facebook::velox::cudf_velox::connector::parquet::ParquetConfig::
-        kMaxChunkReadLimit] =
-      // std::to_string(512 *1024 * 1024);
-      std::to_string(FLAGS_cudfChunkSizeMB * 1024 * 1024);
-  std::shared_ptr<const facebook::velox::config::ConfigBase> properties =
-      std::make_shared<const facebook::velox::config::ConfigBase>(std::move(c));
-
-  std::shared_ptr<facebook::velox::connector::Connector> connector =
-      facebook::velox::connector::getConnectorFactory(kCudfParquetConnectorName)
-          ->newConnector(kCudfParquetConnectorName, std::move(properties));
-  facebook::velox::connector::registerConnector(connector);
-
-  // Enable cuDF operators
+  cudf_velox::CudfConfig::getInstance().debugEnabled = true;
+  cudf_velox::CudfConfig::getInstance().enabled = true;
+  cudf_velox::CudfConfig::getInstance().exchange = true;
+  // Enable cuDF operators for GPU-accelerated execution
   facebook::velox::cudf_velox::registerCudf();
 
   int kNumDestinations = 1;
   int kNumDrivers = 4;
-  // Define a query plan that reads data from parquet.
+
+  // Define a query plan that reads data from parquet using CudfHiveConnector.
   core::PlanNodeId scanNodeId;
   core::PlanNodeId partitionNodeId;
 
@@ -213,9 +190,6 @@ int main(int argc, char** argv) {
       std::make_shared<folly::CPUThreadPoolExecutor>(
           std::thread::hardware_concurrency()));
 
-  // std::unordered_map<std::string, std::string> configSettings
-  // {{facebook::velox::core::QueryConfig::kMaxOutputBufferSize,
-  // std::to_string(FOUR_GBYTES*10)}};
   std::unordered_map<std::string, std::string> configSettings{};
   auto queryCtx = core::QueryCtx::create(
       executor.get(), core::QueryConfig(std::move(configSettings)));
@@ -226,32 +200,31 @@ int main(int argc, char** argv) {
       readerTaskId,
       readerPlan,
       /*destination=*/0,
-      core::QueryCtx::create(executor.get()),
+      queryCtx,
       exec::Task::ExecutionMode::kParallel);
 
   // Now that we have the query fragment and Task structure set up, we will
   // add data to it via `splits`.
   //
-  // To pump data through a HiveConnector, we need to create a
-  // HiveConnectorSplit for each file, using the same HiveConnector id defined
-  // above, the local file path (the "file:" prefix specifies which FileSystem
-  // to use; local, in this case), and the file format (PARQUET).
-
-  std::shared_ptr<facebook::velox::connector::ConnectorSplit> connectorSplit;
+  // To pump data through a CudfHiveConnector, we need to create a
+  // HiveConnectorSplit for each file, using the same CudfHiveConnector id
+  // defined above, the local file path (the "file:" prefix specifies which
+  // FileSystem to use; local, in this case), and the file format (PARQUET).
+  //
+  // The CudfHiveConnector will use GPU-accelerated cuDF for reading the
+  // parquet files.
 
   auto inputFileNames = splitString(FLAGS_inputfiles, ',');
   for (auto& filename : inputFileNames) {
     auto filePath = "file:" + std::filesystem::path(filename).string();
-    VLOG(3) << "Reading parquet file: " << filePath;
+    VLOG(3) << "Reading parquet file with CudfHiveConnector: " << filePath;
 
-    if (FLAGS_use_hive) {
-      connectorSplit = std::make_shared<connector::hive::HiveConnectorSplit>(
-          kHiveConnectorId, filePath, dwio::common::FileFormat::PARQUET);
-    } else {
-      connectorSplit = std::make_shared<facebook::velox::cudf_velox::connector::
-                                            parquet::ParquetConnectorSplit>(
-          "test-parquet", std::filesystem::path(filename).string(), 0);
-    }
+    // Create a HiveConnectorSplit for this parquet file using the new API
+    // The CudfHiveConnector will recognize this and handle it with cuDF
+    auto connectorSplit = connector::hive::HiveConnectorSplitBuilder(filePath)
+                              .connectorId(kCudfHiveConnectorId)
+                              .fileFormat(dwio::common::FileFormat::PARQUET)
+                              .build();
 
     // Wrap it in a `Split` object and add to the task. We need to specify to
     // which operator we're adding the split (that's why we captured the
