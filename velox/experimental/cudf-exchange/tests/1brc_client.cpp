@@ -24,6 +24,9 @@
 #include "velox/exec/Task.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
+#include "velox/experimental/cudf/CudfConfig.h"
+#include "velox/experimental/cudf/connectors/hive/CudfHiveConfig.h"
+#include "velox/experimental/cudf/connectors/hive/CudfHiveConnector.h"
 #include "velox/experimental/cudf/exec/ToCudf.h"
 #include "velox/functions/prestosql/aggregates/RegisterAggregateFunctions.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
@@ -41,6 +44,9 @@
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
+using namespace facebook::velox::core;
+using namespace facebook::velox::connector;
+using namespace facebook::velox::cudf_velox::connector::hive;
 
 std::string kDummyCoordinatorUrl{"localhost:1/nowhere"};
 
@@ -120,7 +126,7 @@ int main(int argc, char** argv) {
   }
 
   // Default memory allocator used throughout this example.
-  const memory::MemoryManagerOptions options;
+  const memory::MemoryManager::Options options;
   memory::MemoryManager::initialize(options);
   auto pool = memory::memoryManager()->addLeafPool();
 
@@ -142,21 +148,29 @@ int main(int argc, char** argv) {
         registerNamedVectorSerde();
   }
 
-  // Register the Hive Connector Factory.
-  const std::string kHiveConnectorId = "test-hive";
-  connector::registerConnectorFactory(
-      std::make_shared<connector::hive::HiveConnectorFactory>());
-  // Create a new connector instance from the connector factory and register
-  // it:
-  auto hiveConnector =
-      connector::getConnectorFactory(
-          connector::hive::HiveConnectorFactory::kHiveConnectorName)
-          ->newConnector(
-              kHiveConnectorId,
-              std::make_shared<config::ConfigBase>(
-                  std::unordered_map<std::string, std::string>()));
-  connector::registerConnector(hiveConnector);
+  // Create IO executor for connector operations
+  std::shared_ptr<folly::Executor> ioExecutor(
+      std::make_shared<folly::CPUThreadPoolExecutor>(
+          std::thread::hardware_concurrency()));
 
+  // We need a connector id string to identify the connector.
+  const std::string kCudfHiveConnectorId = "test-hive";
+  std::unordered_map<std::string, std::string> connectorConfig{};
+
+  // Create and register a new CudfHiveConnector instance using the new API
+  CudfHiveConnectorFactory factory;
+  auto cudfHiveConnector = factory.newConnector(
+      kCudfHiveConnectorId,
+      std::make_shared<config::ConfigBase>(std::move(connectorConfig)),
+      ioExecutor.get());
+  connector::registerConnector(cudfHiveConnector);
+
+  // Register parquet reader factory for CPU fallback if needed
+  // parquet::registerParquetReaderFactory();
+
+  cudf_velox::CudfConfig::getInstance().debugEnabled = true;
+  cudf_velox::CudfConfig::getInstance().enabled = true;
+  cudf_velox::CudfConfig::getInstance().exchange = true;
   // Enable cuDF operators
   facebook::velox::cudf_velox::registerCudf();
 
@@ -179,8 +193,6 @@ int main(int argc, char** argv) {
 
   LOG(INFO) << "Going to write to: " << absTempDirPath;
 
-  facebook::velox::cudf_velox::CudfOptions::getInstance()
-      .setShouldTransformLastOutput(false);
   // create a plan for processing the input read by the reader task.
   core::PlanNodeId exchangeNodeId;
   auto processorPlan =
@@ -254,7 +266,7 @@ int main(int argc, char** argv) {
             << std::endl;*/
 
   // cat the contents of the generated file.
-  // print_file_contents(absTempDirPath);
+  print_file_contents(absTempDirPath);
 
   VLOG(0) << "*** processing task done in: " << durationCount
           << " milliseconds";

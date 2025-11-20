@@ -64,10 +64,6 @@ target_link_libraries(
   velox_exec_test_lib
   velox_tpch_connector
   velox_memory
-  velox_dwio_parquet_reader
-  velox_cudf_parquet_connector
-  velox_dwio_text_writer
-  velox_dwio_text_writer_register
   velox_cudf_exec
 )
 
@@ -83,10 +79,6 @@ target_link_libraries(
   velox_exec_test_lib
   velox_tpch_connector
   velox_memory
-  velox_dwio_parquet_reader
-  velox_cudf_parquet_connector
-  velox_dwio_text_writer
-  velox_dwio_text_writer_register
   velox_cudf_exec
 )
 
