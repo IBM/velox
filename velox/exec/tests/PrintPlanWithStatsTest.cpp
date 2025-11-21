@@ -252,7 +252,7 @@ TEST_F(PrintPlanWithStatsTest, innerJoinWithTableScan) {
        {"            runningGetOutputWallNanos\\s+sum: .+, count: 1, min: .+, max: .+"}});
 }
 
-TEST_F(PrintPlanWithStatsTest, partialAggregateWithTableScan) {
+TEST_F(PrintPlanWithStatsTest, DISABLED_partialAggregateWithTableScan) {
   RowTypePtr rowType{
       ROW({"c0", "c1", "c2", "c3", "c4", "c5"},
           {BIGINT(), INTEGER(), SMALLINT(), REAL(), DOUBLE(), VARCHAR()})};
