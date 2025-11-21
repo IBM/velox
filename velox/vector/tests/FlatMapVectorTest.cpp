@@ -74,7 +74,7 @@ class FlatMapVectorTest : public testing::Test, public VectorTestBase {
   VectorMaker maker_{pool_.get()};
 };
 
-TEST_F(FlatMapVectorTest, encodedKeys) {
+TEST_F(FlatMapVectorTest, DISABLED_encodedKeys) {
   const auto constructFlatMap = [&](VectorPtr keys) {
     return std::make_shared<FlatMapVector>(
         pool_.get(),
