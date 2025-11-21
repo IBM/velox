@@ -1,0 +1,36 @@
+name: create cache
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize   # fires when commits are pushed to the PR
+      - reopened
+
+jobs:
+  create-cache:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Restore cache from PR branch
+        uses: actions/cache@v3
+        with:
+          path: "${{ github.workspace }}/test"  
+          key: test-${{github.sha}}
+          restore-keys: |
+            test
+
+      - name: create test
+        run: |
+          touch test
+
+      - name: Save ccache
+        uses: actions/cache/save@v4
+        id: cache_test
+        with:
+          path: "${{ github.workspace }}/test"
+          key: test-${{github.sha}}
+
