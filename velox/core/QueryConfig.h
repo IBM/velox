@@ -745,6 +745,9 @@ class QueryConfig {
     ENABLED_FOR_ALL = 2,
   };
 
+  static constexpr const char* kPushdownIntegerUpcastsToScan =
+      "pushdown_integer_upcasts_to_scan";
+
   bool selectiveNimbleReaderEnabled() const {
     return get<bool>(kSelectiveNimbleReaderEnabled, false);
   }
@@ -1331,6 +1334,10 @@ class QueryConfig {
 
   std::string clientTags() const {
     return get<std::string>(kClientTags, "");
+  }
+
+  bool pushdownIntegerUpcastsToScan() const {
+    return get<bool>(kPushdownIntegerUpcastsToScan, false);
   }
 
   template <typename T>
