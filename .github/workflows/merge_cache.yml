@@ -12,9 +12,6 @@ jobs:
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
-        id: cache_test
-        with:
-          ref: main
 
       - name: Restore cache from PR branch
         uses: actions/cache@v3
@@ -24,7 +21,6 @@ jobs:
       
       - name: Save ccache
         uses: actions/cache/save@v4
-        id: cache_test
         with:
           path: "${{ github.workspace }}/test"
           key: test
