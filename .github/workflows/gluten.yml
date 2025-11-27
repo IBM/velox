@@ -36,7 +36,10 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: '${{ env.CCACHE_DIR }}'
-          key: ccache-ibm-velox
+          key: ccache-ibm-velox-${{github.sha}}
+          restore-keys: |
+            ccache-ibm-velox
+
       - name: Setup Gluten
         run: |
           git clone --depth 1 https://github.com/apache/incubator-gluten gluten && cd gluten
@@ -77,7 +80,7 @@ jobs:
         id: ccache
         with:
           path: '${{ env.CCACHE_DIR }}'
-          key: ccache-ibm-velox
+          key: ccache-ibm-velox-${{github.sha}}
           
       - uses: actions/upload-artifact@v4
         with:
