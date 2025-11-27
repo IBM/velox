@@ -22,6 +22,17 @@
 
 namespace facebook::velox::connector::hive::iceberg {
 
+static constexpr std::string_view kDefaultIcebergFunctionPrefix{
+    "$internal$.iceberg."};
+
+void registerIcebergInternalFunctions(const std::string_view& prefix) {
+  static std::once_flag registerFlag;
+
+  std::call_once(registerFlag, [prefix]() {
+    functions::iceberg::registerFunctions(std::string(prefix));
+  });
+}
+
 IcebergInsertTableHandle::IcebergInsertTableHandle(
     std::vector<HiveColumnHandlePtr> inputColumns,
     LocationHandlePtr locationHandle,
@@ -137,8 +148,7 @@ IcebergDataSink::IcebergDataSink(
     IcebergInsertTableHandlePtr insertTableHandle,
     const ConnectorQueryCtx* connectorQueryCtx,
     CommitStrategy commitStrategy,
-    const std::shared_ptr<const HiveConfig>& hiveConfig,
-    const std::string& functionPrefix)
+    const std::shared_ptr<const HiveConfig>& hiveConfig)
     : IcebergDataSink(
           std::move(inputType),
           insertTableHandle,
@@ -148,8 +158,7 @@ IcebergDataSink::IcebergDataSink(
           createPartitionChannels(
               insertTableHandle->inputColumns(),
               insertTableHandle->partitionSpec()),
-          createPartitionRowType(insertTableHandle->partitionSpec()),
-          functionPrefix) {}
+          createPartitionRowType(insertTableHandle->partitionSpec())) {}
 
 IcebergDataSink::IcebergDataSink(
     RowTypePtr inputType,
@@ -158,8 +167,7 @@ IcebergDataSink::IcebergDataSink(
     CommitStrategy commitStrategy,
     const std::shared_ptr<const HiveConfig>& hiveConfig,
     const std::vector<column_index_t>& partitionChannels,
-    RowTypePtr partitionRowType,
-    const std::string& functionPrefix)
+    RowTypePtr partitionRowType)
     : HiveDataSink(
           inputType,
           insertTableHandle,
@@ -187,19 +195,22 @@ IcebergDataSink::IcebergDataSink(
               : nullptr),
       partitionSpec_(insertTableHandle->partitionSpec()),
       transformEvaluator_(
-          !partitionChannels.empty() ? std::make_unique<TransformEvaluator>(
-                                           TransformExprBuilder::toExpressions(
-                                               partitionSpec_,
-                                               partitionChannels_,
-                                               inputType_,
-                                               functionPrefix),
-                                           connectorQueryCtx_)
-                                     : nullptr),
+          !partitionChannels.empty()
+              ? std::make_unique<TransformEvaluator>(
+                    TransformExprBuilder::toExpressions(
+                        partitionSpec_,
+                        partitionChannels_,
+                        inputType_,
+                        std::string(kDefaultIcebergFunctionPrefix)),
+                    connectorQueryCtx_)
+              : nullptr),
       icebergPartitionName_(
           partitionSpec_ != nullptr
               ? std::make_unique<IcebergPartitionName>(partitionSpec_)
               : nullptr),
-      partitionRowType_(std::move(partitionRowType)) {}
+      partitionRowType_(std::move(partitionRowType)) {
+  registerIcebergInternalFunctions(std::string(kDefaultIcebergFunctionPrefix));
+}
 
 std::vector<std::string> IcebergDataSink::commitMessage() const {
   std::vector<std::string> commitTasks;
