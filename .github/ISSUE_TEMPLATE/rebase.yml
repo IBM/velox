@@ -14,7 +14,7 @@
 
 name: rebase request
 title: rebase-request
-description: "Use this template to request an automated rebase of a branch with carried PRs"
+description: Use this template to request an automated rebase of a branch with carried PRs
 labels: [rebase-request]
 body:
   - type: markdown
@@ -24,8 +24,8 @@ body:
   - type: input
     id: branch_to_rebase_on
     attributes:
-      label: "base branch"
-      description: "What is the name of the branch you want to replay our PRs on top of?"
+      label: base branch or commit id
+      description: What is the name of the branch or commit ID you want to replay our PRs on top of?
       value: oss-main
     validations:
       required: true
@@ -33,8 +33,8 @@ body:
   - type: input
     id: target_branch
     attributes:
-      label: "target branch"
-      description: "name of the target branch?"
+      label: target branch
+      description: name of the target branch?
       value: main
     validations:
       required: true
@@ -42,8 +42,8 @@ body:
   - type: dropdown
     id: force_push
     attributes:
-      label: "force push"
-      description: "should we override the target branch?"
+      label: force push
+      description: should we override the target branch?
       options:
         - "yes"
         - "no"
@@ -53,4 +53,4 @@ body:
 
   - type: markdown
     attributes:
-      value: "Once you submit this issue, the bot will begin the process and comment here with the status."
+      value: Once you submit this issue, the bot will begin the process and comment here with the status.
