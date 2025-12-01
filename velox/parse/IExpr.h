@@ -90,7 +90,7 @@ class IExpr {
   /// The last alias added will win if called multiple times. Throws in case the
   /// subclass does not implement it.
   virtual ExprPtr withAlias(const std::string& alias) const {
-    VELOX_FAIL("Unable to add alias to expression '{}'", *this);
+    VELOX_FAIL("Unable to add alias to expression '{}'", toString());
   }
 
   /// Returns a copy of this expression with the alias removed.
