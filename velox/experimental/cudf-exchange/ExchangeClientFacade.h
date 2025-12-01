@@ -34,6 +34,8 @@ using ResultVariant = std::variant<SerPageVector, PackedColPtr>;
 class ExchangeClientFacade {
  public:
   ExchangeClientFacade(
+      const std::string& taskId,
+      int pipelineId,
       std::shared_ptr<CudfExchangeClient> cudfExchangeClient,
       std::shared_ptr<ExchangeClient> httpExchangeClient);
 
@@ -65,7 +67,8 @@ class ExchangeClientFacade {
       ContinuePromise* stalePromise);
 
   std::vector<ContinuePromise> clearAllPromisesLocked() {
-    std::vector<ContinuePromise> promises(promises_.size());
+    std::vector<ContinuePromise> promises;
+    promises.reserve(promises_.size());
     auto it = promises_.begin();
     while (it != promises_.end()) {
       promises.push_back(std::move(it->second));
@@ -92,6 +95,8 @@ class ExchangeClientFacade {
   std::shared_ptr<CudfExchangeClient> cudfExchangeClient_;
   std::shared_ptr<ExchangeClient> httpExchangeClient_;
   const folly::Uri kCoordinatorUri_;
+  const std::string taskId_;
+  const int pipelineId_;
 
   bool usesHttp_{false};
   bool usesCudf_{false};

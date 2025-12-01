@@ -54,7 +54,7 @@ void CudfExchange::addRemoteTaskIds(std::vector<std::string>& remoteTaskIds) {
   std::shuffle(std::begin(remoteTaskIds), std::end(remoteTaskIds), rng_);
   for (const std::string& remoteTaskId : remoteTaskIds) {
     exchangeClient_->addRemoteTaskId(remoteTaskId);
-    VLOG(3) << taskId() << " CudfExchange::addRemoteTasksIds: " << remoteTaskId;
+    VLOG(3) << "@" << taskId() << " CudfExchange::addRemoteTasksIds: " << remoteTaskId;
   }
   stats_.wlock()->numSplits += remoteTaskIds.size();
 }
@@ -140,7 +140,7 @@ bool CudfExchange::isFinished() {
 }
 
 RowVectorPtr CudfExchange::getOutput() {
-  VLOG(3) << "CudfExchange::getOutput() has data: "
+  VLOG(3) << "@" << taskId() << " CudfExchange::getOutput() has data: "
           << (currentColumns_ != nullptr);
   if (currentColumns_ == nullptr) {
     return nullptr;

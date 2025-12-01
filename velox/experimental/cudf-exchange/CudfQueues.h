@@ -163,13 +163,17 @@ class CudfOutputQueue {
   /// in OutputQueue.
   /// @param destination The destination, must be < numDestinations.
   /// @param data The data.
-  /// @param future Currently not used since no max queue size is enforced.
-  /// @return Currently always false, meaning "not blocked".
-  bool enqueue(
+  /// @param numRows The number of rows in the data.
+  void enqueue(
       int destination,
       std::unique_ptr<cudf::packed_columns> data,
-      int32_t numRows,
-      ContinueFuture* future);
+      int32_t numRows);
+
+  /// @brief Checks if the queue is over capacity and returns a future if so.
+  /// This should be called after enqueueing all partitions for a batch.
+  /// @param future Output parameter - populated with a future if blocked.
+  /// @return True if blocked (queue over capacity), false otherwise.
+  bool checkBlocked(ContinueFuture* future);
 
   /// @brief Returns the data for the given destination through the callback
   /// function. If data is available, notify will be called immediately. If

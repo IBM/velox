@@ -53,14 +53,18 @@ void CudfOutputQueueManager::initializeTask(
   });
 }
 
-bool CudfOutputQueueManager::enqueue(
+void CudfOutputQueueManager::enqueue(
     const std::string& taskId,
     int destination,
     std::unique_ptr<cudf::packed_columns> txData,
-    int numRows,
+    int numRows) {
+  getQueue(taskId)->enqueue(destination, std::move(txData), numRows);
+}
+
+bool CudfOutputQueueManager::checkBlocked(
+    const std::string& taskId,
     ContinueFuture* future) {
-  return getQueue(taskId)->enqueue(
-      destination, std::move(txData), numRows, future);
+  return getQueue(taskId)->checkBlocked(future);
 }
 
 void CudfOutputQueueManager::noMoreData(const std::string& taskId) {

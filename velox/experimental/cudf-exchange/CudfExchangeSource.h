@@ -67,6 +67,7 @@ class CudfExchangeSource
 
   // factory method to create a cudf exchange resource.
   static std::shared_ptr<CudfExchangeSource> create(
+      const std::string& taskId,
       const std::string& url,
       const std::shared_ptr<CudfExchangeQueue>& queue);
 
@@ -97,8 +98,7 @@ class CudfExchangeSource
 
   std::string toString() {
     std::stringstream out;
-    out << "[ExchangeSource " << partitionKey_.toString() << "("
-        << queue_->isInError() << ")]";
+    out << "@" << taskId_ << " - @" << partitionKey_.toString();
     return out.str();
   }
 
@@ -128,6 +128,7 @@ class CudfExchangeSource
   /// @brief The constructor is private in order to ensure that exchange sources
   /// are always generated through a shared pointer. This ensures that
   /// shared_from_this works properly.
+  /// @param taskId The local task identifier
   /// @param host The hostname of the upstream CudfExchangeServer
   /// @param port The portnumber of the upstream CudfExchangeServer
   /// @param partitionKey the partition identifier that the remote task is
@@ -136,6 +137,7 @@ class CudfExchangeSource
   /// available
   explicit CudfExchangeSource(
       const std::shared_ptr<Communicator> communicator,
+      const std::string& taskId,
       const std::string& host,
       uint16_t port,
       const PartitionKey& partitionKey,
@@ -202,6 +204,7 @@ class CudfExchangeSource
   // The connection parameters
   const std::string host_;
   uint16_t port_;
+  const std::string taskId_;
 
   const PartitionKey partitionKey_;
   const uint32_t

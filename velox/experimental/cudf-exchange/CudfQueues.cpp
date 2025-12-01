@@ -190,17 +190,15 @@ void CudfOutputQueue::updateNumDrivers(uint32_t newNumDrivers) {
   }
 }
 
-bool CudfOutputQueue::enqueue(
+void CudfOutputQueue::enqueue(
     int destination,
     std::unique_ptr<cudf::packed_columns> data,
-    int32_t numRows,
-    ContinueFuture* future) {
+    int32_t numRows) {
   VELOX_CHECK_NOT_NULL(data);
   VELOX_CHECK_NOT_NULL(task_);
   VELOX_CHECK(
       task_->isRunning(), "Task is terminated, cannot add data to output.");
   std::vector<CudfDataAvailable> dataAvailableCallbacks;
-  bool blocked = false;
   {
     std::lock_guard<std::mutex> l(mutex_);
     VELOX_CHECK_LT(destination, queues_.size());
@@ -212,19 +210,21 @@ bool CudfOutputQueue::enqueue(
       // enqueueing was successful - update the stats.
       updateStatsWithEnqueuedLocked(numBytes, numRows);
     }
-
-    if (queuedBytes_ >= maxSize_ && future) {
-      promises_.emplace_back("CudfOutputQueue::enqueue");
-      *future = promises_.back().getSemiFuture();
-      blocked = true;
-    }
   }
   // Now that data is enqueued, notify blocked readers (outside of mutex.)
-
   for (auto& callback : dataAvailableCallbacks) {
     callback.notify();
   }
-  return blocked;
+}
+
+bool CudfOutputQueue::checkBlocked(ContinueFuture* future) {
+  std::lock_guard<std::mutex> l(mutex_);
+  if (queuedBytes_ >= maxSize_ && future) {
+    promises_.emplace_back("CudfOutputQueue::checkBlocked");
+    *future = promises_.back().getSemiFuture();
+    return true;
+  }
+  return false;
 }
 
 void CudfOutputQueue::getData(
@@ -257,6 +257,11 @@ void CudfOutputQueue::getData(
         }
         // outside of lock:
         // wake up any producers that are waiting for queue to become less full.
+        if (promises.empty()) {
+            VLOG(3) << "No waiting producers in task: " << task_->taskId();
+        } else {
+          VLOG(3) << "Waking up producers in task: " << task_->taskId();
+        }
         for (auto& promise : promises) {
           promise.setValue();
         }

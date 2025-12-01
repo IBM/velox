@@ -19,11 +19,18 @@
 namespace facebook::velox::cudf_exchange {
 
 ExchangeClientFacade::ExchangeClientFacade(
+    const std::string& taskId,
+    int pipelineId,
     std::shared_ptr<CudfExchangeClient> cudfExchangeClient,
     std::shared_ptr<ExchangeClient> httpExchangeClient)
     : cudfExchangeClient_{cudfExchangeClient},
       httpExchangeClient_{httpExchangeClient},
-      kCoordinatorUri_{Communicator::getInstance()->getCoordinatorUrl()} {}
+      kCoordinatorUri_{Communicator::getInstance()->getCoordinatorUrl()},
+      taskId_{taskId},
+      pipelineId_{pipelineId} {
+  VLOG(3) << "@" << taskId_ << "#" << pipelineId_ << " [" << this << "]"
+          << " ExchangeClientFacade created";
+}
 
 void ExchangeClientFacade::activateCudfExchangeClient() {
   VELOX_CHECK(
@@ -86,11 +93,13 @@ void ExchangeClientFacade::addRemoteTaskId(const std::string& remoteTaskId) {
   {
     std::lock_guard<std::mutex> l(mutex_);
     if (remoteIsCoordinator) {
-      VLOG(3) << "Activating HTTP exchange client for remote task id: "
+      VLOG(3) << "@" << taskId_ << "#" << pipelineId_ << " [" << this << "]"
+              << " Activating HTTP exchange client for remote task id: "
               << remoteTaskId;
       activateHttpExchangeClient();
     } else {
-      VLOG(3) << "Activating Cudf exchange client for remote task id: "
+      VLOG(3) << "@" << taskId_ << "#" << pipelineId_ << " [" << this << "]"
+              << " Activating Cudf exchange client for remote task id: "
               << remoteTaskId;
       activateCudfExchangeClient();
     }
