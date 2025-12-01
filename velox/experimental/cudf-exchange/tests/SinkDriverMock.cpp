@@ -43,7 +43,7 @@ SinkDriverMock::SinkDriverMock(
   auto cudfClient = std::make_shared<CudfExchangeClient>(
       task_->taskId(), task_->destination(), numDrivers_);
   exchangeClient_ = std::make_shared<ExchangeClientFacade>(
-      std::move(cudfClient), nullptr); // no HTTP client.
+      task_->taskId(), kPipelineId, std::move(cudfClient), nullptr); // no HTTP client.
   uint32_t operatorId = 0;
   auto planNode = task_->planFragment().planNode;
   // create the set of exchange operators.

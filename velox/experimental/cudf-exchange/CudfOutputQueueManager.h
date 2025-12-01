@@ -47,17 +47,23 @@ class CudfOutputQueueManager {
       int numDrivers);
 
   /// @brief Enqueues a cudf packed column into the queue.
-  /// FIXME: enqueue should return a future if the queue is full.
   /// @param taskId The unique task Id.
   /// @param destination The destination (partition, queue number) into which
   /// the data is queued.
-  /// @return Always false, should return true (blocked) if the queue is full.
-  bool enqueue(
+  /// @param txData The data to enqueue.
+  /// @param numRows The number of rows in the data.
+  void enqueue(
       const std::string& taskId,
       int destination,
       std::unique_ptr<cudf::packed_columns> txData,
-      int32_t numRows,
-      ContinueFuture* future);
+      int32_t numRows);
+
+  /// @brief Checks if the queue for a task is over capacity.
+  /// Should be called after enqueueing all partitions for a batch.
+  /// @param taskId The unique task Id.
+  /// @param future Output parameter - populated with a future if blocked.
+  /// @return True if blocked (queue over capacity), false otherwise.
+  bool checkBlocked(const std::string& taskId, ContinueFuture* future);
 
   /// @brief Indicates that no more data will be coming for this task.
   void noMoreData(const std::string& taskId);

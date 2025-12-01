@@ -65,7 +65,8 @@ void CudfExchangeServer::process() {
             // This upcall may be called from another thread than the
             // communicator thread. It is called
             // when data on the queue becomes available.
-            VLOG(3) << "Found data for client: "
+            VLOG(3) << "@" << this->partitionKey_.taskId
+                    << " Found data for client: "
                     << this->partitionKey_.toString();
             std::lock_guard<std::recursive_mutex> lock(this->dataMutex_);
             VELOX_CHECK(
@@ -104,7 +105,8 @@ void CudfExchangeServer::close() {
   if (!closed_.compare_exchange_strong(expected, desired)) {
     return; // already closed.
   }
-  VLOG(3) << "Close CudfExchangeServer to remote " << partitionKey_.toString();
+  VLOG(3) << "@" << partitionKey_.taskId
+          << " Close CudfExchangeServer to remote " << partitionKey_.toString();
   communicator_->unregister(getSelfPtr());
 }
 
@@ -133,7 +135,8 @@ void CudfExchangeServer::sendData() {
       metadataMsg->remainingBytes = {};
       metadataMsg->atEnd = false;
     } else {
-      VLOG(3) << "Final exchange for " << partitionKey_.toString();
+      VLOG(3) << "@" << partitionKey_.taskId << " Final exchange for "
+              << partitionKey_.toString();
       metadataMsg->cudfMetadata = nullptr;
       metadataMsg->dataSizeBytes = 0;
       metadataMsg->remainingBytes = {};
@@ -154,10 +157,12 @@ void CudfExchangeServer::sendData() {
       [tid = partitionKey_.toString(), metadataTag, this](
           ucs_status_t status, std::shared_ptr<void> arg) {
         if (status == UCS_OK) {
-          VLOG(3) << "metadata successfully sent to " << tid
+          VLOG(3) << "@" << this->partitionKey_.taskId
+                  << " metadata successfully sent to " << tid
                   << " with tag: " << std::hex << metadataTag;
         } else {
-          VLOG(0) << "Error in sendData, send metadata "
+          VLOG(0) << "@" << this->partitionKey_.taskId
+                  << " Error in sendData, send metadata "
                   << ucs_status_string(status) << " failed for task: " << tid;
           this->setState(ServerState::Done);
           this->communicator_->addToWorkQueue(getSelfPtr());
@@ -171,7 +176,8 @@ void CudfExchangeServer::sendData() {
     if (dataPtr_) {
       sendStart_ = std::chrono::high_resolution_clock::now();
       bytes_ = dataPtr_->gpu_data->size();
-      VLOG(3) << "Sending rmm::buffer: " << std::hex << dataPtr_->gpu_data.get()
+      VLOG(3) << "@" << partitionKey_.taskId << " Sending rmm::buffer: "
+              << std::hex << dataPtr_->gpu_data.get()
               << " pointing to device memory: " << std::hex
               << dataPtr_->gpu_data->data() << std::dec << " to task "
               << partitionKey_.toString() << ":" << this->sequenceNumber_
@@ -192,7 +198,8 @@ void CudfExchangeServer::sendData() {
               std::placeholders::_2));
     } else {
       // Data pointer is null, so no more data will be coming.
-      VLOG(3) << "Finished transferring partition for task "
+      VLOG(3) << "@" << partitionKey_.taskId
+              << " Finished transferring partition for task "
               << partitionKey_.toString();
       queueMgr_->deleteResults(partitionKey_.taskId, partitionKey_.destination);
       setState(ServerState::Done);
@@ -214,18 +221,21 @@ void CudfExchangeServer::sendComplete(
         std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
     auto throughput = bytes_ / micros;
 
-    VLOG(3) << "duration: "
+    VLOG(3) << "@" << partitionKey_.taskId << " duration: "
             << std::chrono::duration_cast<std::chrono::milliseconds>(duration)
                    .count()
             << " ms ";
-    VLOG(3) << "throughput: " << throughput << " MByte/s";
+    VLOG(3) << "@" << partitionKey_.taskId << " throughput: " << throughput
+            << " MByte/s";
 
     this->sequenceNumber_++;
     dataPtr_.reset(); // release memory.
-    VLOG(3) << "Releasing dataPtr_ in sendComplete.";
+    VLOG(3) << "@" << partitionKey_.taskId
+            << " Releasing dataPtr_ in sendComplete.";
     setState(ServerState::ReadyToTransfer);
   } else {
-    VLOG(3) << "Error in sendComplete, send complete "
+    VLOG(3) << "@" << partitionKey_.taskId
+            << " Error in sendComplete, send complete "
             << ucs_status_string(status);
     setState(ServerState::Done);
   }

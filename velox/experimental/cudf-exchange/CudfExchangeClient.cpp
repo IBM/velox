@@ -33,14 +33,15 @@ void CudfExchangeClient::addRemoteTaskId(const std::string& remoteTaskId) {
     }
 
     std::shared_ptr<CudfExchangeSource> source;
-    source = CudfExchangeSource::create(remoteTaskId, queue_);
+    source = CudfExchangeSource::create(taskId_, remoteTaskId, queue_);
 
     if (closed_) {
       toClose = std::move(source);
     } else {
       sources_.push_back(source);
       queue_->addSourceLocked();
-      VLOG(3) << "Added remote split for task: " << remoteTaskId;
+      VLOG(3) << "@" << taskId_ << " Added remote split for task: "
+              << remoteTaskId;
     }
   }
 
@@ -51,7 +52,7 @@ void CudfExchangeClient::addRemoteTaskId(const std::string& remoteTaskId) {
 }
 
 void CudfExchangeClient::noMoreRemoteTasks() {
-  VLOG(3) << "CudfExchangeClient::noMoreRemoteTasks called.";
+  VLOG(3) << "@" << taskId_ << " CudfExchangeClient::noMoreRemoteTasks called.";
   queue_->noMoreSources();
 }
 
@@ -105,7 +106,8 @@ folly::F14FastMap<std::string, RuntimeMetric> CudfExchangeClient::stats()
 
 std::unique_ptr<cudf::packed_columns>
 CudfExchangeClient::next(int consumerId, bool* atEnd, ContinueFuture* future) {
-  VLOG(3) << "CudfExchangeClient::next called for task " << taskId_;
+  VLOG(3) << "@" << taskId_ << " CudfExchangeClient::next called for consumerId "
+          << consumerId;
   std::unique_ptr<cudf::packed_columns> columns;
   ContinuePromise stalePromise = ContinuePromise::makeEmpty();
   {

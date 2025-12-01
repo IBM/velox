@@ -66,21 +66,18 @@ class CudfPartitionedOutput : public exec::Operator,
       const std::shared_ptr<const core::PartitionedOutputNode>& planNode);
 
   // Partitions the cudf table view using the partition keys and a hash
-  // function using the given stream. Returns true if any of the queues are
-  // blocked.
-  bool hashPartition(cudf::table_view tableView, rmm::cuda_stream_view stream);
+  // function using the given stream.
+  void hashPartition(cudf::table_view tableView, rmm::cuda_stream_view stream);
 
   // Splits the cudf table view into equal sizes. This is used when
   // RoundRobin partitioning is requested but round robin on a
   // row-by-row basis is not meaningful for cudf exchange.
-  // Returns true if any of the queues are blocked.
-  bool equalPartition(cudf::table_view tableView, rmm::cuda_stream_view stream);
+  void equalPartition(cudf::table_view tableView, rmm::cuda_stream_view stream);
 
   // Splits the table along the given offsets and enqueues each offset
   // to the corresponding partition, i.e. first split to the partition 0,
   // second split to partition 1 etc.
-  // Returns true if any of the queues are blocked.
-  bool splitAndEnqueue(
+  void splitAndEnqueue(
       cudf::table_view tableView,
       std::vector<cudf::size_type> offsets,
       rmm::cuda_stream_view stream);
@@ -88,6 +85,9 @@ class CudfPartitionedOutput : public exec::Operator,
   const std::weak_ptr<CudfOutputQueueManager> queueManager_;
   std::vector<column_index_t> partitionKeyIndices_;
   const size_t numPartitions_;
+
+  const int pipelineId_;
+  const int driverId_;
 
   exec::BlockingReason blockingReason_;
   ContinueFuture future_;

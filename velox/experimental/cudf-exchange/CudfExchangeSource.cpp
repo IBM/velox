@@ -28,6 +28,7 @@ namespace facebook::velox::cudf_exchange {
 // This constructor is private.
 CudfExchangeSource::CudfExchangeSource(
     const std::shared_ptr<Communicator> communicator,
+    const std::string& taskId,
     const std::string& host,
     uint16_t port,
     const PartitionKey& partitionKey,
@@ -35,6 +36,7 @@ CudfExchangeSource::CudfExchangeSource(
     : CommElement(communicator),
       host_(host),
       port_(port),
+      taskId_(taskId),
       partitionKey_(partitionKey),
       partitionKeyHash_(fnv1a_32(partitionKey_.toString())),
       queue_(std::move(queue)) {
@@ -43,6 +45,7 @@ CudfExchangeSource::CudfExchangeSource(
 
 /*static*/
 std::shared_ptr<CudfExchangeSource> CudfExchangeSource::create(
+    const std::string& taskId,
     const std::string& url,
     const std::shared_ptr<CudfExchangeQueue>& queue) {
   folly::Uri uri(url);
@@ -50,16 +53,16 @@ std::shared_ptr<CudfExchangeSource> CudfExchangeSource::create(
   // The approach is to ignore the schema and not check for HTTP or HTTPS.
   // FIXME: Can't use the HTTP port as this conflicts with Prestissimo!
   // For the time being, there's an ugly hack that just increases the port by 3.
-  VLOG(3) << " Creating CudfExchangeSource " << url;
   const std::string host = uri.host();
   int port = uri.port() + 3;
   std::shared_ptr<Communicator> communicator = Communicator::getInstance();
   auto key = extractTaskAndDestinationId(uri.path());
   auto source = std::shared_ptr<CudfExchangeSource>(
-      new CudfExchangeSource(communicator, host, port, key, queue));
+      new CudfExchangeSource(communicator, taskId, host, port, key, queue));
   // register the exchange source with the communicator. This makes sure that
   // "progress" is called.
   communicator->registerCommElement(source);
+  VLOG(3) << source->toString() << " creating CudfExchangeSource for url: " << url;
   return source;
 }
 
@@ -83,7 +86,7 @@ void CudfExchangeSource::process() {
         sendHandshake();
       } else {
         // connection failed.
-        VLOG(0) << "Failed to connect to " << host_ << ":"
+        VLOG(0) << toString() << " Failed to connect to " << host_ << ":"
                 << std::to_string(port_);
         setState(ReceiverState::Done);
       }
@@ -116,7 +119,8 @@ void CudfExchangeSource::cleanUp() {
   uint32_t value = static_cast<uint32_t>(getState());
   if (value != static_cast<uint32_t>(ReceiverState::Done)) {
     // Unexpected cleanup
-    VLOG(3) << "In CudfExchangeSource::cleanUp state == " << value;
+    VLOG(3) << toString() << " In CudfExchangeSource::cleanUp state == "
+            << value;
   }
 
   if (!request_->isCompleted()) {
@@ -145,9 +149,7 @@ void CudfExchangeSource::close() {
     return; // already closed.
   }
 
-  VLOG(1) << "CudfExchangeSource::close called.";
-  VLOG(1) << fmt::format("closing task: {}", partitionKey_.toString());
-  VLOG(3) << "Close receiver to remote " << partitionKey_.toString() << ".";
+  VLOG(1) << toString() << " CudfExchangeSource::close called.";
 
   //  Let the Communicator progress thread do the actual clean-up
   setState(ReceiverState::Done);
@@ -299,7 +301,7 @@ void CudfExchangeSource::getMetadata() {
 void CudfExchangeSource::onMetadata(
     ucs_status_t status,
     std::shared_ptr<void> arg) {
-  VLOG(3) << "+ onMetadata " << ucs_status_string(status);
+  VLOG(3) << toString() << " + onMetadata " << ucs_status_string(status);
 
   if (status != UCS_OK) {
     std::string errorMsg = fmt::format(
@@ -325,7 +327,8 @@ void CudfExchangeSource::onMetadata(
         std::move(MetadataMsg::deserializeMetadataMsg(metadataMsg->data()));
     // auto m = std::unique_ptr<MetadataMsg>(new MetadataMsg(msg));
 
-    VLOG(3) << "Datasize bytes == " << ptr->metadata.dataSizeBytes;
+    VLOG(3) << toString() << " Datasize bytes == "
+            << ptr->metadata.dataSizeBytes;
 
     if (ptr->metadata.atEnd) {
       // It seems that all data has been transferred
@@ -347,7 +350,7 @@ void CudfExchangeSource::onMetadata(
       ptr->dataBuf = std::make_unique<rmm::device_buffer>(
           ptr->metadata.dataSizeBytes, stream);
     } catch (const rmm::bad_alloc& e) {
-      VLOG(0) << "*** RMM  failed to allocate: " << e.what();
+      VLOG(0) << toString() << " *** RMM  failed to allocate: " << e.what();
       queue_->setError(
           "Failed to alloc GPU memory"); // Let the operator know via the queue
       setState(ReceiverState::Done);
@@ -358,7 +361,7 @@ void CudfExchangeSource::onMetadata(
     // sync after allocating.
     stream.synchronize();
 
-    VLOG(3) << "Allocated " << ptr->metadata.dataSizeBytes
+    VLOG(3) << toString() << " Allocated " << ptr->metadata.dataSizeBytes
             << " bytes of device memory";
 
     // Initiate the transfer of the actual data from GPU-2-GPU
@@ -368,7 +371,7 @@ void CudfExchangeSource::onMetadata(
 
     if (!setStateIf(
             ReceiverState::WaitingForMetadata, ReceiverState::WaitingForData)) {
-      VLOG(1) << "onMetadata Invalid previous state ";
+      VLOG(1) << toString() << " onMetadata Invalid previous state ";
       return;
     }
     request_ = endpointRef_->endpoint_->tagRecv(
@@ -390,7 +393,7 @@ void CudfExchangeSource::onMetadata(
 void CudfExchangeSource::onData(
     ucs_status_t status,
     std::shared_ptr<void> arg) {
-  VLOG(3) << "+ onData " << ucs_status_string(status);
+  VLOG(3) << toString() << " + onData " << ucs_status_string(status);
 
   if (status != UCS_OK) {
     std::string errorMsg = fmt::format(

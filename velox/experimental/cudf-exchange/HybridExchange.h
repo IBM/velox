@@ -96,15 +96,14 @@ class HybridExchange : public SourceOperator {
   // distributed system.
   void addRemoteTaskIds(std::vector<std::string>& remoteTaskIds);
 
+  // This is a no-op except when called from driver 0.
   // Fetches splits from the task until there are no more splits or task returns
   // a future that will be complete when more splits arrive. Adds splits to
-  // exchangeClient_. Returns true if received a future from the task and sets
-  // the 'future' parameter. Returns false if fetched all splits or if this
-  // operator is not the first operator in the pipeline and therefore is not
-  // responsible for fetching splits and adding them to the exchangeClient_.
+  // exchangeClient_. Sets "noMoreSplits_" if the task returns not blocked without
+  // a split, this is the end-of-splits signal.
   // Decides on the first split whether the exchangeClient_ is backed by
   // the HTTP exchange client or the Cudf exchange client.
-  bool getSplits(ContinueFuture* future);
+  void getSplits(ContinueFuture* future);
 
   // Converts the results from the HTTP exchange client into a cudf vector.
   RowVectorPtr getOutputFromPages(const SerPageVector* pages);
@@ -139,6 +138,7 @@ class HybridExchange : public SourceOperator {
   /// and passing these to ExchangeClient. When running with multile drivers,
   /// this is done by the exchange running on driver 0.
   const bool processSplits_;
+  const int pipelineId_;
   const int driverId_;
   bool noMoreSplits_ = false;
 
