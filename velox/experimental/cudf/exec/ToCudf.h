@@ -37,34 +37,37 @@ static const std::string kCudfAdapterName = "cuDF";
 // QueryConfig key. Enable or disable cudf in task level.
 static const std::string kCudfEnabled = "cudf.enabled";
 
-struct TaskPlanNodeKey {
+struct TaskPipelineKey {
   std::string taskId;
-  core::PlanNodeId planNodeId;
+  int pipelineId;
 
-  TaskPlanNodeKey(const std::string& tid, const core::PlanNodeId& pid)
-      : taskId(tid), planNodeId(pid) {}
+  TaskPipelineKey(const std::string& tid, int pid)
+      : taskId(tid), pipelineId(pid) {}
 
   // need equality operator for unordered map.
-  bool operator==(const TaskPlanNodeKey& other) const {
-    return taskId == other.taskId && planNodeId == other.planNodeId;
+  bool operator==(const TaskPipelineKey& other) const {
+    return taskId == other.taskId && pipelineId == other.pipelineId;
   }
 
   // Need a hash functor for the unordered map.
   struct Hash {
-    std::size_t operator()(const TaskPlanNodeKey& key) const {
+    std::size_t operator()(const TaskPipelineKey& key) const {
       std::hash<std::string> hasher;
       std::size_t h1 = hasher(key.taskId);
-      std::size_t h2 = hasher(key.planNodeId);
+      std::size_t h2 = std::hash<int>{}(key.pipelineId);
       return h1 ^ (h2 << 1); // simple combination of the two hash functions.
     }
   };
 };
 
-static std::unordered_map<
-    TaskPlanNodeKey,
+// Map to store ExchangeClientFacade instances by task and pipeline.
+// Declared in ToCudf.cpp to ensure a single instance across all translation units.
+using ExchangeClientFacadeMap = std::unordered_map<
+    TaskPipelineKey,
     std::shared_ptr<cudf_exchange::ExchangeClientFacade>,
-    TaskPlanNodeKey::Hash>
-    exchangeClientFacadeByTaskAndPlanNode_;
+    TaskPipelineKey::Hash>;
+
+ExchangeClientFacadeMap& getExchangeClientFacadeMap();
 
 class CompileState {
  public:

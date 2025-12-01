@@ -73,6 +73,20 @@ using namespace facebook::velox::cudf_exchange;
 
 namespace facebook::velox::cudf_velox {
 
+// Single instance of the map to store ExchangeClientFacade instances.
+// Using a function with a static local ensures thread-safe initialization
+// and a single instance across all translation units.
+ExchangeClientFacadeMap& getExchangeClientFacadeMap() {
+  static ExchangeClientFacadeMap instance;
+  return instance;
+}
+
+// Mutex to protect concurrent access to the ExchangeClientFacadeMap.
+std::mutex& getExchangeClientFacadeMapMutex() {
+  static std::mutex instance;
+  return instance;
+}
+
 namespace {
 
 template <class... Deriveds, class Base>
@@ -420,31 +434,37 @@ bool CompileState::compile(bool allowCpuFallback) {
       } else {
         // Get or create the ExchangeClientFacade, using parameters from the
         // Velox exchange client.
-        auto key = TaskPlanNodeKey(oper->taskId(), oper->planNodeId());
-        auto clientIter = exchangeClientFacadeByTaskAndPlanNode_.find(key);
+        auto key = TaskPipelineKey(oper->taskId(), ctx->pipelineId);
         std::shared_ptr<ExchangeClientFacade> client = nullptr;
-        if (clientIter == exchangeClientFacadeByTaskAndPlanNode_.end()) {
-          // The following std::move transfers the ownership of the
-          // HttpExchangeClient to the facade, preventing that it is closed when
-          // the ExchangeOperator is destructed after being replace by the
-          // HybridExchange.
-          auto veloxExchangeClient = exchangeOp->releaseExchangeClient();
-          VELOX_CHECK_NOT_NULL(
-              veloxExchangeClient, "Velox exchange client can't be null.");
-          // create new cudfExchangeClient
-          auto cudfClient = std::make_shared<CudfExchangeClient>(
-              oper->taskId(),
-              veloxExchangeClient->getDestination(),
-              veloxExchangeClient->getNumberOfConsumers());
-          client = std::make_shared<ExchangeClientFacade>(
-              std::move(cudfClient), std::move(veloxExchangeClient));
-          TaskPlanNodeKey key(oper->taskId(), oper->planNodeId());
-          exchangeClientFacadeByTaskAndPlanNode_.emplace(key, client);
-        } else {
-          client = clientIter->second;
-          // prevent closing of HttpExchangeClient when ExchangeOperator is
-          // destructed after being replaced by the ExchangeClientFacade
-          exchangeOp->resetExchangeClient();
+        {
+          std::lock_guard<std::mutex> lock(getExchangeClientFacadeMapMutex());
+          auto& facadeMap = getExchangeClientFacadeMap();
+          auto clientIter = facadeMap.find(key);
+          if (clientIter == facadeMap.end()) {
+            // The following std::move transfers the ownership of the
+            // HttpExchangeClient to the facade, preventing that it is closed
+            // when the ExchangeOperator is destructed after being replace by
+            // the HybridExchange.
+            auto veloxExchangeClient = exchangeOp->releaseExchangeClient();
+            VELOX_CHECK_NOT_NULL(
+                veloxExchangeClient, "Velox exchange client can't be null.");
+            // create new cudfExchangeClient
+            auto cudfClient = std::make_shared<CudfExchangeClient>(
+                oper->taskId(),
+                veloxExchangeClient->getDestination(),
+                veloxExchangeClient->getNumberOfConsumers());
+            client = std::make_shared<ExchangeClientFacade>(
+                oper->taskId(),
+                ctx->pipelineId,
+                std::move(cudfClient),
+                std::move(veloxExchangeClient));
+            facadeMap.emplace(key, client);
+          } else {
+            client = clientIter->second;
+            // prevent closing of HttpExchangeClient when ExchangeOperator is
+            // destructed after being replaced by the ExchangeClientFacade
+            exchangeOp->resetExchangeClient();
+          }
         }
         replaceOp.push_back(
             std::make_unique<HybridExchange>(id, ctx, planNode, client));
