@@ -123,9 +123,10 @@ void CudfExchangeSource::cleanUp() {
             << value;
   }
 
-  if (!request_->isCompleted()) {
+  // Cancel any outstanding request. With weak_ptr callbacks, the callback
+  // will safely no-op if we're destroyed before it completes.
+  if (request_ && !request_->isCompleted()) {
     // The Task has failed and we may need to cancel outstanding requests
-    VELOX_CHECK_NOT_NULL(request_);
     request_->cancel();
   }
 
@@ -139,19 +140,22 @@ void CudfExchangeSource::cleanUp() {
 }
 
 void CudfExchangeSource::close() {
-  // This is called by the driver thread so we need ti be careful to
+  // This is called by the driver thread so we need to be careful to
   // indicate to the process thread that we are closing and
-  // let it to the actual cleaning up
+  // let it do the actual cleaning up.
 
+  // Use memory_order_acq_rel to ensure proper synchronization with callbacks
+  // that check closed_ with memory_order_acquire.
   bool expected = false;
   bool desired = true;
-  if (!closed_.compare_exchange_strong(expected, desired)) {
+  if (!closed_.compare_exchange_strong(
+          expected, desired, std::memory_order_acq_rel)) {
     return; // already closed.
   }
 
   VLOG(1) << toString() << " CudfExchangeSource::close called.";
 
-  //  Let the Communicator progress thread do the actual clean-up
+  // Let the Communicator progress thread do the actual clean-up
   setState(ReceiverState::Done);
   communicator_->addToWorkQueue(getSelfPtr());
 }
@@ -237,23 +241,30 @@ void CudfExchangeSource::sendHandshake() {
   // Create the handshake which will register client's existence with the server
   ucxx::AmReceiverCallbackInfo info(
       communicator_->kAmCallbackOwner, communicator_->kAmCallbackId);
+  // Use weak_ptr to prevent use-after-free if close() is called during callback
+  std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
   request_ = endpointRef_->endpoint_->amSend(
       handshakeReq.get(),
       sizeof(HandshakeMsg),
       UCS_MEMORY_TYPE_HOST,
       info,
       false,
-      std::bind(
-          &CudfExchangeSource::onHandshake,
-          this,
-          std::placeholders::_1,
-          std::placeholders::_2),
+      [weak](ucs_status_t status, std::shared_ptr<void> arg) {
+        if (auto self = weak.lock()) {
+          self->onHandshake(status, arg);
+        }
+      },
       handshakeReq);
 }
 
 void CudfExchangeSource::onHandshake(
     ucs_status_t status,
     std::shared_ptr<void> arg) {
+  // Check if close() was called - avoid processing if we're shutting down
+  if (closed_.load(std::memory_order_acquire)) {
+    VLOG(3) << toString() << " onHandshake called after close, ignoring";
+    return;
+  }
   if (status != UCS_OK) {
     std::string errorMsg = fmt::format(
         "Failed to send handshake to host {}:{}, task {}: {}",
@@ -284,23 +295,30 @@ void CudfExchangeSource::getMetadata() {
           << " waiting for metadata for chunk: " << sequenceNumber_
           << " using tag: " << std::hex << metadataTag << std::dec;
 
+  // Use weak_ptr to prevent use-after-free if close() is called during callback
+  std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
   request_ = endpointRef_->endpoint_->tagRecv(
       reinterpret_cast<void*>(metadataReq->data()),
       sizeMetadata,
       ucxx::Tag{metadataTag},
       ucxx::TagMaskFull,
       false,
-      std::bind(
-          &CudfExchangeSource::onMetadata,
-          this,
-          std::placeholders::_1,
-          std::placeholders::_2),
+      [weak](ucs_status_t status, std::shared_ptr<void> arg) {
+        if (auto self = weak.lock()) {
+          self->onMetadata(status, arg);
+        }
+      },
       metadataReq);
 }
 
 void CudfExchangeSource::onMetadata(
     ucs_status_t status,
     std::shared_ptr<void> arg) {
+  // Check if close() was called - avoid processing if we're shutting down
+  if (closed_.load(std::memory_order_acquire)) {
+    VLOG(3) << toString() << " onMetadata called after close, ignoring";
+    return;
+  }
   VLOG(3) << toString() << " + onMetadata " << ucs_status_string(status);
 
   if (status != UCS_OK) {
@@ -374,17 +392,19 @@ void CudfExchangeSource::onMetadata(
       VLOG(1) << toString() << " onMetadata Invalid previous state ";
       return;
     }
+    // Use weak_ptr to prevent use-after-free if close() is called during callback
+    std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
     request_ = endpointRef_->endpoint_->tagRecv(
         ptr->dataBuf->data(),
         ptr->metadata.dataSizeBytes,
         ucxx::Tag{dataTag},
         ucxx::TagMaskFull,
         false,
-        std::bind(
-            &CudfExchangeSource::onData,
-            this,
-            std::placeholders::_1,
-            std::placeholders::_2),
+        [weak](ucs_status_t status, std::shared_ptr<void> arg) {
+          if (auto self = weak.lock()) {
+            self->onData(status, arg);
+          }
+        },
         ptr // DataAndMetadata
     );
   }
@@ -393,6 +413,11 @@ void CudfExchangeSource::onMetadata(
 void CudfExchangeSource::onData(
     ucs_status_t status,
     std::shared_ptr<void> arg) {
+  // Check if close() was called - avoid processing if we're shutting down
+  if (closed_.load(std::memory_order_acquire)) {
+    VLOG(3) << toString() << " onData called after close, ignoring";
+    return;
+  }
   VLOG(3) << toString() << " + onData " << ucs_status_string(status);
 
   if (status != UCS_OK) {

@@ -44,40 +44,56 @@ std::shared_ptr<CudfExchangeServer> CudfExchangeServer::create(
 }
 
 void CudfExchangeServer::process() {
+  // Check if close() was called - avoid processing if we're shutting down
+  if (closed_.load(std::memory_order_acquire)) {
+    return;
+  }
   switch (state_) {
     case ServerState::Created:
       setState(ServerState::ReadyToTransfer);
       communicator_->addToWorkQueue(getSelfPtr());
       break;
-    case ServerState::ReadyToTransfer:
+    case ServerState::ReadyToTransfer: {
       // Fetch the data from CudfQueueManager and store it in the dataPtr_;
       setState(ServerState::WaitingForDataFromQueue);
       // Register the callback with the destination queue to get data.
       // If the queue doesn't exist yet, getData will create an empty
       // queue and the callback will be triggered once the corresponding
       // source task has initialized the queue and added data to it.
+      // Use weak_ptr to prevent use-after-free if close() is called during callback
+      std::weak_ptr<CudfExchangeServer> weakQueue = weak_from_this();
       queueMgr_->getData(
           partitionKey_.taskId,
           partitionKey_.destination,
-          [this](
+          [weakQueue](
               std::unique_ptr<cudf::packed_columns> data,
               std::vector<int64_t> remainingBytes) {
+            auto self = weakQueue.lock();
+            if (!self) {
+              return; // Object was destroyed, safe to ignore
+            }
+            // Check if close() was called - avoid processing if we're shutting down
+            if (self->closed_.load(std::memory_order_acquire)) {
+              VLOG(3) << "@" << self->partitionKey_.taskId
+                      << " getData callback called after close, ignoring";
+              return;
+            }
             // This upcall may be called from another thread than the
             // communicator thread. It is called
             // when data on the queue becomes available.
-            VLOG(3) << "@" << this->partitionKey_.taskId
+            VLOG(3) << "@" << self->partitionKey_.taskId
                     << " Found data for client: "
-                    << this->partitionKey_.toString();
-            std::lock_guard<std::recursive_mutex> lock(this->dataMutex_);
+                    << self->partitionKey_.toString();
+            std::lock_guard<std::recursive_mutex> lock(self->dataMutex_);
             VELOX_CHECK(
-                this->dataPtr_ == nullptr,
+                self->dataPtr_ == nullptr,
                 "Data pointer exists: Illegal state!");
-            this->dataPtr_ = std::move(data);
-            this->setState(ServerState::DataReady);
-            this->communicator_->addToWorkQueue(getSelfPtr());
+            self->dataPtr_ = std::move(data);
+            self->setState(ServerState::DataReady);
+            self->communicator_->addToWorkQueue(self);
           });
       this->communicator_->addToWorkQueue(getSelfPtr());
-      break;
+    } break;
     case ServerState::WaitingForDataFromQueue:
       // Waiting for data is handled by an upcall from the data queue. Nothing
       // to do
@@ -100,13 +116,26 @@ void CudfExchangeServer::process() {
 }
 
 void CudfExchangeServer::close() {
+  // Use memory_order_acq_rel to ensure proper synchronization with callbacks
+  // that check closed_ with memory_order_acquire.
   bool expected = false;
   bool desired = true;
-  if (!closed_.compare_exchange_strong(expected, desired)) {
+  if (!closed_.compare_exchange_strong(
+          expected, desired, std::memory_order_acq_rel)) {
     return; // already closed.
   }
   VLOG(3) << "@" << partitionKey_.taskId
           << " Close CudfExchangeServer to remote " << partitionKey_.toString();
+
+  // Cancel any outstanding requests. With weak_ptr callbacks, the callbacks
+  // will safely no-op if we're destroyed before they complete.
+  if (metaRequest_ && !metaRequest_->isCompleted()) {
+    metaRequest_->cancel();
+  }
+  if (dataRequest_ && !dataRequest_->isCompleted()) {
+    dataRequest_->cancel();
+  }
+
   communicator_->unregister(getSelfPtr());
 }
 
@@ -149,23 +178,35 @@ void CudfExchangeServer::sendData() {
   // send metadata.
   uint64_t metadataTag =
       getMetadataTag(this->partitionKeyHash_, this->sequenceNumber_);
+  // Use weak_ptr to prevent use-after-free if close() is called during callback
+  std::weak_ptr<CudfExchangeServer> weakMeta = weak_from_this();
   metaRequest_ = endpointRef_->endpoint_->tagSend(
       serializedMetadata.get(),
       serMetaSize,
       ucxx::Tag{metadataTag},
       false,
-      [tid = partitionKey_.toString(), metadataTag, this](
+      [tid = partitionKey_.toString(), metadataTag, weakMeta](
           ucs_status_t status, std::shared_ptr<void> arg) {
+        auto self = weakMeta.lock();
+        if (!self) {
+          return; // Object was destroyed, safe to ignore
+        }
+        // Check if close() was called - avoid processing if we're shutting down
+        if (self->closed_.load(std::memory_order_acquire)) {
+          VLOG(3) << "@" << self->partitionKey_.taskId
+                  << " metadata send callback called after close, ignoring";
+          return;
+        }
         if (status == UCS_OK) {
-          VLOG(3) << "@" << this->partitionKey_.taskId
+          VLOG(3) << "@" << self->partitionKey_.taskId
                   << " metadata successfully sent to " << tid
                   << " with tag: " << std::hex << metadataTag;
         } else {
-          VLOG(0) << "@" << this->partitionKey_.taskId
+          VLOG(0) << "@" << self->partitionKey_.taskId
                   << " Error in sendData, send metadata "
                   << ucs_status_string(status) << " failed for task: " << tid;
-          this->setState(ServerState::Done);
-          this->communicator_->addToWorkQueue(getSelfPtr());
+          self->setState(ServerState::Done);
+          self->communicator_->addToWorkQueue(self);
         }
       },
       serializedMetadata);
@@ -186,16 +227,18 @@ void CudfExchangeServer::sendData() {
       setState(ServerState::WaitingForSendComplete);
       uint64_t dataTag =
           getDataTag(this->partitionKeyHash_, this->sequenceNumber_);
+      // Use weak_ptr to prevent use-after-free if close() is called during callback
+      std::weak_ptr<CudfExchangeServer> weakData = weak_from_this();
       dataRequest_ = endpointRef_->endpoint_->tagSend(
           dataPtr_->gpu_data->data(),
           dataPtr_->gpu_data->size(),
           ucxx::Tag{dataTag},
           false,
-          std::bind(
-              &CudfExchangeServer::sendComplete,
-              this,
-              std::placeholders::_1,
-              std::placeholders::_2));
+          [weakData](ucs_status_t status, std::shared_ptr<void> arg) {
+            if (auto self = weakData.lock()) {
+              self->sendComplete(status, arg);
+            }
+          });
     } else {
       // Data pointer is null, so no more data will be coming.
       VLOG(3) << "@" << partitionKey_.taskId
@@ -211,6 +254,12 @@ void CudfExchangeServer::sendData() {
 void CudfExchangeServer::sendComplete(
     ucs_status_t status,
     std::shared_ptr<void> arg) {
+  // Check if close() was called - avoid processing if we're shutting down
+  if (closed_.load(std::memory_order_acquire)) {
+    VLOG(3) << "@" << partitionKey_.taskId
+            << " sendComplete called after close, ignoring";
+    return;
+  }
   if (status == UCS_OK) {
     std::lock_guard<std::recursive_mutex> lock(dataMutex_);
     VELOX_CHECK(dataPtr_ != nullptr, "dataPtr_ is null");

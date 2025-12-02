@@ -155,9 +155,13 @@ void ExchangeClientFacade::close() {
   std::vector<ContinuePromise> promises;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK(close_, "close called but no client set!");
     promises = clearAllPromisesLocked();
-    close_();
+    // It's possible to reach close() before any splits were received,
+    // in which case no client is activated. This can happen during error
+    // handling or task cancellation. Safe to skip if no client is set.
+    if (close_) {
+      close_();
+    }
   }
   clearPromises(promises);
 }
@@ -165,7 +169,12 @@ void ExchangeClientFacade::close() {
 folly::F14FastMap<std::string, facebook::velox::RuntimeMetric>
 ExchangeClientFacade::stats() {
   std::lock_guard<std::mutex> l(mutex_);
-  VELOX_CHECK(stats_, "stats called but no client set!");
+  // It's possible to reach stats() before any splits were received,
+  // in which case no client is activated. This can happen during error
+  // handling or task cancellation. Return empty stats if no client is set.
+  if (!stats_) {
+    return {};
+  }
   return stats_();
 }
 
