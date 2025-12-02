@@ -78,6 +78,8 @@ class S3Config {
     kCredentialsProvider,
     kIMDSEnabled,
     kMultipartMinPartSize,
+    kAccountId,
+    kMrapEnabled,
     kEnd
   };
 
@@ -114,6 +116,8 @@ class S3Config {
             {Keys::kRetryMode, std::make_pair("retry-mode", "standard")},
             {Keys::kUseProxyFromEnv,
              std::make_pair("use-proxy-from-env", "false")},
+            {Keys::kAccountId, std::make_pair("account-id", std::nullopt)},
+            {Keys::kMrapEnabled, std::make_pair("mrap-enabled", "false")},
             {Keys::kCredentialsProvider,
              std::make_pair("aws-credentials-provider", std::nullopt)},
             {Keys::kIMDSEnabled, std::make_pair("aws-imds-enabled", "true")},
@@ -233,6 +237,15 @@ class S3Config {
 
   bool useProxyFromEnv() const {
     auto value = config_.find(Keys::kUseProxyFromEnv)->second.value();
+    return folly::to<bool>(value);
+  }
+
+  std::optional<std::string> accountId() const {
+    return config_.find(Keys::kAccountId)->second;
+  }
+
+  bool mrapEnabled() const {
+    auto value = config_.find(Keys::kMrapEnabled)->second.value();
     return folly::to<bool>(value);
   }
 

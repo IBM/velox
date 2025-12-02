@@ -17,6 +17,7 @@
 #pragma once
 
 #include "velox/common/file/File.h"
+#include "velox/connectors/hive/storage_adapters/s3fs/S3Config.h"
 
 namespace Aws::S3 {
 class S3Client;
@@ -30,6 +31,7 @@ class S3ReadFile : public ReadFile {
   S3ReadFile(
       std::string_view path,
       Aws::S3::S3Client* client,
+      const S3Config& s3Config,
       uint32_t maxAttempts);
 
   ~S3ReadFile() override;

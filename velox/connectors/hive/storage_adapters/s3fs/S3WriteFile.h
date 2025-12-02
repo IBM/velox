@@ -18,6 +18,7 @@
 
 #include "velox/common/file/File.h"
 #include "velox/common/memory/MemoryPool.h"
+#include "velox/connectors/hive/storage_adapters/s3fs/S3Config.h"
 
 namespace Aws::S3 {
 class S3Client;

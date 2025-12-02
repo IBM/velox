@@ -53,7 +53,8 @@ std::shared_ptr<FileSystem> fileSystemGenerator(
     std::shared_ptr<const config::ConfigBase> properties,
     std::string_view s3Path) {
   std::string cacheKey, bucketName, key;
-  getBucketAndKeyFromPath(getPath(s3Path), bucketName, key);
+  S3Config s3Config(bucketName, properties);
+  getBucketAndKeyFromPath(getPath(s3Path), bucketName, key, s3Config);
   if (!cacheKeyFunc) {
     cacheKey = S3Config::cacheKey(bucketName, properties);
   } else {

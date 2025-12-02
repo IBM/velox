@@ -444,6 +444,10 @@ class S3FileSystem::Impl {
     return client_.get();
   }
 
+  const S3Config& s3Config() const {
+    return s3Config_;
+  }
+
   std::string getLogLevelName() const {
     return getAwsInstance()->getLogLevelName();
   }
@@ -487,7 +491,7 @@ std::unique_ptr<ReadFile> S3FileSystem::openFileForRead(
     const FileOptions& options) {
   const auto path = getPath(s3Path);
   auto s3file = std::make_unique<S3ReadFile>(
-      path, impl_->s3Client(), impl_->getMaxAttempts());
+      path, impl_->s3Client(), impl_->s3Config(), impl_->getMaxAttempts());
   s3file->initialize(options);
   return s3file;
 }
@@ -508,7 +512,7 @@ std::string S3FileSystem::name() const {
 std::vector<std::string> S3FileSystem::list(std::string_view path) {
   std::string bucket;
   std::string key;
-  getBucketAndKeyFromPath(getPath(path), bucket, key);
+  getBucketAndKeyFromPath(getPath(path), bucket, key, impl_->s3Config());
 
   Aws::S3::Model::ListObjectsRequest request;
   request.SetBucket(awsString(bucket));
@@ -530,7 +534,7 @@ std::vector<std::string> S3FileSystem::list(std::string_view path) {
 bool S3FileSystem::exists(std::string_view path) {
   std::string bucket;
   std::string key;
-  getBucketAndKeyFromPath(getPath(path), bucket, key);
+  getBucketAndKeyFromPath(getPath(path), bucket, key, impl_->s3Config());
 
   Aws::S3::Model::HeadObjectRequest request;
   request.SetBucket(awsString(bucket));
@@ -544,7 +548,7 @@ void S3FileSystem::mkdir(
     const DirectoryOptions& options) {
   std::string bucket;
   std::string key;
-  getBucketAndKeyFromPath(getPath(path), bucket, key);
+  getBucketAndKeyFromPath(getPath(path), bucket, key, impl_->s3Config());
 
   Aws::S3::Model::PutObjectRequest request;
   request.SetBucket(awsString(bucket));
@@ -563,11 +567,13 @@ void S3FileSystem::rename(
     bool overWrite) {
   std::string sourceBucket;
   std::string sourceKey;
-  getBucketAndKeyFromPath(getPath(path), sourceBucket, sourceKey);
+  getBucketAndKeyFromPath(
+      getPath(path), sourceBucket, sourceKey, impl_->s3Config());
 
   std::string targetBucket;
   std::string targetKey;
-  getBucketAndKeyFromPath(getPath(newPath), targetBucket, targetKey);
+  getBucketAndKeyFromPath(
+      getPath(newPath), targetBucket, targetKey, impl_->s3Config());
 
   // Copies the object to the new location.
   Aws::S3::Model::CopyObjectRequest copyRequest;

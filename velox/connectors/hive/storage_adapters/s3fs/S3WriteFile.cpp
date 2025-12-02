@@ -42,10 +42,10 @@ class S3WriteFile::Impl {
       Aws::S3::S3Client* client,
       memory::MemoryPool* pool,
       const std::shared_ptr<S3Config>& s3Config)
-      : client_(client), pool_(pool), minPartSize_(s3Config->minPartSize()) {
+      : client_(client), pool_(pool), s3Config_(s3Config), minPartSize_(s3Config.minPartSize()) {
     VELOX_CHECK_NOT_NULL(client);
     VELOX_CHECK_NOT_NULL(pool);
-    getBucketAndKeyFromPath(path, bucket_, key_);
+    getBucketAndKeyFromPath(path, bucket_, key_, s3Config);
     currentPart_ = std::make_unique<dwio::common::DataBuffer<char>>(*pool_);
     currentPart_->reserve(minPartSize_);
     // Check that the object doesn't exist, if it does throw an error.
@@ -69,15 +69,18 @@ class S3WriteFile::Impl {
 
     // Create bucket if not present.
     {
-      Aws::S3::Model::HeadBucketRequest request;
-      request.SetBucket(awsString(bucket_));
-      auto bucketMetadata = client_->HeadBucket(request);
-      if (!bucketMetadata.IsSuccess()) {
-        Aws::S3::Model::CreateBucketRequest request;
-        request.SetBucket(bucket_);
-        auto outcome = client_->CreateBucket(request);
-        VELOX_CHECK_AWS_OUTCOME(
-            outcome, "Failed to create S3 bucket", bucket_, "");
+      // Only create bucket if it's a normal bucket, not an ARN
+      if (!s3Config.mrapEnabled()) {
+        Aws::S3::Model::HeadBucketRequest request;
+        request.SetBucket(awsString(bucket_));
+        auto bucketMetadata = client_->HeadBucket(request);
+        if (!bucketMetadata.IsSuccess()) {
+          Aws::S3::Model::CreateBucketRequest request;
+          request.SetBucket(bucket_);
+          auto outcome = client_->CreateBucket(request);
+          VELOX_CHECK_AWS_OUTCOME(
+              outcome, "Failed to create S3 bucket", bucket_, "");
+        }
       }
     }
     fileSize_ = 0;
@@ -269,6 +272,7 @@ class S3WriteFile::Impl {
 
   Aws::S3::S3Client* client_;
   memory::MemoryPool* pool_;
+  const S3Config& s3Config_;
   std::unique_ptr<dwio::common::DataBuffer<char>> currentPart_;
   std::string bucket_;
   std::string key_;
