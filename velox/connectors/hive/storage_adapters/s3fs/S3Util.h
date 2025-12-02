@@ -27,6 +27,7 @@
 #include <folly/Uri.h>
 
 #include "velox/common/base/Exceptions.h"
+#include "velox/connectors/hive/storage_adapters/s3fs/S3Config.h"
 #include "velox/connectors/hive/storage_adapters/s3fs/S3Counters.h"
 
 #include <aws/core/utils/stream/PreallocatedStreamBuf.h>
@@ -87,10 +88,26 @@ inline bool isS3File(const std::string_view filename) {
 inline void getBucketAndKeyFromPath(
     std::string_view path,
     std::string& bucket,
-    std::string& key) {
+    std::string& key,
+    const S3Config& s3Config) {
   auto firstSep = path.find_first_of(kSep);
   bucket = path.substr(0, firstSep);
   key = path.substr(firstSep + 1);
+  // Check if MRAP is enabled
+  if (s3Config.mrapEnabled()) {
+    // Ensure account-id is present
+    if (!s3Config.accountId().has_value() || s3Config.accountId()->empty()) {
+      VELOX_FAIL(
+          "MRAP is enabled but 'account-id' is missing in S3 configuration.");
+    }
+
+    // Build MRAP ARN for the access point
+    std::string mrapArn =
+        fmt::format("arn:aws:s3::{}:accesspoint", s3Config.accountId().value());
+
+    // Append the MRAP ARN prefix to the bucket
+    bucket = fmt::format("{}:{}", mrapArn, bucket);
+  }
 }
 
 // TODO: Correctness check for bucket name.

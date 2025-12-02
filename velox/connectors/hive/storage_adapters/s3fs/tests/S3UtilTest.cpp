@@ -15,6 +15,7 @@
  */
 
 #include "velox/connectors/hive/storage_adapters/s3fs/S3Util.h"
+#include "velox/common/config/Config.h"
 
 #include "gtest/gtest.h"
 
@@ -100,12 +101,35 @@ TEST(S3UtilTest, s3Path) {
   EXPECT_EQ(path_5, "bucket-name/file.txt");
 }
 
-TEST(S3UtilTest, bucketAndKeyFromgetPath) {
+TEST(S3UtilTest, BucketAndKeyFromgetPath) {
+  auto baseConfig = std::make_shared<config::ConfigBase>(
+      std::unordered_map<std::string, std::string>{
+          {"hive.s3.mrap-enabled", "false"}});
+
+  S3Config s3Config("bucket", baseConfig);
+
   std::string bucket, key;
   auto path = "bucket/file.txt";
-  getBucketAndKeyFromPath(path, bucket, key);
-  EXPECT_EQ(bucket, "bucket");
-  EXPECT_EQ(key, "file.txt");
+  getBucketAndKeyFromPath(path, bucket, key, s3Config);
+
+  ASSERT_EQ(bucket, "bucket");
+  ASSERT_EQ(key, "file.txt");
+}
+
+TEST(S3UtilTest, BucketAndKeyFromgetPathMrapEnabled) {
+  auto baseConfig = std::make_shared<config::ConfigBase>(
+      std::unordered_map<std::string, std::string>{
+          {"hive.s3.mrap-enabled", "true"},
+          {"hive.s3.account-id", "123456789012"}});
+
+  S3Config s3Config("bucket", baseConfig);
+
+  std::string bucket, key;
+  auto path = "bucket/file.txt";
+  getBucketAndKeyFromPath(path, bucket, key, s3Config);
+
+  ASSERT_EQ(bucket, "arn:aws:s3::123456789012:accesspoint:bucket");
+  ASSERT_EQ(key, "file.txt");
 }
 
 TEST(S3UtilTest, isDomainExcludedFromProxy) {

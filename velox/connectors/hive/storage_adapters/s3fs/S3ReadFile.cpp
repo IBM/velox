@@ -76,9 +76,10 @@ class S3ReadFile ::Impl {
   explicit Impl(
       std::string_view path,
       Aws::S3::S3Client* client,
+      const S3Config& s3Config,
       uint32_t maxAttempts)
       : client_(client), maxAttempts_(maxAttempts) {
-    getBucketAndKeyFromPath(path, bucket_, key_);
+    getBucketAndKeyFromPath(path, bucket_, key_, s3Config);
   }
 
   // Gets the length of the file.
@@ -226,8 +227,9 @@ class S3ReadFile ::Impl {
 S3ReadFile::S3ReadFile(
     std::string_view path,
     Aws::S3::S3Client* client,
+    const S3Config& s3Config,
     uint32_t maxAttempts) {
-  impl_ = std::make_shared<Impl>(path, client, maxAttempts);
+  impl_ = std::make_shared<Impl>(path, client, s3Config, maxAttempts);
 }
 
 S3ReadFile::~S3ReadFile() = default;
