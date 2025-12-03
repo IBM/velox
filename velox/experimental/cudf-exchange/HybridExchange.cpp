@@ -368,6 +368,9 @@ RowVectorPtr HybridExchange::getOutputFromPackedColumns(
   auto mr = cudf::get_current_device_resource_ref();
   std::unique_ptr<cudf::table> tbl =
       std::make_unique<cudf::table>(tblView, stream, mr);
+
+  stream.synchronize();
+
   auto numRows = tbl->num_rows();
   // outputType_ is declared in the Operator base class.
   auto result = std::make_shared<cudf_velox::CudfVector>(
