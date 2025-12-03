@@ -107,9 +107,9 @@ void CudfPartitionedOutput::addInput(RowVectorPtr input) {
     auto queueManager = sharedQueueManager();
     if (numPartitions_ > 1) {
       if (partitionKeyIndices_.size() > 0 || spec_ == "gather") {
-        hashPartition(tableView, cudfVector->stream());
+        hashPartition(tableView, stream);
       } else {
-        equalPartition(tableView, cudfVector->stream());
+        equalPartition(tableView, stream);
       }
     } else {
       // Single partition case. No need to hash, assume queue zero
