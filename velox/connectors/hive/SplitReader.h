@@ -75,7 +75,8 @@ VectorPtr newConstantFromString(
     const std::optional<std::string>& value,
     velox::memory::MemoryPool* pool,
     bool isLocalTimestamp,
-    bool isDaysSinceEpoch);
+    bool isDaysSinceEpoch,
+    const tz::TimeZone* timezone = nullptr);
 
 struct HiveConnectorSplit;
 class HiveTableHandle;
@@ -229,6 +230,8 @@ class SplitReader {
   FileHandleFactory* const fileHandleFactory_;
   folly::Executor* const ioExecutor_;
   memory::MemoryPool* const pool_;
+  const tz::TimeZone* sessionTimezone_;
+  bool adjustTimestampToTimezone_;
 
   std::shared_ptr<common::ScanSpec> scanSpec_;
   std::unique_ptr<dwio::common::Reader> baseReader_;

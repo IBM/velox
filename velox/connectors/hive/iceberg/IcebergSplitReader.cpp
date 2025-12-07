@@ -256,7 +256,8 @@ std::vector<TypePtr> IcebergSplitReader::adaptColumns(
           connectorQueryCtx_->memoryPool(),
           hiveConfig_->readTimestampPartitionValueAsLocalTime(
               connectorQueryCtx_->sessionProperties()),
-          false);
+          false,
+          adjustTimestampToTimezone_ ? sessionTimezone_ : nullptr);
       childSpec->setConstantValue(constant);
     } else {
       auto fileTypeIdx = fileType->getChildIdxIfExists(fieldName);
