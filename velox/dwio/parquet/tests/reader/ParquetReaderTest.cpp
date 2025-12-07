@@ -134,14 +134,14 @@ TEST_F(ParquetReaderTest, parseParquetV2DeltaLengthByteArray) {
 
   dwio::common::ReaderOptions readerOptions{leafPool_.get()};
   readerOptions.setFileColumnNamesReadAsLowerCase(true);
-  readerOptions.setUseColumnNamesForColumnMapping(true);
+  readerOptions.setColumnMappingMode(dwio::common::ColumnMappingMode::kName);
   auto reader = createReader(sample, readerOptions);
   EXPECT_EQ(reader->numberOfRows(), 10ULL);
 
   auto type = reader->typeWithId();
   EXPECT_EQ(type->size(), 3ULL);
 
-  auto rowReaderOpts = getReaderOpts(usersSchema);
+  auto rowReaderOpts = makeRowReaderOpts(usersSchema);
   auto scanSpec = makeScanSpec(usersSchema);
   rowReaderOpts.setScanSpec(scanSpec);
   auto rowReader = reader->createRowReader(rowReaderOpts);
