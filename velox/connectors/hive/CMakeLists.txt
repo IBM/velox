@@ -15,8 +15,6 @@
 velox_add_library(velox_hive_config OBJECT HiveConfig.cpp)
 velox_link_libraries(velox_hive_config velox_core velox_exception)
 
-add_subdirectory(iceberg)
-
 velox_add_library(
   velox_hive_connector
   OBJECT
@@ -36,6 +34,9 @@ velox_add_library(
   TableHandle.cpp
 )
 
+add_subdirectory(iceberg)
+add_subdirectory(delta)
+
 velox_link_libraries(
   velox_hive_connector
   PRIVATE
@@ -44,7 +45,7 @@ velox_link_libraries(
     velox_dwio_catalog_fbhive
     velox_hive_partition_function
     velox_key_encoder
-  PUBLIC velox_hive_iceberg_splitreader
+  PUBLIC velox_hive_iceberg_splitreader velox_hive_delta_splitreader
 )
 
 velox_add_library(velox_hive_partition_function HivePartitionFunction.cpp)

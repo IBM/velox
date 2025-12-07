@@ -11,38 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-if(${VELOX_BUILD_TESTING})
-  add_subdirectory(tests)
-endif()
 
-velox_add_library(
-  velox_core
-  Expressions.cpp
-  ITypedExpr.cpp
-  PlanConsistencyChecker.cpp
-  PlanFragment.cpp
-  PlanNode.cpp
-  QueryConfig.cpp
-  QueryCtx.cpp
-  SimpleFunctionMetadata.cpp
-  TableWriteTraits.cpp
-  VectorUtil.cpp
-)
+if(NOT VELOX_DISABLE_GOOGLETEST)
+  add_executable(
+    velox_hive_delta_test
+    HiveDeltaSplitTest.cpp
+    PartitionValueConversionTest.cpp
+  )
 
-velox_link_libraries(
-  velox_core
-  PUBLIC
-    velox_arrow_bridge
-    velox_caching
-    velox_common_config
-    velox_connector
-    velox_exception
-    velox_expression_functions
-    velox_memory
+  add_test(velox_hive_delta_test velox_hive_delta_test)
+
+  target_link_libraries(
+    velox_hive_delta_test
+    velox_hive_delta_splitreader
+    velox_hive_connector
+    velox_dwio_common
     velox_type
     velox_vector
-    Boost::headers
-    Folly::folly
-    fmt::fmt
-  PRIVATE velox_encode
-)
+    velox_memory
+    velox_core
+    GTest::gtest
+    GTest::gtest_main
+    ${TEST_LINK_LIBS}
+  )
+endif()

@@ -20,6 +20,7 @@
 #include "velox/connectors/hive/iceberg/IcebergDeleteFile.h"
 #include "velox/connectors/hive/iceberg/IcebergMetadataColumns.h"
 #include "velox/connectors/hive/iceberg/IcebergSplit.h"
+#include "velox/core/VectorUtil.h"
 #include "velox/dwio/common/BufferUtil.h"
 
 using namespace facebook::velox::dwio::common;
@@ -262,13 +263,14 @@ std::vector<TypePtr> IcebergSplitReader::adaptColumns(
     if (auto iter = hiveSplit_->infoColumns.find(fieldName);
         iter != hiveSplit_->infoColumns.end()) {
       auto infoColumnType = readerOutputType_->findChild(fieldName);
-      auto constant = newConstantFromString(
+      auto constant = core::newConstantFromString(
           infoColumnType,
           iter->second,
           connectorQueryCtx_->memoryPool(),
           hiveConfig_->readTimestampPartitionValueAsLocalTime(
               connectorQueryCtx_->sessionProperties()),
-          false);
+          false,
+          adjustTimestampToTimezone_ ? sessionTimezone_ : nullptr);
       childSpec->setConstantValue(constant);
     } else {
       auto fileTypeIdx = fileType->getChildIdxIfExists(fieldName);

@@ -16,77 +16,23 @@
 
 #include "velox/connectors/hive/SplitReader.h"
 
+#include <cstddef>
+#include <cstdint>
+
 #include "velox/common/caching/CacheTTLController.h"
 #include "velox/connectors/hive/BufferedInputBuilder.h"
 #include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/connectors/hive/HiveConnectorUtil.h"
 #include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hive/delta/DeltaSplitReader.h"
 #include "velox/connectors/hive/iceberg/IcebergSplitReader.h"
+#include "velox/core/QueryConfig.h"
+#include "velox/core/VectorUtil.h"
 #include "velox/dwio/common/ReaderFactory.h"
+#include "velox/type/tz/TimeZoneMap.h"
 
 namespace facebook::velox::connector::hive {
-namespace {
-
-template <TypeKind kind>
-VectorPtr newConstantFromStringImpl(
-    const TypePtr& type,
-    const std::optional<std::string>& value,
-    velox::memory::MemoryPool* pool,
-    bool isLocalTimestamp,
-    bool isDaysSinceEpoch) {
-  using T = typename TypeTraits<kind>::NativeType;
-  if (!value.has_value()) {
-    return std::make_shared<ConstantVector<T>>(pool, 1, true, type, T());
-  }
-
-  if (type->isDate()) {
-    int32_t days = 0;
-    // For Iceberg, the date partition values are already in daysSinceEpoch
-    // form.
-    if (isDaysSinceEpoch) {
-      days = folly::to<int32_t>(value.value());
-    } else {
-      days = DATE()->toDays(value.value());
-    }
-    return std::make_shared<ConstantVector<int32_t>>(
-        pool, 1, false, type, std::move(days));
-  }
-
-  if constexpr (std::is_same_v<T, StringView>) {
-    return std::make_shared<ConstantVector<StringView>>(
-        pool, 1, false, type, StringView(value.value()));
-  } else {
-    auto copy = velox::util::Converter<kind>::tryCast(value.value())
-                    .thenOrThrow(folly::identity, [&](const Status& status) {
-                      VELOX_USER_FAIL("{}", status.message());
-                    });
-    if constexpr (kind == TypeKind::TIMESTAMP) {
-      if (isLocalTimestamp) {
-        copy.toGMT(Timestamp::defaultTimezone());
-      }
-    }
-    return std::make_shared<ConstantVector<T>>(
-        pool, 1, false, type, std::move(copy));
-  }
-}
-} // namespace
-
-VectorPtr newConstantFromString(
-    const TypePtr& type,
-    const std::optional<std::string>& value,
-    velox::memory::MemoryPool* pool,
-    bool isLocalTimestamp,
-    bool isDaysSinceEpoch) {
-  return VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH_ALL(
-      newConstantFromStringImpl,
-      type->kind(),
-      type,
-      value,
-      pool,
-      isLocalTimestamp,
-      isDaysSinceEpoch);
-}
 
 std::unique_ptr<SplitReader> SplitReader::create(
     const std::shared_ptr<hive::HiveConnectorSplit>& hiveSplit,
@@ -104,8 +50,9 @@ std::unique_ptr<SplitReader> SplitReader::create(
     std::atomic<uint64_t>& totalRemainingFilterTime,
     const common::SubfieldFilters* subfieldFiltersForValidation) {
   //  Create the SplitReader based on hiveSplit->customSplitInfo["table_format"]
-  if (hiveSplit->customSplitInfo.count("table_format") > 0 &&
-      hiveSplit->customSplitInfo["table_format"] == "hive-iceberg") {
+  if (hiveSplit->customSplitInfo.count("table_format") > 0) {
+    const auto& tableFormat = hiveSplit->customSplitInfo.at("table_format");
+    if (tableFormat == "hive-iceberg") {
     return std::make_unique<iceberg::IcebergSplitReader>(
         hiveSplit,
         hiveTableHandle,
@@ -120,21 +67,35 @@ std::unique_ptr<SplitReader> SplitReader::create(
         scanSpec,
         expressionEvaluator,
         totalRemainingFilterTime);
-  } else {
-    return std::unique_ptr<SplitReader>(new SplitReader(
-        hiveSplit,
-        hiveTableHandle,
-        partitionKeys,
-        connectorQueryCtx,
-        hiveConfig,
-        readerOutputType,
-        ioStatistics,
-        ioStats,
-        fileHandleFactory,
-        ioExecutor,
-        scanSpec,
-        subfieldFiltersForValidation));
+    } else if (tableFormat == "hive-delta") {
+      return std::make_unique<delta::DeltaSplitReader>(
+          hiveSplit,
+          hiveTableHandle,
+          partitionKeys,
+          connectorQueryCtx,
+          hiveConfig,
+          readerOutputType,
+          ioStatistics,
+          ioStats,
+          fileHandleFactory,
+          ioExecutor,
+          scanSpec);
+    }
   }
+
+  // Default to base SplitReader for regular Hive tables
+  return std::unique_ptr<SplitReader>(new SplitReader(
+      hiveSplit,
+      hiveTableHandle,
+      partitionKeys,
+      connectorQueryCtx,
+      hiveConfig,
+      readerOutputType,
+      ioStatistics,
+      ioStats,
+      fileHandleFactory,
+      ioExecutor,
+      scanSpec));
 }
 
 SplitReader::SplitReader(
@@ -162,6 +123,11 @@ SplitReader::SplitReader(
       fileHandleFactory_(fileHandleFactory),
       ioExecutor_(ioExecutor),
       pool_(connectorQueryCtx->memoryPool()),
+      sessionTimezone_(
+          connectorQueryCtx->sessionTimezone().empty()
+              ? nullptr
+              : tz::locateZone(connectorQueryCtx->sessionTimezone())),
+      adjustTimestampToTimezone_(connectorQueryCtx->adjustTimestampToTimezone()),
       scanSpec_(scanSpec),
       subfieldFiltersForValidation_(subfieldFiltersForValidation),
       baseReaderOpts_(connectorQueryCtx->memoryPool()),
@@ -487,13 +453,14 @@ std::vector<TypePtr> SplitReader::adaptColumns(
       // constant value for the column.
       auto infoColumnType =
           readerOutputType_->childAt(readerOutputType_->getChildIdx(fieldName));
-      auto constant = newConstantFromString(
+      auto constant = core::newConstantFromString(
           infoColumnType,
           iter->second,
           connectorQueryCtx_->memoryPool(),
           hiveConfig_->readTimestampPartitionValueAsLocalTime(
               connectorQueryCtx_->sessionProperties()),
-          false);
+          false,
+          adjustTimestampToTimezone_ ? sessionTimezone_ : nullptr);
       childSpec->setConstantValue(constant);
     } else if (
         childSpec->columnType() == common::ScanSpec::ColumnType::kRegular) {
@@ -547,13 +514,17 @@ void SplitReader::setPartitionValue(
       "ColumnHandle is missing for partition key {}",
       partitionKey);
   auto type = it->second->dataType();
-  auto constant = newConstantFromString(
+  auto constant = core::newConstantFromString(
       type,
       value,
       connectorQueryCtx_->memoryPool(),
       hiveConfig_->readTimestampPartitionValueAsLocalTime(
           connectorQueryCtx_->sessionProperties()),
-      it->second->isPartitionDateValueDaysSinceEpoch());
+      it->second->isPartitionDateValueDaysSinceEpoch(),
+      adjustTimestampToTimezone_ ? sessionTimezone_ : nullptr);
+  // Replace the placeholder null constant with the actual partition value.
+  // The column was already marked as constant in makeScanSpec to prevent
+  // child reader creation.
   spec->setConstantValue(constant);
 }
 
