@@ -290,6 +290,37 @@ char* RowContainer::newRow() {
   return initializeRow(row, false /* reuse */);
 }
 
+char* RowContainer::newRowTest(
+    uint64_t pageSize,
+    int32_t minPages,
+    int64_t hugePageThreshold,
+    int32_t hugePageNums,
+    bool enableHugePage) {
+  VELOX_DCHECK(mutable_, "Can't add row into an immutable row container");
+  ++numRows_;
+  char* row;
+  if (firstFreeRow_) {
+    row = firstFreeRow_;
+    VELOX_CHECK(bits::isBitSet(row, freeFlagOffset_));
+    firstFreeRow_ = nextFree(row);
+    --numFreeRows_;
+  } else {
+    row = rows_.allocateFixedTest(
+              fixedRowSize_ + normalizedKeySize_,
+              alignment_,
+              pageSize,
+              minPages,
+              hugePageThreshold,
+              hugePageNums,
+              enableHugePage) +
+        normalizedKeySize_;
+    if (normalizedKeySize_) {
+      ++numRowsWithNormalizedKey_;
+    }
+  }
+  return initializeRow(row, false /* reuse */);
+}
+
 void RowContainer::setAllNull(char* row) {
   VELOX_CHECK(!bits::isBitSet(row, freeFlagOffset_));
   removeOrUpdateRowColumnStats(row, /*setToNull=*/true);

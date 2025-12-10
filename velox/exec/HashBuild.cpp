@@ -437,8 +437,14 @@ void HashBuild::addInput(RowVectorPtr input) {
         input->childAt(spillProbedFlagChannel_)->asFlatVector<bool>();
   }
 
+  const auto& queryConfig = operatorCtx()->driverCtx()->queryConfig();
   activeRows_.applyToSelected([&](auto rowIndex) {
-    char* newRow = rows->newRow();
+    char* newRow = rows->newRowTest(
+        queryConfig.hashTablePageSize(),
+        queryConfig.hashTableMinPages(),
+        queryConfig.hashTableHugePageThreshold(),
+        queryConfig.hashTableHugePageNums(),
+        queryConfig.hashTableEnableHugePage());
     if (nextOffset) {
       *reinterpret_cast<char**>(newRow + nextOffset) = nullptr;
     }

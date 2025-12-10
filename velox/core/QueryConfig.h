@@ -760,6 +760,25 @@ class QueryConfig {
   /// estimates.
   static constexpr const char* kRowSizeTrackingMode = "row_size_tracking_mode";
 
+  /// The memory allocation unit size for HashTable operations.
+  /// It controls the page size used when allocating memory for hash table rows.
+  /// The value must be 2^n bytes between 4KB and 2MB.
+  /// The default value 4KB aligns with the standard machine page size used
+  /// throughout Velox's memory management.
+  /// This is an experimental property for performance tuning.
+  static constexpr const char* kHashTablePageSize = "hashtable_page_size";
+
+  static constexpr const char* kHashTableMinPages = "hashtable_min_pages";
+
+  static constexpr const char* kHashTableHugePageThreshold =
+      "hashtable_huge_page_threshold";
+
+  static constexpr const char* kHashTableHugePageNums =
+      "hashtable_huge_page_nums";
+
+  static constexpr const char* kHashTableEnableHugePage =
+      "hashtable_enable_huge_page";
+
   enum class RowSizeTrackingMode {
     DISABLED = 0,
     EXCLUDE_DELTA_SPLITS = 1,
@@ -1361,6 +1380,26 @@ class QueryConfig {
 
   int32_t maxNumSplitsListenedTo() const {
     return get<int32_t>(kMaxNumSplitsListenedTo, 0);
+  }
+
+  uint64_t hashTablePageSize() const {
+    return get<uint64_t>(kHashTablePageSize, 4096);
+  }
+
+  int32_t hashTableMinPages() const {
+    return get<int32_t>(kHashTableMinPages, 16);
+  }
+
+  int32_t hashTableHugePageNums() const {
+    return get<int32_t>(kHashTableHugePageNums, 16);
+  }
+
+  int64_t hashTableHugePageThreshold() const {
+    return get<int64_t>(kHashTableHugePageThreshold, 256 << 10);
+  }
+
+  bool hashTableEnableHugePage() const {
+    return get<bool>(kHashTableEnableHugePage, true);
   }
 
   std::string source() const {

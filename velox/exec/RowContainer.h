@@ -337,6 +337,13 @@ class RowContainer {
   /// Allocates a new row and initializes possible aggregates to null.
   char* newRow();
 
+  char* newRowTest(
+      uint64_t pageSize,
+      int32_t minPages = 16,
+      int64_t hugePageThreshold = 256 * 1024,
+      int32_t hugePageNums = 16,
+      bool enabHugePage = true);
+
   uint32_t rowSize(const char* row) const {
     return fixedRowSize_ +
         (rowSizeOffset_
