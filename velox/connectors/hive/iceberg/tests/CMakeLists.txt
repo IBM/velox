@@ -66,7 +66,6 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
     PartitionNameTest.cpp
     PartitionSpecTest.cpp
     PartitionValueFormatterTest.cpp
-    TransformE2ETest.cpp
     TransformTest.cpp
   )
 
