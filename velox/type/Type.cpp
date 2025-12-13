@@ -512,8 +512,16 @@ bool RowType::containsChild(std::string_view name) const {
 }
 
 uint32_t RowType::getChildIdx(std::string_view name) const {
+//  LOG(INFO) << "\ngetChildIdx: \n" << std::string(name).c_str();
+
   auto index = getChildIdxIfExists(name);
   if (!index.has_value()) {
+//    const auto& nameToIndex = this->nameToIndex();
+//    LOG(INFO) << name << " not found. nameToIndex: \n";
+//    for (auto entry : nameToIndex) {
+//      LOG(INFO) << entry.data << " -> " << entry.index;
+//    }
+
     VELOX_USER_FAIL(makeFieldNotFoundErrorMessage(name, names_));
   }
   return index.value();
@@ -521,7 +529,11 @@ uint32_t RowType::getChildIdx(std::string_view name) const {
 
 std::optional<uint32_t> RowType::getChildIdxIfExists(
     std::string_view name) const {
-  const auto& nameToIndex = this->nameToIndex();
+    const auto& nameToIndex = this->nameToIndex();
+//  for (auto entry : nameToIndex) {
+//    LOG(INFO) << entry.data << " -> " << entry.index;
+//  }
+
   auto it = nameToIndex.find(NameIndex{name, 0});
   if (it != nameToIndex.end()) {
     return it->index;
@@ -1619,5 +1631,20 @@ std::string stringifyTruncatedElementList(
   }
   out << "}";
   return out.str();
+}
+
+bool isIntegral(const TypePtr& type) {
+  return type->isBigint() || type->isInteger() || type->isSmallint() ||
+      type->isTinyint();
+}
+
+bool isWideningIntegerType(const TypePtr& inputType, const TypePtr& outputType) {
+  if (!isIntegral(outputType) || !isIntegral(inputType)) {
+    return false;
+  }
+  if (outputType->cppSizeInBytes() < inputType->cppSizeInBytes()) {
+    return true;
+  }
+  return false;
 }
 } // namespace facebook::velox

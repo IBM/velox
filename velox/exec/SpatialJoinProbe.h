@@ -47,7 +47,7 @@ class SpatialJoinOutputBuilder {
   void addOutputRow(vector_size_t probeRow, vector_size_t buildRow);
 
   /// Checks if it is required to add a probe mismatch row, and does it if
-  /// needed. The caller needs to ensure there is available space in `output_`
+  /// needed. The caller needs to ensure there is available space in `outputWithoutUpcasts_`
   /// for the new record, which has nulled out build projections.
   void addProbeMismatchRow(vector_size_t probeRow);
 

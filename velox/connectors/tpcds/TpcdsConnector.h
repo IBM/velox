@@ -145,7 +145,8 @@ class TpcdsConnector final : public velox::connector::Connector {
       const std::unordered_map<
           std::string,
           std::shared_ptr<const velox::connector::ColumnHandle>>& columnHandles,
-      ConnectorQueryCtx* FOLLY_NONNULL connectorQueryCtx) override final {
+      ConnectorQueryCtx* FOLLY_NONNULL connectorQueryCtx,
+      bool pushdownCasts = false) override final {
     return std::make_unique<TpcdsDataSource>(
         outputType,
         tableHandle,

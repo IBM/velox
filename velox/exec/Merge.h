@@ -128,7 +128,7 @@ class Merge : public SourceOperator {
   Stats mergeStats_;
 
   RowVectorPtr output_;
-  /// Number of rows accumulated in 'output_' so far.
+  /// Number of rows accumulated in 'outputWithoutUpcasts_' so far.
   vector_size_t outputSize_{0};
   bool finished_{false};
 
@@ -181,7 +181,7 @@ class SourceMerger {
 
   // Reusable output vector.
   RowVectorPtr output_;
-  // The number of rows in 'output_' vector.
+  // The number of rows in 'outputWithoutUpcasts_' vector.
   uint64_t outputRows_{0};
 };
 

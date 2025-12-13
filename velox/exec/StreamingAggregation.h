@@ -68,7 +68,7 @@ class StreamingAggregation : public Operator {
   // Write grouping keys from the specified input row into specified group.
   void storeKeys(char* group, vector_size_t index);
 
-  // Populate output_ vector using specified number of groups from the beginning
+  // Populate outputWithoutUpcasts_ vector using specified number of groups from the beginning
   // of the groups_ vector.
   RowVectorPtr createOutput(size_t numGroups);
 

@@ -378,7 +378,7 @@ RowVectorPtr SpatialJoinProbe::generateOutput() {
   outputBuilder_.initializeOutput(input_, pool());
 
   while (!isOutputDone()) {
-    // Fill output_ with the results from one row.  This may produce too
+    // Fill outputWithoutUpcasts_ with the results from one row.  This may produce too
     // much output and only partially complete.  If so, the next time we
     // call this we'll get the next chunk.
     //

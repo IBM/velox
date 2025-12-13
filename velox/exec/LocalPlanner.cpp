@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 #include "velox/exec/LocalPlanner.h"
+
+#include <set>
+
 #include "velox/core/PlanFragment.h"
 #include "velox/exec/ArrowStream.h"
 #include "velox/exec/AssignUniqueId.h"
@@ -55,6 +58,13 @@
 
 namespace facebook::velox::exec {
 
+// E.g. provider_id -> (Cast(provider_id as bigint), 22). There could be
+// multiple entries for the same field name, eg. provider_id ->
+// (Cast(provider_id as bigint), 1943) because there could be multiple widening
+// integer casts on the same field on different PlanNodes in the plan.
+using ExprMap =
+    std::multimap<std::string, std::pair<core::TypedExprPtr, core::PlanNodeId>>;
+
 namespace {
 
 // If the upstream is partial limit, downstream is final limit and we want to
@@ -74,10 +84,10 @@ bool eagerFlush(const core::PlanNode& node) {
 
 namespace detail {
 
+using PlanNodePtr = std::shared_ptr<const core::PlanNode>;
+
 /// Returns true if source nodes must run in a separate pipeline.
-bool mustStartNewPipeline(
-    const std::shared_ptr<const core::PlanNode>& planNode,
-    int sourceId) {
+bool mustStartNewPipeline(const PlanNodePtr& planNode, int sourceId) {
   if (auto localMerge =
           std::dynamic_pointer_cast<const core::LocalMergeNode>(planNode)) {
     // LocalMerge's source runs on its own pipeline.
@@ -118,8 +128,7 @@ OperatorSupplier makeOperatorSupplier(ConsumerSupplier consumerSupplier) {
   return nullptr;
 }
 
-OperatorSupplier makeOperatorSupplier(
-    const std::shared_ptr<const core::PlanNode>& planNode) {
+OperatorSupplier makeOperatorSupplier(const PlanNodePtr& planNode) {
   if (auto localMerge =
           std::dynamic_pointer_cast<const core::LocalMergeNode>(planNode)) {
     return [localMerge](int32_t operatorId, DriverCtx* ctx) {
@@ -218,10 +227,58 @@ OperatorSupplier makeOperatorSupplier(
   return Operator::operatorSupplierFromPlanNode(planNode);
 }
 
+// void removeOutputFromHashKeys(
+//     const RowTypePtr& outputRowType,
+//     std::set<std::string>& hashKeys) {
+//   for (const auto& outputFieldName : outputRowType->names()) {
+//     hashKeys.erase(outputFieldName);
+//   }
+//
+//   if (type->isPrimitiveType()) {
+//     hashKeys.erase(std::string(name));
+//     return;
+//   }
+//
+//   if (type->isMap()) {
+//     const auto& mapType = type->as<TypeKind::MAP>();
+//     removeOutputFromHashKeys(mapType.keyType(), hashKeys);
+//     removeOutputFromHashKeys(mapType.valueType(), hashKeys);
+//   } else if (type->isArray()) {
+//     const auto& arrayType = type->as<TypeKind::ARRAY>();
+//     removeOutputFromHashKeys(arrayType.elementType(), hashKeys);
+//   } else if (type->isRow()) {
+//     const auto& rowType = type->as<TypeKind::ROW>();
+//     for (const auto& childType : rowType.children()) {
+//       removeOutputFromHashKeys(childType, hashKeys);
+//     }
+//   } else {
+//     VELOX_UNREACHABLE(
+//         "removeOutputFromHashKeys: Unsupported complex type: {}",
+//         type->toString());
+//   }
+// }
+
+bool isWideningIntegerCast(const core::TypedExprPtr& expr) {
+  auto castExpr = std::dynamic_pointer_cast<const core::CastTypedExpr>(expr);
+  if (!castExpr) {
+    return false;
+  }
+
+  auto outputType = castExpr->type();
+  auto inputType = castExpr->inputs()[0]->type();
+  if (!isIntegral(outputType) || !isIntegral(inputType)) {
+    return false;
+  }
+  if (outputType->cppSizeInBytes() > inputType->cppSizeInBytes()) {
+    return true;
+  }
+  return false;
+}
+
 void plan(
-    const std::shared_ptr<const core::PlanNode>& planNode,
-    std::vector<std::shared_ptr<const core::PlanNode>>* currentPlanNodes,
-    const std::shared_ptr<const core::PlanNode>& consumerNode,
+    const PlanNodePtr& planNode,
+    std::vector<PlanNodePtr>* currentPlanNodes,
+    const PlanNodePtr& consumerNode,
     OperatorSupplier operatorSupplier,
     std::vector<std::unique_ptr<DriverFactory>>* driverFactories) {
   if (!currentPlanNodes) {
@@ -251,9 +308,406 @@ void plan(
   currentPlanNodes->push_back(planNode);
 }
 
+// Add upcast column (name + "_upcast") into names/types vectors.
+void addUpcastColumn(
+    const std::string& name,
+    const core::TypedExprPtr& expr,
+    std::vector<std::string>& names,
+    std::vector<TypePtr>& types) {
+  auto castExpr = std::dynamic_pointer_cast<const core::CastTypedExpr>(expr);
+  VELOX_CHECK(castExpr, "Expected CastTypedExpr for {}", name);
+
+  names.push_back(name + "_upcast");
+  types.push_back(castExpr->type());
+}
+
+PlanNodePtr rewriteProjectNode(
+    core::ProjectNodePtr projectNode,
+    ExprMap& castExprs,
+    const std::set<int>& exprReplaceIdx,
+    const std::vector<PlanNodePtr>& newSources) {
+  const auto& planNodeId = projectNode->id();
+  const auto& names = projectNode->names();
+  const auto& exprs = projectNode->projections();
+
+  std::vector<core::TypedExprPtr> newProjections;
+  newProjections.reserve(exprs.size() + castExprs.size());
+
+  std::vector<std::string> newNames;
+  newNames.reserve(names.size() + castExprs.size());
+
+  for (int i = 0; i < exprs.size(); i++) {
+    const auto& proj = exprs[i];
+    const auto& name = names[i];
+
+    // Case 1: replaced by its input expression
+    if (exprReplaceIdx.count(i)) {
+      VELOX_CHECK(isWideningIntegerCast(proj));
+      VELOX_CHECK_EQ(proj->inputs().size(), 1);
+
+      auto field = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+          proj->inputs()[0]);
+      VELOX_CHECK(field);
+
+      // Note that field->name() is not necessarily equal to 'name' here. E.g.
+      // name = "expr_298", field->name() = "provider_id"
+      const auto upcastName = field->name() + "_upcast";
+
+      // Validate that the upcast column exists in the new source
+      const auto found = newSources[0]->outputType()->findChild(upcastName);
+      VELOX_CHECK(
+          found && found->equivalent(*proj->type()),
+          "Upcast type mismatch for '{}_upcast'",
+          field->name());
+
+      newProjections.push_back(
+          std::make_shared<core::FieldAccessTypedExpr>(
+              proj->type(), upcastName));
+      newNames.push_back(name);
+
+      // The replacement is done and downstream plan nodes don't need to change
+      // anymore. Remove this cast from the castExprs map
+      auto it = castExprs.find(name);
+      while (it != castExprs.end()) {
+        if (it->second.second == planNodeId) {
+          castExprs.erase(it);
+          break;
+        }
+        ++it;
+      }
+
+      continue;
+    }
+
+    // Case 2: keep original projection, e.g. provider_id
+    newProjections.push_back(proj);
+    newNames.push_back(name);
+
+    // Case 3: add upcast column if this is not case 1 but needs upcasting, e.g.
+    // provider_id_upcast
+    auto it = castExprs.find(name);
+    if (it != castExprs.end() && exprReplaceIdx.count(i) == 0) {
+      const std::string upName = name + "_upcast";
+      const auto& castExpr = it->second.first;
+      auto expectedType = castExpr->type();
+
+      const auto found = newSources[0]->outputType()->findChild(upName);
+      VELOX_CHECK(
+          found && found->equivalent(*expectedType),
+          "Upcast type mismatch for '{}'",
+          upName);
+
+      newProjections.push_back(
+          std::make_shared<core::FieldAccessTypedExpr>(expectedType, upName));
+      newNames.push_back(upName);
+    }
+  }
+
+  return std::make_shared<core::ProjectNode>(
+      projectNode->id(), newNames, newProjections, newSources[0]);
+}
+
+PlanNodePtr rewriteTableScanNode(
+    core::TableScanNodePtr scan,
+    const ExprMap& castExprs) {
+  if (castExprs.empty()) {
+    return scan;
+  }
+
+  const auto& type = scan->outputType();
+
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+
+  names.reserve(type->size() + castExprs.size());
+  types.reserve(type->size() + castExprs.size());
+
+  for (int i = 0; i < type->size(); i++) {
+    const auto& name = type->nameOf(i);
+    names.push_back(std::move(name));
+    types.push_back(std::move(type->childAt(i)));
+
+    if (auto it = castExprs.find(name); it != castExprs.end()) {
+      // It could have multiple widening casts on the same field name, but we
+      // only need to add it once.
+      addUpcastColumn(name, it->second.first, names, types);
+    }
+  }
+
+  auto newType = std::make_shared<RowType>(std::move(names), std::move(types));
+
+  core::TableScanNode::Builder builder(*scan);
+  return builder.outputType(newType).build();
+}
+
+PlanNodePtr rewriteExchangeNode(
+    core::ExchangeNodePtr exchangeNode,
+    const ExprMap& castExprs) {
+  if (castExprs.empty()) {
+    return exchangeNode;
+  }
+
+  const auto& type = exchangeNode->outputType();
+
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+
+  names.reserve(type->size() + castExprs.size());
+  types.reserve(type->size() + castExprs.size());
+
+  for (int i = 0; i < type->size(); i++) {
+    const auto& name = type->nameOf(i);
+    names.push_back(std::move(name));
+    types.push_back(std::move(type->childAt(i)));
+
+    if (auto it = castExprs.find(name); it != castExprs.end()) {
+      addUpcastColumn(name, it->second.first, names, types);
+      //      VLOG(2) << "Insert new column: " << names.back() << " with type "
+      //              << type->childAt(i) << " to TableScanNode.";
+    }
+  }
+
+  auto newType = std::make_shared<RowType>(std::move(names), std::move(types));
+
+  core::ExchangeNode::Builder builder(*exchangeNode);
+  return builder.outputType(newType).build();
+}
+
+// returns true if the cast can be pushed to the scan/exchange through this plan
+// subtree.
+bool canPushUpcastThrough(
+    const core::PlanNodePtr& node,
+    const std::string& column) {
+  using namespace facebook::velox::core;
+
+  // blocking nodes
+  if (std::dynamic_pointer_cast<const AggregationNode>(node) ||
+      std::dynamic_pointer_cast<const ExpandNode>(node) ||
+      std::dynamic_pointer_cast<const GroupIdNode>(node) ||
+      std::dynamic_pointer_cast<const WindowNode>(node)) {
+    return false;
+  }
+
+  // Join case — we must determine which side carries the column.
+  if (auto join = std::dynamic_pointer_cast<const AbstractJoinNode>(node)) {
+    auto left = join->sources()[0];
+    auto right = join->sources()[1];
+
+    bool leftHas = left->outputType()->containsChild(column);
+    bool rightHas = right->outputType()->containsChild(column);
+
+    // illegal if both or neither sides contain it
+    if ((leftHas && rightHas) || (!leftHas && !rightHas)) {
+      return false;
+    }
+
+    // Only recurse into the correct side
+    return canPushUpcastThrough(leftHas ? left : right, column);
+  }
+
+  // Base case support source
+  if (std::dynamic_pointer_cast<const TableScanNode>(node) ||
+      std::dynamic_pointer_cast<const ExchangeNode>(node)) {
+    return true;
+  }
+
+  // Generic recursive case (Filter, Project, Limit, TopN, OrderBy…)
+  for (auto& src : node->sources()) {
+    if (src->outputType()->containsChild(column) &&
+        !canPushUpcastThrough(src, column)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+struct NodeAnalysis {
+  bool needRewrite{false};
+  std::set<int> projectionsToReplace; // indices of projections to replace
+};
+
+NodeAnalysis preAnalyzeNode(const PlanNodePtr& node, ExprMap& exprsToPush) {
+  NodeAnalysis analysis;
+
+  auto project = std::dynamic_pointer_cast<const core::ProjectNode>(node);
+  if (!project) {
+    return analysis;
+  }
+
+  VELOX_CHECK_EQ(project->sources().size(), 1);
+
+  const auto& names = project->names();
+  const auto& exprs = project->projections();
+
+  for (int i = 0; i < names.size(); i++) {
+    const auto& projection = exprs[i];
+
+    if (!isWideningIntegerCast(projection)) {
+      continue;
+    }
+
+    VELOX_CHECK_EQ(projection->inputs().size(), 1);
+
+    auto input = std::dynamic_pointer_cast<const core::FieldAccessTypedExpr>(
+        projection->inputs()[0]);
+    VELOX_CHECK(input);
+
+    if (!canPushUpcastThrough(node->sources()[0], input->name())) {
+      // block this cast from being pushed down
+      continue;
+    }
+
+    // We use the field name (input->name()) as the key to push down the
+    // cast expression. E.g. provider_id -> (Cast(provider_id as bigint), 22)
+    exprsToPush.emplace(input->name(), std::make_pair(projection, node->id()));
+    analysis.projectionsToReplace.insert(i);
+    analysis.needRewrite = true;
+
+    //    VLOG(2) << "Pushdown cast " << names[i] << " → child: " <<
+    //    input->name();
+  }
+
+  return analysis;
+}
+
+PlanNodePtr rewriteNode(
+    PlanNodePtr node,
+    const ExprMap& exprsToPush,
+    const NodeAnalysis& analysis,
+    const std::vector<PlanNodePtr>& newSources) {
+  // TableScan
+  if (auto scan = std::dynamic_pointer_cast<const core::TableScanNode>(node)) {
+    return rewriteTableScanNode(scan, const_cast<ExprMap&>(exprsToPush));
+  }
+
+  // Exchange
+  if (auto exch = std::dynamic_pointer_cast<const core::ExchangeNode>(node)) {
+    return rewriteExchangeNode(exch, const_cast<ExprMap&>(exprsToPush));
+  }
+
+  // Project
+  if (auto proj = std::dynamic_pointer_cast<const core::ProjectNode>(node)) {
+    return rewriteProjectNode(
+        proj,
+        const_cast<ExprMap&>(exprsToPush),
+        analysis.projectionsToReplace,
+        newSources);
+  }
+
+  // Generic
+  if (!newSources.empty()) {
+    auto rewritten = node->copyWithNewSources(std::move(newSources));
+    return rewritten;
+  }
+
+  return node;
+}
+
+PlanNodePtr planWithCastPushdown(
+    PlanNodePtr node,
+    bool newPipeline,
+    const PlanNodePtr& consumerNode,
+    OperatorSupplier incomingSupplier,
+    std::vector<std::unique_ptr<DriverFactory>>* driverFactories,
+    ExprMap& exprsToPush) {
+  // 1. Pipeline creation
+
+  if (newPipeline) {
+    // New pipeline root -> compute supplier *NOW* using rewritten node
+    auto newDriverFactory = std::make_unique<DriverFactory>();
+
+    // Only call makeOperatorSupplier when creating a new DriverFactory
+    newDriverFactory->operatorSupplier = incomingSupplier;
+    newDriverFactory->consumerNode = consumerNode;
+    driverFactories->push_back(std::move(newDriverFactory));
+  }
+
+  auto driverFactory = driverFactories->back().get();
+  auto& currentPlanNodes = driverFactory->planNodes;
+
+  // 2. Analyze the current node to see if there is any upcast that can be
+  // pushed down. Populate analysis info and exprsToPush
+
+  auto analysis = preAnalyzeNode(node, exprsToPush);
+
+  // 3. Plan children
+
+  auto& sources = node->sources();
+  const int numSources = isIndexLookupJoin(node.get()) ? 1 : sources.size();
+  std::vector<PlanNodePtr> newSources;
+
+  // For each child we record whether it started its own pipeline and,
+  // if so, which DriverFactory index corresponds to that child pipeline.
+  std::vector<int> childPipelineIndex(numSources, -1);
+  bool childrenChanged = false;
+
+  if (sources.empty()) {
+    driverFactory->inputDriver = true;
+  } else {
+    for (int i = 0; i < numSources; i++) {
+      ExprMap exprsForChild;
+      const auto& childType = sources[i]->outputType();
+
+      for (auto& [name, expr] : exprsToPush) {
+        if (childType->containsChild(name)) {
+          exprsForChild.emplace(name, expr);
+        }
+      }
+
+      // If the child starts a new pipeline, remember the index *before*
+      // recursing. The child's root pipeline will be created at this index.
+      bool childNewPipeline = mustStartNewPipeline(node, i);
+      if (childNewPipeline) {
+        // The root pipeline for this child is at index 'before'.
+        childPipelineIndex[i] = driverFactories->size();
+      }
+      auto child = planWithCastPushdown(
+          sources[i],
+          childNewPipeline,
+          node,
+          /*incomingSupplier*/ nullptr, // supplier will be set after rewrite
+          driverFactories,
+          exprsForChild);
+
+      newSources.push_back(child);
+      childrenChanged |= (child != sources[i]);
+    }
+  }
+
+  // 4. Rewrite current node if needed
+
+  if (analysis.needRewrite || childrenChanged || !exprsToPush.empty()) {
+    node = rewriteNode(node, exprsToPush, analysis, newSources);
+  }
+
+  // 5. Update the operator supplier for the child pipelines, if this node(e.g.
+  // LocalPartition, LocalMerge, HashJoin build) creates new pipeline.
+
+  for (int i = 0; i < numSources; i++) {
+    const int childDriverFactoryIndex = childPipelineIndex[i];
+    if (childDriverFactoryIndex < 0) {
+      continue; // this child didn't start a new pipeline
+    }
+    VELOX_CHECK_LT(childDriverFactoryIndex, driverFactories->size());
+    auto* childDriverFactory =
+        (*driverFactories)[childDriverFactoryIndex].get();
+
+    // Only override if it wasn't set at creation time (should be nullptr
+    // for child pipelines in this scheme).
+    VELOX_CHECK(
+        !childDriverFactory->operatorSupplier,
+        "Child pipeline operatorSupplier unexpectedly already set.");
+    childDriverFactory->operatorSupplier = makeOperatorSupplier(node);
+  }
+
+  // 6. Add this node (rewritten) to current pipeline
+  currentPlanNodes.push_back(node);
+
+  return node;
+}
+
 // Sometimes consumer limits the number of drivers its producer can run.
-uint32_t maxDriversForConsumer(
-    const std::shared_ptr<const core::PlanNode>& node) {
+uint32_t maxDriversForConsumer(const PlanNodePtr& node) {
   if (std::dynamic_pointer_cast<const core::MergeJoinNode>(node)) {
     // MergeJoinNode must run single-threaded.
     return 1;
@@ -370,12 +824,25 @@ void LocalPlanner::plan(
       adapter.inspect(planFragment);
     }
   }
-  detail::plan(
-      planFragment.planNode,
-      nullptr,
-      nullptr,
-      detail::makeOperatorSupplier(std::move(consumerSupplier)),
-      driverFactories);
+
+  if (queryConfig.pushdownIntegerUpcastsToSource()) {
+    ExprMap exprsToBePushedDown;
+    detail::planWithCastPushdown(
+        planFragment.planNode,
+        true,
+        nullptr,
+        //        nullptr,
+        detail::makeOperatorSupplier(std::move(consumerSupplier)),
+        driverFactories,
+        exprsToBePushedDown);
+  } else {
+    detail::plan(
+        planFragment.planNode,
+        nullptr,
+        nullptr,
+        detail::makeOperatorSupplier(std::move(consumerSupplier)),
+        driverFactories);
+  }
 
   (*driverFactories)[0]->outputDriver = true;
 

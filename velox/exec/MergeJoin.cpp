@@ -466,7 +466,7 @@ bool MergeJoin::tryAddOutputRow(
 bool MergeJoin::prepareOutput(
     const RowVectorPtr& left,
     const RowVectorPtr& right) {
-  // If there is already an allocated output_, check if we can use it.
+  // If there is already an allocated outputWithoutUpcasts_, check if we can use it.
   if (output_ != nullptr) {
     // If there is a new left, we can't continue using it as the old one is the
     // base for the current left dictionary.
@@ -994,7 +994,7 @@ RowVectorPtr MergeJoin::doGetOutput() {
     while (compareResult < 0) {
       if (isLeftJoin(joinType_) || isAntiJoin(joinType_) ||
           isFullJoin(joinType_)) {
-        // If output_ is currently wrapping a different buffer, return it
+        // If outputWithoutUpcasts_ is currently wrapping a different buffer, return it
         // first.
         if (prepareOutput(input_, rightInput_)) {
           output_->resize(outputSize_);
@@ -1019,7 +1019,7 @@ RowVectorPtr MergeJoin::doGetOutput() {
     // Catch up rightInput_ with input_.
     while (compareResult > 0) {
       if (isRightJoin(joinType_) || isFullJoin(joinType_)) {
-        // If output_ is currently wrapping a different buffer, return it
+        // If outputWithoutUpcasts_ is currently wrapping a different buffer, return it
         // first.
         if (prepareOutput(input_, rightInput_)) {
           output_->resize(outputSize_);
@@ -1119,7 +1119,7 @@ RowVectorPtr MergeJoin::handleSingleSideOutput() {
 
   if (isLeftJoin(joinType_) || isAntiJoin(joinType_)) {
     if (input_ && rightHasNoInput()) {
-      // If output_ is currently wrapping a different buffer, return it
+      // If outputWithoutUpcasts_ is currently wrapping a different buffer, return it
       // first.
       if (prepareOutput(input_, nullptr)) {
         output_->resize(outputSize_);
@@ -1149,7 +1149,7 @@ RowVectorPtr MergeJoin::handleSingleSideOutput() {
     }
   } else if (isRightJoin(joinType_)) {
     if (rightInput_ && leftHasNoInput()) {
-      // If output_ is currently wrapping a different buffer, return it
+      // If outputWithoutUpcasts_ is currently wrapping a different buffer, return it
       // first.
       if (prepareOutput(nullptr, rightInput_)) {
         output_->resize(outputSize_);
@@ -1181,7 +1181,7 @@ RowVectorPtr MergeJoin::handleSingleSideOutput() {
     }
   } else if (isFullJoin(joinType_)) {
     if (input_ && rightHasNoInput()) {
-      // If output_ is currently wrapping a different buffer, return it
+      // If outputWithoutUpcasts_ is currently wrapping a different buffer, return it
       // first.
       if (prepareOutput(input_, nullptr)) {
         output_->resize(outputSize_);
@@ -1207,7 +1207,7 @@ RowVectorPtr MergeJoin::handleSingleSideOutput() {
     }
 
     if (rightInput_ && leftHasNoInput()) {
-      // If output_ is currently wrapping a different buffer, return it
+      // If outputWithoutUpcasts_ is currently wrapping a different buffer, return it
       // first.
       if (prepareOutput(nullptr, rightInput_)) {
         output_->resize(outputSize_);

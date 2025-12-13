@@ -30,7 +30,8 @@ class TestConnector : public connector::Connector {
       const RowTypePtr& /* outputType */,
       const ConnectorTableHandlePtr& /* tableHandle */,
       const connector::ColumnHandleMap& /* columnHandles */,
-      connector::ConnectorQueryCtx* connectorQueryCtx) override {
+      connector::ConnectorQueryCtx* connectorQueryCtx,
+      bool pushdownCasts) override {
     VELOX_NYI();
   }
 

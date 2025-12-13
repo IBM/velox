@@ -91,14 +91,17 @@ HiveDataSource::HiveDataSource(
     FileHandleFactory* fileHandleFactory,
     folly::Executor* ioExecutor,
     const ConnectorQueryCtx* connectorQueryCtx,
-    const std::shared_ptr<HiveConfig>& hiveConfig)
-    : fileHandleFactory_(fileHandleFactory),
+    const std::shared_ptr<HiveConfig>& hiveConfig,
+    bool pushdownCasts)
+    : assignments_(assignments),
+      fileHandleFactory_(fileHandleFactory),
       ioExecutor_(ioExecutor),
       connectorQueryCtx_(connectorQueryCtx),
       hiveConfig_(hiveConfig),
       pool_(connectorQueryCtx->memoryPool()),
       outputType_(outputType),
-      expressionEvaluator_(connectorQueryCtx->expressionEvaluator()) {
+      expressionEvaluator_(connectorQueryCtx->expressionEvaluator()),
+      pushdownCasts_(pushdownCasts) {
   hiveTableHandle_ =
       std::dynamic_pointer_cast<const HiveTableHandle>(tableHandle);
   VELOX_CHECK_NOT_NULL(
@@ -138,22 +141,44 @@ HiveDataSource::HiveDataSource(
   }
 
   std::vector<std::string> readColumnNames;
-  auto readColumnTypes = outputType_->children();
-  for (const auto& outputName : outputType_->names()) {
-    auto it = assignments.find(outputName);
-    VELOX_CHECK(
-        it != assignments.end(),
-        "ColumnHandle is missing for output column: {}",
-        outputName);
+  std::vector<TypePtr> readColumnTypes;
+  std::vector<std::string> readColumnNamesWithoutUpcasts;
+  std::vector<TypePtr> readColumnTypesWithoutUpcasts;
 
+  // outputType_ contains the upcast columns if pushdownCasts_ is true.
+  for (int i = 0; i < outputType_->size(); ++i) {
+    auto columnName = outputType_->nameOf(i); // e.g. order_id_21_upcast
+    auto& columnType = outputType_->childAt(i);
+
+    auto originalColumnName = columnName;
+    if (pushdownCasts_ && columnName.ends_with("_upcast")) {
+      originalColumnName =
+          columnName.substr(0, columnName.size() - strlen("_upcast"));
+    }
+
+    // Get the ColumnHandle name. This is the name without aliasing. e.g.
+    // originalColumnName="order_id_21", and columnHandleName="order_id"
+    auto it = assignments_.find(originalColumnName);
+    VELOX_CHECK(
+        it != assignments_.end(),
+        "ColumnHandle is missing for output column: {}",
+        columnName);
     auto* handle = static_cast<const HiveColumnHandle*>(it->second.get());
-    readColumnNames.push_back(handle->name());
+    auto columnHandleName = handle->name();
+
+    if (!pushdownCasts_ || !columnName.ends_with("_upcast")) {
+      readColumnNamesWithoutUpcasts.push_back(columnHandleName);
+      readColumnTypesWithoutUpcasts.push_back(columnType);
+    }
+    readColumnNames.push_back(columnHandleName);
+    readColumnTypes.push_back(columnType);
+
     for (auto& subfield : handle->requiredSubfields()) {
       VELOX_USER_CHECK_EQ(
           getColumnName(subfield),
           handle->name(),
           "Required subfield does not match column name");
-      subfields_[handle->name()].push_back(&subfield);
+      subfields_[columnHandleName].push_back(&subfield);
     }
     columnPostProcessors_.push_back(handle->postProcessor());
   }
@@ -195,7 +220,7 @@ HiveDataSource::HiveDataSource(
       }
       // Remaining filter may reference columns that are not used otherwise,
       // e.g. are not being projected out and are not used in range filters.
-      // Make sure to add these columns to readerOutputType_.
+      // Make sure to add these columns to readerOutputTypeWithoutUpcasts_.
       readColumnNames.push_back(input->field());
       readColumnTypes.push_back(input->type());
     }
@@ -222,8 +247,12 @@ HiveDataSource::HiveDataSource(
 
   readerOutputType_ =
       ROW(std::move(readColumnNames), std::move(readColumnTypes));
+  // NO upcast columns
+  readerOutputTypeWithoutUpcasts_ =
+      ROW(std::move(readColumnNamesWithoutUpcasts),
+          std::move(readColumnTypesWithoutUpcasts));
   scanSpec_ = makeScanSpec(
-      readerOutputType_,
+      readerOutputTypeWithoutUpcasts_,
       subfields_,
       filters_,
       hiveTableHandle_->dataColumns(),
@@ -249,7 +278,7 @@ std::unique_ptr<SplitReader> HiveDataSource::createSplitReader() {
       &partitionKeys_,
       connectorQueryCtx_,
       hiveConfig_,
-      readerOutputType_,
+      readerOutputTypeWithoutUpcasts_,
       ioStats_,
       fsStats_,
       fileHandleFactory_,
@@ -275,11 +304,12 @@ std::vector<column_index_t> HiveDataSource::setupBucketConversion() {
     if (subfields_.erase(handle->name()) > 0) {
       rebuildScanSpec = true;
     }
-    auto index = readerOutputType_->getChildIdxIfExists(handle->name());
+    auto index =
+        readerOutputTypeWithoutUpcasts_->getChildIdxIfExists(handle->name());
     if (!index.has_value()) {
       if (names.empty()) {
-        names = readerOutputType_->names();
-        types = readerOutputType_->children();
+        names = readerOutputTypeWithoutUpcasts_->names();
+        types = readerOutputTypeWithoutUpcasts_->children();
       }
       index = names.size();
       names.push_back(handle->name());
@@ -290,11 +320,11 @@ std::vector<column_index_t> HiveDataSource::setupBucketConversion() {
     bucketChannels.push_back(*index);
   }
   if (!names.empty()) {
-    readerOutputType_ = ROW(std::move(names), std::move(types));
+    readerOutputTypeWithoutUpcasts_ = ROW(std::move(names), std::move(types));
   }
   if (rebuildScanSpec) {
     auto newScanSpec = makeScanSpec(
-        readerOutputType_,
+        readerOutputTypeWithoutUpcasts_,
         subfields_,
         filters_,
         hiveTableHandle_->dataColumns(),
@@ -316,7 +346,8 @@ void HiveDataSource::setupRowIdColumn() {
   auto* rowId = scanSpec_->childByName(*specialColumns_.rowId);
   VELOX_CHECK_NOT_NULL(rowId);
   auto& rowIdType =
-      readerOutputType_->findChild(*specialColumns_.rowId)->asRow();
+      readerOutputTypeWithoutUpcasts_->findChild(*specialColumns_.rowId)
+          ->asRow();
   auto rowGroupId = split_->getFileName();
   rowId->childByName(rowIdType.nameOf(1))
       ->setConstantValue<StringView>(
@@ -341,8 +372,6 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   split_ = std::dynamic_pointer_cast<HiveConnectorSplit>(split);
   VELOX_CHECK_NOT_NULL(split_, "Wrong type of split");
 
-  VLOG(1) << "Adding split " << split_->toString();
-
   if (splitReader_) {
     splitReader_.reset();
   }
@@ -364,7 +393,7 @@ void HiveDataSource::addSplit(std::shared_ptr<ConnectorSplit> split) {
   // so we initialize it beforehand.
   splitReader_->configureReaderOptions(randomSkip_);
   splitReader_->prepareSplit(metadataFilter_, runtimeStats_);
-  readerOutputType_ = splitReader_->readerOutputType();
+  readerOutputTypeWithoutUpcasts_ = splitReader_->readerOutputType();
 }
 
 std::optional<RowVectorPtr> HiveDataSource::next(
@@ -383,14 +412,16 @@ std::optional<RowVectorPtr> HiveDataSource::next(
 
   // Bucket conversion or delta update could add extra column to reader output.
   auto needsExtraColumn = [&] {
-    return output_->asUnchecked<RowVector>()->childrenSize() <
-        readerOutputType_->size();
+    return outputWithoutUpcasts_->asUnchecked<RowVector>()->childrenSize() <
+        readerOutputTypeWithoutUpcasts_->size();
   };
-  if (!output_ || needsExtraColumn()) {
-    output_ = BaseVector::create(readerOutputType_, 0, pool_);
+  if (!outputWithoutUpcasts_ || needsExtraColumn()) {
+    outputWithoutUpcasts_ =
+        BaseVector::create(readerOutputTypeWithoutUpcasts_, 0, pool_);
   }
 
-  const auto rowsScanned = splitReader_->next(size, output_);
+  // Read only the real columns, not the upcast columns.
+  const auto rowsScanned = splitReader_->next(size, outputWithoutUpcasts_);
   completedRows_ += rowsScanned;
   if (rowsScanned == 0) {
     splitReader_->updateRuntimeStats(runtimeStats_);
@@ -399,14 +430,15 @@ std::optional<RowVectorPtr> HiveDataSource::next(
   }
 
   VELOX_CHECK(
-      !output_->mayHaveNulls(), "Top-level row vector cannot have nulls");
-  auto rowsRemaining = output_->size();
+      !outputWithoutUpcasts_->mayHaveNulls(),
+      "Top-level row vector cannot have nulls");
+  auto rowsRemaining = outputWithoutUpcasts_->size();
   if (rowsRemaining == 0) {
     // no rows passed the pushed down filters.
     return getEmptyOutput();
   }
 
-  auto rowVector = std::dynamic_pointer_cast<RowVector>(output_);
+  auto rowVector = std::dynamic_pointer_cast<RowVector>(outputWithoutUpcasts_);
 
   // In case there is a remaining filter that excludes some but not all
   // rows, collect the indices of the passing rows. If there is no filter,
@@ -436,12 +468,49 @@ std::optional<RowVectorPtr> HiveDataSource::next(
   std::vector<VectorPtr> outputColumns;
   outputColumns.reserve(outputType_->size());
   for (int i = 0; i < outputType_->size(); ++i) {
-    auto& child = rowVector->childAt(i);
-    if (remainingIndices) {
-      // Disable dictionary values caching in expression eval so that we
-      // don't need to reallocate the result for every batch.
-      child->disableMemo();
+    std::shared_ptr<BaseVector> child;
+    // find the upcast columns and add them to outputWithoutUpcasts_
+    const auto& columnName = outputType_->nameOf(i);
+    // outputType_ includes the upcast columns,
+    const auto& columnType = outputType_->childAt(i);
+
+    if (columnName.ends_with("_upcast")) {
+      auto originalOutputName =
+          columnName.substr(0, columnName.size() - strlen("_upcast"));
+      auto columnHandleIt = assignments_.find(originalOutputName);
+      VELOX_CHECK(
+          columnHandleIt != assignments_.end(),
+          "Cannot find column handle for upcast column: {} original: {}",
+          columnName,
+          originalOutputName);
+      auto columnHandleName =
+          static_cast<const HiveColumnHandle*>(columnHandleIt->second.get())
+              ->name();
+
+      //  rowVector does not have the upcast columns.
+      auto index = readerOutputTypeWithoutUpcasts_->getChildIdxIfExists(
+          columnHandleName);
+      VELOX_CHECK(index.has_value());
+      auto originalColumn = rowVector->childAt(*index);
+
+      child = BaseVector::create(columnType, originalColumn->size(), pool_);
+      child->copy(originalColumn.get(), 0, 0, originalColumn->size());
+    } else {
+      auto columnHandleIt = assignments_.find(columnName);
+      VELOX_CHECK(
+          columnHandleIt != assignments_.end(),
+          "Cannot find column handle for upcast column: {} original: {}",
+          columnName,
+          columnName);
+      auto columnHandleName =
+          static_cast<const HiveColumnHandle*>(columnHandleIt->second.get())
+              ->name();
+      auto index =
+          readerOutputTypeWithoutUpcasts_->getChildIdxIfExists(columnHandleName);
+      VELOX_CHECK(index.has_value());
+      child = rowVector->childAt(*index);
     }
+
     auto column = exec::wrapChild(rowsRemaining, remainingIndices, child);
     if (columnPostProcessors_[i]) {
       columnPostProcessors_[i](column);
@@ -544,7 +613,8 @@ void HiveDataSource::setFromDataSource(
   runtimeStats_.skippedSplits += source->runtimeStats_.skippedSplits;
   runtimeStats_.processedSplits += source->runtimeStats_.processedSplits;
   runtimeStats_.skippedSplitBytes += source->runtimeStats_.skippedSplitBytes;
-  readerOutputType_ = std::move(source->readerOutputType_);
+  readerOutputTypeWithoutUpcasts_ =
+      std::move(source->readerOutputTypeWithoutUpcasts_);
   source->scanSpec_->moveAdaptationFrom(*scanSpec_);
   scanSpec_ = std::move(source->scanSpec_);
   metadataFilter_ = std::move(source->metadataFilter_);
@@ -603,7 +673,7 @@ std::shared_ptr<wave::WaveDataSource> HiveDataSource::toWaveDataSource() {
     waveDataSource_ = waveDelegateHook_(
         hiveTableHandle_,
         scanSpec_,
-        readerOutputType_,
+        readerOutputTypeWithoutUpcasts_,
         &partitionKeys_,
         fileHandleFactory_,
         ioExecutor_,

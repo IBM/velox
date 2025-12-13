@@ -41,7 +41,8 @@ class CudfHiveConnector final
       const RowTypePtr& outputType,
       const ConnectorTableHandlePtr& tableHandle,
       const ColumnHandleMap& columnHandles,
-      ConnectorQueryCtx* connectorQueryCtx) override final;
+      ConnectorQueryCtx* connectorQueryCtx,
+      bool pushdownCasts = false) override final;
 
   bool canAddDynamicFilter() const override {
     return false;

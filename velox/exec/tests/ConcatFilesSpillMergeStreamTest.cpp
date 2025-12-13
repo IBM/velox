@@ -126,7 +126,7 @@ class ConcatFilesSpillMergeStreamTest : public OperatorTestBase {
       for (auto& child : output->children()) {
         child->resize(maxOutputRows);
       }
-      // Records the source rows to copy to 'output_' in order.
+      // Records the source rows to copy to 'outputWithoutUpcasts_' in order.
       std::vector<const RowVector*> spillSources(maxOutputRows);
       std::vector<vector_size_t> spillSourceRows(maxOutputRows);
       int32_t outputRow = 0;

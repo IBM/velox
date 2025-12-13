@@ -267,7 +267,7 @@ RowVectorPtr NestedLoopJoinProbe::getOutput() {
 }
 
 RowVectorPtr NestedLoopJoinProbe::generateOutput() {
-  // If addToOutput() returns false, output_ is filled. Need to produce it.
+  // If addToOutput() returns false, outputWithoutUpcasts_ is filled. Need to produce it.
   if (!addToOutput()) {
     VELOX_CHECK_GT(output_->size(), 0);
     return std::move(output_);
@@ -277,8 +277,8 @@ RowVectorPtr NestedLoopJoinProbe::generateOutput() {
   if (advanceProbe()) {
     finishProbeInput();
     if (numOutputRows_ == 0) {
-      // output_ can only be re-used across probe rows within the same input_.
-      // Here we have to abandon the emtpy non-null output_ before we advance to
+      // outputWithoutUpcasts_ can only be re-used across probe rows within the same input_.
+      // Here we have to abandon the emtpy non-null outputWithoutUpcasts_ before we advance to
       // the next probe input.
       output_ = nullptr;
     }
@@ -302,7 +302,7 @@ bool NestedLoopJoinProbe::readyToProduceOutput() {
     return true;
   }
 
-  // If the input_ has no remaining rows or the output_ is fully filled,
+  // If the input_ has no remaining rows or the outputWithoutUpcasts_ is fully filled,
   // it's right time for output.
   return !input_ || numOutputRows_ >= outputBatchSize_;
 }

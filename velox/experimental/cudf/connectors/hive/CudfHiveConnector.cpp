@@ -37,7 +37,8 @@ std::unique_ptr<DataSource> CudfHiveConnector::createDataSource(
     const RowTypePtr& outputType,
     const ConnectorTableHandlePtr& tableHandle,
     const ColumnHandleMap& columnHandles,
-    ConnectorQueryCtx* connectorQueryCtx) {
+    ConnectorQueryCtx* connectorQueryCtx,
+    bool pushdownCasts) {
   // If it's parquet then return CudfHiveDataSource
   // If it's not parquet then return HiveDataSource
   // TODO (dm): Make this ^^^ happen

@@ -42,7 +42,8 @@ class HiveConnector : public Connector {
       const RowTypePtr& outputType,
       const ConnectorTableHandlePtr& tableHandle,
       const connector::ColumnHandleMap& columnHandles,
-      ConnectorQueryCtx* connectorQueryCtx) override;
+      ConnectorQueryCtx* connectorQueryCtx,
+      bool pushdownCasts = false) override;
 
   bool supportsSplitPreload() const override {
     return true;
@@ -137,6 +138,10 @@ class HivePartitionFunctionSpec : public core::PartitionFunctionSpec {
       void* context);
 
   static void registerSerDe();
+
+  std::shared_ptr<core::PartitionFunctionSpec> rewriteInputType(
+      const RowTypePtr& oldInputType,
+      const RowTypePtr& newInputType) const override;
 
  private:
   const int numBuckets_;

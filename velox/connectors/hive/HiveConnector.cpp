@@ -58,7 +58,8 @@ std::unique_ptr<DataSource> HiveConnector::createDataSource(
     const RowTypePtr& outputType,
     const ConnectorTableHandlePtr& tableHandle,
     const std::unordered_map<std::string, ColumnHandlePtr>& columnHandles,
-    ConnectorQueryCtx* connectorQueryCtx) {
+    ConnectorQueryCtx* connectorQueryCtx,
+    bool pushdownCasts) {
   return std::make_unique<HiveDataSource>(
       outputType,
       tableHandle,
@@ -66,7 +67,8 @@ std::unique_ptr<DataSource> HiveConnector::createDataSource(
       &fileHandleFactory_,
       ioExecutor_,
       connectorQueryCtx,
-      hiveConfig_);
+      hiveConfig_,
+      pushdownCasts);
 }
 
 std::unique_ptr<DataSink> HiveConnector::createDataSink(
@@ -201,6 +203,57 @@ void HivePartitionFunctionSpec::registerSerDe() {
   auto& registry = DeserializationWithContextRegistryForSharedPtr();
   registry.Register(
       "HivePartitionFunctionSpec", HivePartitionFunctionSpec::deserialize);
+}
+
+std::shared_ptr<core::PartitionFunctionSpec>
+HivePartitionFunctionSpec::rewriteInputType(
+    const RowTypePtr& oldInputType,
+    const RowTypePtr& newInputType) const {
+  // If the layout is identical, no change.
+  if (*oldInputType == *newInputType) {
+    return nullptr;
+  }
+
+  std::vector<column_index_t> newChannels;
+  newChannels.reserve(channels_.size());
+  bool changed = false;
+
+  for (auto channel : channels_) {
+    VELOX_CHECK_LT(
+        channel,
+        oldInputType->size(),
+        "Hive bucket channel index {} is out of bounds for old input type {}",
+        channel,
+        oldInputType->toString());
+
+    const auto& name = oldInputType->nameOf(channel);
+    auto newIndexOpt = newInputType->getChildIdxIfExists(name);
+    VELOX_USER_CHECK(
+        newIndexOpt.has_value(),
+        "Failed to find Hive bucket column '{}' in LocalPartition new input type {}",
+        name,
+        newInputType->toString());
+
+    auto newIndex = static_cast<column_index_t>(*newIndexOpt);
+    newChannels.push_back(newIndex);
+    if (newIndex != channel) {
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return nullptr;
+  }
+
+  // If we don't have a bucketToPartition map yet, keep using the "late binding"
+  // constructor. Otherwise preserve the bucketToPartition_.
+  if (bucketToPartition_.empty()) {
+    return std::make_shared<HivePartitionFunctionSpec>(
+        numBuckets_, std::move(newChannels), constValues_);
+  }
+
+  return std::make_shared<HivePartitionFunctionSpec>(
+      numBuckets_, bucketToPartition_, std::move(newChannels), constValues_);
 }
 
 } // namespace facebook::velox::connector::hive

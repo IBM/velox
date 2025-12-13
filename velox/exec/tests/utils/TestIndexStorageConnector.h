@@ -330,7 +330,8 @@ class TestIndexConnector : public connector::Connector {
       const RowTypePtr&,
       const connector::ConnectorTableHandlePtr&,
       const connector::ColumnHandleMap&,
-      connector::ConnectorQueryCtx*) override {
+      connector::ConnectorQueryCtx*,
+      bool pushdownCasts = false) override {
     VELOX_UNSUPPORTED("{} not implemented", __FUNCTION__);
   }
 

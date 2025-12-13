@@ -2521,6 +2521,11 @@ std::string stringifyTruncatedElementList(
     const std::function<void(std::stringstream&, size_t)>& stringifyElement,
     size_t limit = 5);
 
+
+bool isIntegral(const TypePtr& type);
+
+bool isWideningIntegerType(const TypePtr& inputType, const TypePtr& outputType);
+
 } // namespace facebook::velox
 
 namespace folly {

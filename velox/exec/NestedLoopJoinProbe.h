@@ -113,19 +113,19 @@ class NestedLoopJoinProbe : public Operator {
   // smaller in some cases - outputs follow the probe side buffer boundaries.
   RowVectorPtr generateOutput();
 
-  // For non cross-join mode, the `output_` can be reused across multible probe
-  // rows. If the input_ has remaining rows and the output_ is not fully filled,
+  // For non cross-join mode, the `outputWithoutUpcasts_` can be reused across multible probe
+  // rows. If the input_ has remaining rows and the outputWithoutUpcasts_ is not fully filled,
   // it returns false here.
   bool readyToProduceOutput();
 
-  // Fill in joined output to `output_` by matching the current probeRow_ and
+  // Fill in joined output to `outputWithoutUpcasts_` by matching the current probeRow_ and
   // successive build vectors (using getNextCrossProductBatch()). Stops when
   // either all build vectors were matched for the current probeRow (returns
   // true), or if the output is full (returns false). If it returns false, a
-  // valid vector with more than zero records will be available at `output_`; if
-  // it returns true, either nullptr or zero records may be placed at `output_`.
+  // valid vector with more than zero records will be available at `outputWithoutUpcasts_`; if
+  // it returns true, either nullptr or zero records may be placed at `outputWithoutUpcasts_`.
   // Also if it returns true, it's the caller's responsiblity to decide when to
-  // set `output_` size.
+  // set `outputWithoutUpcasts_` size.
   //
   // Also updates `buildMatched_` if the build records that received a match, so
   // that they can be used to implement right and full outer join semantic once
@@ -137,7 +137,7 @@ class NestedLoopJoinProbe : public Operator {
   // (and hence a new probe input is required). False otherwise.
   bool advanceProbe();
 
-  // Ensures a new batch of records is available at `output_` and ready to
+  // Ensures a new batch of records is available at `outputWithoutUpcasts_` and ready to
   // receive rows. Batches have space for `outputBatchSize_`.
   void prepareOutput();
 
@@ -190,7 +190,7 @@ class NestedLoopJoinProbe : public Operator {
       const std::vector<IdentityProjection>& probeProjections,
       const std::vector<IdentityProjection>& buildProjections);
 
-  // Add a single record to `output_` based on buildRow from buildVector, and
+  // Add a single record to `outputWithoutUpcasts_` based on buildRow from buildVector, and
   // the current probeRow and probe vector (input_). Probe side projections are
   // zero-copy (dictionary indices), and build side projections are marked to be
   // copied using `buildCopyRanges_`; they will be copied later on by
@@ -198,7 +198,7 @@ class NestedLoopJoinProbe : public Operator {
   void addOutputRow(vector_size_t buildRow);
 
   // Checks if it is required to add a probe mismatch row, and does it if
-  // needed. The caller needs to ensure there is available space in `output_`
+  // needed. The caller needs to ensure there is available space in `outputWithoutUpcasts_`
   // for the new record, which has nulled out build projections.
   void checkProbeMismatchRow();
 
@@ -207,7 +207,7 @@ class NestedLoopJoinProbe : public Operator {
   void addProbeMismatchRow();
 
   // Copies the ranges from buildVector specified by `buildCopyRanges_` to
-  // `output_`, one projected column at a time. Clears buildCopyRanges_.
+  // `outputWithoutUpcasts_`, one projected column at a time. Clears buildCopyRanges_.
   void copyBuildValues(const RowVectorPtr& buildVector);
 
   // Called when we are done processing the current probe batch, to signal we
