@@ -96,6 +96,86 @@ std::shared_ptr<facebook::velox::exec::Task> createExchangeTask(
   return task;
 }
 
+std::shared_ptr<Task> createPartitionedOutputTask(
+    const std::string& taskId,
+    std::shared_ptr<memory::MemoryPool> pool,
+    RowTypePtr rowType,
+    int numPartitions,
+    const std::vector<std::string>& partitionKeys,
+    uint64_t kMaxOutputBufferSize) {
+  VLOG(3) << "Creating PartitionedOutput task with " << numPartitions
+          << " partitions";
+
+  const size_t vectorSize = 10;
+
+  // Create a dummy row vector for the Values node (required by PlanBuilder)
+  auto typeParams = rowType->parameters();
+  std::vector<VectorPtr> vecPtrs;
+  for (auto& typeParam : typeParams) {
+    vecPtrs.emplace_back(
+        BaseVector::create(typeParam.type, vectorSize, pool.get()));
+  }
+
+  auto rowVector = std::make_shared<RowVector>(
+      pool.get(),
+      rowType,
+      BufferPtr(nullptr),
+      vectorSize,
+      vecPtrs);
+
+  // Build the plan: Values -> PartitionedOutput
+  auto planFragment = exec::test::PlanBuilder()
+                          .values({rowVector})
+                          .partitionedOutput(partitionKeys, numPartitions)
+                          .planFragment();
+
+  std::shared_ptr<folly::Executor> executor(
+      std::make_shared<folly::CPUThreadPoolExecutor>(
+          std::thread::hardware_concurrency()));
+
+  std::unordered_map<std::string, std::string> configSettings{
+      {velox::core::QueryConfig::kMaxOutputBufferSize,
+       std::to_string(kMaxOutputBufferSize)}};
+
+  auto queryCtx = core::QueryCtx::create(
+      executor.get(), core::QueryConfig(std::move(configSettings)));
+
+  auto task = Task::create(
+      taskId,
+      std::move(planFragment),
+      0, // partition number
+      std::move(queryCtx),
+      Task::ExecutionMode::kParallel);
+
+  return task;
+}
+
+std::shared_ptr<cudf_velox::CudfVector> makeCudfVector(
+    memory::MemoryPool* pool,
+    size_t numRows,
+    RowTypePtr rowType,
+    std::shared_ptr<BaseTableGenerator> tableGenerator,
+    rmm::cuda_stream_view stream) {
+  // Create table using either makeTable or tableGenerator->makeTable()
+  std::unique_ptr<cudf::table> table;
+  if (tableGenerator == nullptr) {
+    table = makeTable(numRows, rowType, stream);
+  } else {
+    table = tableGenerator->makeTable(stream);
+  }
+
+  // Sync the stream before creating CudfVector
+  stream.synchronize();
+
+  // Create and return CudfVector
+  return std::make_shared<cudf_velox::CudfVector>(
+      pool,
+      rowType,
+      static_cast<vector_size_t>(numRows),
+      std::move(table),
+      stream);
+}
+
 template <typename T>
 std::unique_ptr<cudf::column> make_numeric_column_from_vector(
     const std::vector<T>& host_values,
@@ -190,58 +270,11 @@ std::unique_ptr<cudf::column> make_strings_column_from_host(
       rmm::device_buffer{}); // null mask
 }
 
-std::unique_ptr<cudf::packed_columns> makeFilledPackedColumns(
-    std::size_t numRows,
-    std::shared_ptr<CudfTestData> dataToSend,
-    rmm::cuda_stream_view stream) {
-  // Create packed columns with default value
-  std::vector<std::unique_ptr<cudf::column>> columns;
-
-  facebook::velox::RowTypePtr rowType = CudfTestData::kTestRowType;
-
-  for (size_t i = 0; i < rowType->size(); ++i) {
-    const std::string& name = rowType->nameOf(i);
-    const auto& type = rowType->childAt(i);
-
-    cudf::type_id cudfType;
-    std::unique_ptr<cudf::column> col;
-
-    switch (type->kind()) {
-      case TypeKind::INTEGER: {
-        cudfType = cudf::type_id::INT32;
-        col = make_numeric_column_from_vector(*dataToSend->getIntegers());
-        break;
-      }
-      case TypeKind::DOUBLE: {
-        cudfType = cudf::type_id::FLOAT64;
-        col = make_numeric_column_from_vector(*dataToSend->getDoubles());
-
-        break;
-      }
-      case TypeKind::VARCHAR: {
-        col = make_strings_column_from_host(*dataToSend->getStrings());
-        break;
-      }
-      default:
-        VLOG(0) << "Unhandled type " << type->kind();
-        break;
-    }
-
-    columns.push_back(std::move(col));
-  }
-  auto table = std::make_unique<cudf::table>(std::move(columns));
-
-  cudf::packed_columns packed = cudf::pack(table->view(), stream);
-
-  return std::unique_ptr<cudf::packed_columns>(new cudf::packed_columns(
-      std::move(packed.metadata), std::move(packed.gpu_data)));
-}
-
-std::unique_ptr<cudf::packed_columns> makePackedColumns(
+std::unique_ptr<cudf::table> makeTable(
     std::size_t numRows,
     facebook::velox::RowTypePtr rowType,
     rmm::cuda_stream_view stream) {
-  // Create packed columns with default value
+  // Create table with default values
   std::vector<std::unique_ptr<cudf::column>> columns;
 
   for (size_t i = 0; i < rowType->size(); ++i) {
@@ -278,12 +311,7 @@ std::unique_ptr<cudf::packed_columns> makePackedColumns(
     columns.push_back(std::move(col));
   }
 
-  auto table = std::make_unique<cudf::table>(std::move(columns));
-
-  cudf::packed_columns packed = cudf::pack(table->view(), stream);
-
-  return std::unique_ptr<cudf::packed_columns>(new cudf::packed_columns(
-      std::move(packed.metadata), std::move(packed.gpu_data)));
+  return std::make_unique<cudf::table>(std::move(columns));
 }
 
 std::vector<std::string> getStringCol(

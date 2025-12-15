@@ -27,6 +27,7 @@
 #include "velox/exec/Task.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/cudf-exchange/tests/CudfTestData.h"
+#include "velox/experimental/cudf/vector/CudfVector.h"
 
 #include <cudf/binaryop.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -72,20 +73,53 @@ std::shared_ptr<facebook::velox::exec::Task> createExchangeTask(
     int partitionId,
     core::PlanNodeId& exchangeNodeId);
 
-/// Helper function to create cudf::packed_columns for testing.
-/// Creates a packed table with two columns: INT32 and FLOAT64.
-///
-/// @param numRows Number of rows to create in the packed columns
-/// @return Unique pointer to the created packed columns
-///
-std::unique_ptr<cudf::packed_columns> makePackedColumns(
-    std::size_t numRows,
+/// @brief Helper function to create a source task with PartitionedOutput for
+/// testing. Creates a task with a plan fragment: Values -> PartitionedOutput.
+/// This is used by SourceDriverMock to drive real CudfPartitionedOutput
+/// operators.
+/// @param taskId The unique identifier for the task
+/// @param pool Shared pointer to the memory pool
+/// @param rowType The row type to use for the task
+/// @param numPartitions The number of output partitions
+/// @param partitionKeys The keys to use for hash partitioning (empty for
+/// round-robin)
+/// @param kMaxOutputBufferSize Maximum output buffer size
+/// @return Shared pointer to the created Task
+std::shared_ptr<facebook::velox::exec::Task> createPartitionedOutputTask(
+    const std::string& taskId,
+    std::shared_ptr<facebook::velox::memory::MemoryPool> pool,
     facebook::velox::RowTypePtr rowType,
+    int numPartitions,
+    const std::vector<std::string>& partitionKeys = {},
+    uint64_t kMaxOutputBufferSize = FOUR_GBYTES);
+
+/// @brief Helper function to create a CudfVector for testing.
+/// Uses makeTable when tableGenerator is null, or tableGenerator->makeTable()
+/// when provided.
+/// @param pool The memory pool to use for the CudfVector
+/// @param numRows Number of rows to create
+/// @param rowType The row type for the vector
+/// @param tableGenerator Optional table generator to create the table data
+/// @param stream The CUDA stream to use
+/// @return Shared pointer to the created CudfVector
+std::shared_ptr<facebook::velox::cudf_velox::CudfVector> makeCudfVector(
+    facebook::velox::memory::MemoryPool* pool,
+    size_t numRows,
+    facebook::velox::RowTypePtr rowType,
+    std::shared_ptr<BaseTableGenerator> tableGenerator,
     rmm::cuda_stream_view stream);
 
-std::unique_ptr<cudf::packed_columns> makeFilledPackedColumns(
+/// Helper function to create cudf::table for testing.
+/// Creates a table with columns based on the given rowType.
+///
+/// @param numRows Number of rows to create in the table
+/// @param rowType The row type specifying the columns
+/// @param stream The CUDA stream to use
+/// @return Unique pointer to the created table
+///
+std::unique_ptr<cudf::table> makeTable(
     std::size_t numRows,
-    std::shared_ptr<CudfTestData> dataToSend,
+    facebook::velox::RowTypePtr rowType,
     rmm::cuda_stream_view stream);
 
 /// @brief testing utility for dumping the contents of a string column.
@@ -95,6 +129,12 @@ std::vector<std::string> getStringCol(
     const cudf::strings_column_view& str_column_view,
     cudf::size_type max_rows,
     rmm::cuda_stream_view stream);
+
+/// @brief Helper function to create a strings column from a vector of host strings.
+/// @param host_strings The vector of strings to use for creating the column.
+/// @return A unique pointer to the created strings column.
+std::unique_ptr<cudf::column> make_strings_column_from_host(
+    const std::vector<std::string>& host_strings);
 
 /// @brief Template function for retrieving the contents of a fixed-size column.
 /// @param column_view The column view to be dumped.

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 #include "velox/experimental/cudf-exchange/tests/CudfPartitionedOutputMock.h"
+#include "velox/experimental/cudf-exchange/CudfExchangeProtocol.h"
+#include "velox/experimental/cudf-exchange/CudfQueues.h"
 #include "velox/experimental/cudf-exchange/tests/CudfTestHelpers.h"
 
 namespace facebook::velox::cudf_exchange {
@@ -24,14 +26,14 @@ CudfPartitionedOutputMock::CudfPartitionedOutputMock(
     const size_t numPartitions,
     const uint32_t numDataChunks,
     const size_t numRowsPerChunk,
-    std::shared_ptr<CudfTestData> dataToSend)
+    std::shared_ptr<BaseTableGenerator> tableGenerator)
     : queueManager_(CudfOutputQueueManager::getInstanceRef()),
       taskId_(taskId),
       numDrivers_(numDrivers),
       numPartitions_(numPartitions),
       numDataChunks_(numDataChunks),
       numRowsPerChunk_(numRowsPerChunk),
-      dataToSend_(dataToSend) {}
+      tableGenerator_(tableGenerator) {}
 
 void CudfPartitionedOutputMock::run() {
   threads_.clear();
@@ -48,8 +50,6 @@ void CudfPartitionedOutputMock::joinThreads() {
 }
 
 void CudfPartitionedOutputMock::publishDataChunks() {
-  bool blocked;
-  ContinueFuture future;
   // create numPartitions_ x numDataChunks_ data chunks and
   // push it into the destination queues identified by the taskId.
   auto stream = rmm::cuda_stream_default;
@@ -61,30 +61,24 @@ void CudfPartitionedOutputMock::publishDataChunks() {
       // create a data chunk with numRowsPerChunk_ rows
       // and push it into the destination queue identified by the taskId.
 
-      std::unique_ptr<cudf::packed_columns> packedColumns;
-      if (dataToSend_ == nullptr) {
-        packedColumns = makePackedColumns(
-            numRowsPerChunk_, CudfTestData::kTestRowType, stream);
+      std::unique_ptr<cudf::table> table;
+      if (tableGenerator_ == nullptr) {
+        table = makeTable(numRowsPerChunk_, CudfTestData::kTestRowType, stream);
       } else {
-        packedColumns =
-            makeFilledPackedColumns(numRowsPerChunk_, dataToSend_, stream);
+        table = tableGenerator_->makeTable(stream);
       }
+      auto packedCols = std::make_unique<cudf::packed_columns>(cudf::pack(table->view(), stream));
       // Sync the stream since UCXX/UCX is not stream oriented and without
       // syncing, data could get lost. Syncing here is  easy but not the most
       // efficient. A better approach is to create an event and pass it along
       // the data through the queue and synchronize on the event before calling
       // into UCXX.
       stream.synchronize();
-      blocked = queueManager_->enqueue(
+      queueManager_->enqueue(
           taskId_,
           partition,
-          std::move(packedColumns),
-          numRowsPerChunk_,
-          &future);
-      if (blocked) {
-        // wait until the queue becomes non-full.
-        future.wait();
-      }
+          std::move(packedCols),
+          numRowsPerChunk_);
     }
   }
   // tell the queue manager that we are done.
