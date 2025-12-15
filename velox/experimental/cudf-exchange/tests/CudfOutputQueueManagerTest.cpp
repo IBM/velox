@@ -64,8 +64,10 @@ class CudfOutputQueueManagerTest : public testing::Test {
 
   std::unique_ptr<cudf::packed_columns> makePackedColumns(std::size_t numRows) {
     rmm::cuda_stream_view stream = rmm::cuda_stream_default;
-    auto cols = facebook::velox::cudf_exchange::makePackedColumns(
+    // Create table directly without going through pack/unpack
+    auto table = facebook::velox::cudf_exchange::makeTable(
         numRows, CudfTestData::kTestRowType, stream);
+    auto cols = std::make_unique<cudf::packed_columns>(cudf::pack(table->view(), stream));
     stream.synchronize();
     return cols;
   }
@@ -76,10 +78,8 @@ class CudfOutputQueueManagerTest : public testing::Test {
 
   // Returns the enqueued page byte size.
   void enqueue(const std::string& taskId, int destination, vector_size_t size) {
-    ContinueFuture future;
     auto data = makePackedColumns(size);
-    auto blocked = queueManager_->enqueue(
-        taskId, destination, std::move(data), size, &future);
+    queueManager_->enqueue(taskId, destination, std::move(data), size);
   }
 
   void noMoreData(const std::string& taskId) {

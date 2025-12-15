@@ -31,7 +31,7 @@ constexpr uint32_t kPartitionId = 0; // not used in tests.
 SinkDriverMock::SinkDriverMock(
     std::shared_ptr<facebook::velox::exec::Task> task,
     uint32_t numDrivers,
-    std::shared_ptr<CudfTestData> referenceData)
+    std::shared_ptr<BaseTableGenerator> referenceData)
     : task_{std::move(task)},
       numDrivers_{numDrivers},
       numRows_{0},
@@ -58,52 +58,20 @@ SinkDriverMock::SinkDriverMock(
 }
 
 void SinkDriverMock::updateDataValidity(const cudf::table_view& tab) {
-  // Should make the test more dynamic, row is assumed to be [integer, double,
-  // string]
-
-  int num_columns = tab.num_columns();
-  int num_rows = referenceData_->getNumRows();
-
-  VELOX_CHECK_EQ(num_columns, CudfTestData::kTestColumnTypes.size());
-
-  for (int i = 0; i < num_columns; i++) {
-    VLOG(4) << "Type of column " << i << " "
-            << cudf::type_to_name(tab.column(i).type());
+  if (!referenceData_) {
+    return; // No reference data to check against
   }
 
-  // Get the Reference data
-  std::shared_ptr<std::vector<uint32_t>> integers =
-      referenceData_->getIntegers();
-  std::shared_ptr<std::vector<float>> doubles = referenceData_->getDoubles();
-  const std::shared_ptr<std::vector<std::string>>& strings =
-      referenceData_->getStrings();
+  auto stream = rmm::cuda_stream_default;
 
-  // Get the Received data: assume in a fixed order
-  cudf::column_view iCol = tab.column(0);
-  cudf::column_view dCol = tab.column(1);
-  cudf::strings_column_view sCol{tab.column(2)};
-  rmm::cuda_stream_pool stream_pool(32);
-  const std::vector<std::string>& col_strings =
-      getStringCol(sCol, num_rows, stream_pool.get_stream());
-  std::vector<uint32_t> col_integers =
-      getColVector<uint32_t>(iCol, num_rows, stream_pool.get_stream());
-  std::vector<float> col_doubles =
-      getColVector<float>(dCol, num_rows, stream_pool.get_stream());
-  // Compare Reference with Received
-  for (int i = 0; i < num_rows; i++) {
-    if (integers->at(i) != col_integers.at(i)) {
-      VLOG(0) << "Error " << integers->at(i) << " != " << col_integers.at(i);
-      dataValidFlag_ = false;
-    }
-    if (doubles->at(i) != col_doubles.at(i)) {
-      VLOG(0) << "Error " << doubles->at(i) << " != " << col_doubles.at(i);
-      dataValidFlag_ = false;
-    }
+  // Use the polymorphic verifyTable method
+  // Note: For chunk-based verification, we use startRow=0 since each chunk
+  // contains rows that should match the reference data from the beginning.
+  // This assumes the test sends the same data pattern in each chunk.
+  bool valid = referenceData_->verifyTable(tab, 0, tab.num_rows(), stream);
 
-    if (strings->at(i) != col_strings.at(i)) {
-      VLOG(0) << "Error " << strings->at(i) << " != " << col_strings.at(i);
-      dataValidFlag_ = false;
-    }
+  if (!valid) {
+    dataValidFlag_ = false;
   }
 }
 

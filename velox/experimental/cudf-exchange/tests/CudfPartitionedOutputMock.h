@@ -31,7 +31,7 @@ class CudfPartitionedOutputMock {
       const size_t numPartitions,
       const uint32_t numDataChunks,
       const size_t numRowsPerChunk,
-      std::shared_ptr<CudfTestData> dataToSend = nullptr);
+      std::shared_ptr<BaseTableGenerator> tableGenerator = nullptr);
 
   /// @brief Created the driver threads and pushes data into the task's output
   /// queue.
@@ -51,7 +51,7 @@ class CudfPartitionedOutputMock {
   const size_t numPartitions_;
   const uint32_t numDataChunks_;
   const size_t numRowsPerChunk_;
-  const std::shared_ptr<CudfTestData> dataToSend_;
+  const std::shared_ptr<BaseTableGenerator> tableGenerator_;
   std::vector<std::thread> threads_;
 };
 

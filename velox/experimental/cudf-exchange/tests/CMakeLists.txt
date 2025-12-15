@@ -21,6 +21,7 @@ add_executable(
   CudfTestData.cpp
   CudfPartitionedOutputMock.cpp
   SinkDriverMock.cpp
+  SourceDriverMock.cpp
 )
 
 add_test(
@@ -114,3 +115,50 @@ target_link_libraries(
 
 add_custom_target(exchange_tests)
 add_dependencies(exchange_tests exchange_srv_tst exchange_client_tst 1brc_server 1brc_client)
+
+# Wide table exchange server and client for profiling
+add_executable(wide_table_exchange_server
+  WideTableExchangeServer.cpp
+  SourceDriverMock.cpp
+  CudfTestHelpers.cpp
+  CudfTestData.cpp
+)
+target_compile_options(wide_table_exchange_server PRIVATE -Wno-missing-field-initializers)
+
+add_executable(wide_table_exchange_client
+  WideTableExchangeClient.cpp
+  SinkDriverMock.cpp
+  CudfTestHelpers.cpp
+  CudfTestData.cpp
+)
+target_compile_options(wide_table_exchange_client PRIVATE -Wno-missing-field-initializers)
+
+target_link_libraries(
+  wide_table_exchange_server
+  velox_cudf_exchange
+  velox_cudf_exec
+  velox_exec
+  velox_exec_test_lib
+  velox_test_util
+  Folly::folly
+  fmt::fmt
+  ucxx::ucxx
+  gflags
+  nvtx3-cpp
+)
+
+target_link_libraries(
+  wide_table_exchange_client
+  velox_cudf_exchange
+  velox_cudf_exec
+  velox_exec
+  velox_exec_test_lib
+  velox_test_util
+  Folly::folly
+  fmt::fmt
+  ucxx::ucxx
+  gflags
+  nvtx3-cpp
+)
+
+add_dependencies(exchange_tests wide_table_exchange_server wide_table_exchange_client)

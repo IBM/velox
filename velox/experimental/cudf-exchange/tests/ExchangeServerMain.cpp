@@ -167,10 +167,8 @@ class CudfExchangeServerTest {
       vector_size_t size,
       rmm::cuda_stream_view stream,
       rmm::device_async_resource_ref mr) {
-    ContinueFuture future;
     auto data = makePackedColumns(size, stream, mr);
-    auto blocked = queueManager_->enqueue(
-        taskId, destination, std::move(data), size, &future);
+    queueManager_->enqueue(taskId, destination, std::move(data), size);
   }
 
   void noMoreData(const std::string& taskId) {
