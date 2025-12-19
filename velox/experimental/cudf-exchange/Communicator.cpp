@@ -21,6 +21,9 @@
 #include "velox/common/base/Exceptions.h"
 #include "velox/experimental/cudf-exchange/CommElement.h"
 #include "velox/experimental/cudf-exchange/EndpointRef.h"
+#include "velox/experimental/cudf/CudfConfig.h"
+
+using namespace facebook::velox::cudf_velox;
 
 namespace facebook::velox::cudf_exchange {
 
@@ -80,16 +83,26 @@ Communicator::~Communicator() {
 /// All operations of the communicator will be carried out in the thread
 /// that calls run.
 void Communicator::run() {
+  VLOG(3)  << "Using error handling mode: " << CudfConfig::getInstance().ucxxErrorHandling << std::endl;
+  VLOG(3)  << "Using blocking progress mode: " << CudfConfig::getInstance().ucxxBlockingPolling << std::endl;
+
   running_.store(true);
   // Force CUDA context creation
   cudaFree(0);
 
   // create the UCXX context, worker, listener-context etc.
-  context_ = ucxx::createContext({}, ucxx::Context::defaultFeatureFlags);
+  if (CudfConfig::getInstance().ucxxBlockingPolling) {
+    context_ = ucxx::createContext({}, ucxx::Context::defaultFeatureFlags);
+  } else {
+    context_ = ucxx::createContext({}, UCP_FEATURE_TAG | UCP_FEATURE_AM);
+  }
+
   worker_ = context_->createWorker();
 
-  // Communicator is using blocking progress mode.
-  worker_->initBlockingProgressMode();
+  if (CudfConfig::getInstance().ucxxBlockingPolling) {
+    // Communicator is using blocking progress mode.
+    worker_->initBlockingProgressMode();
+  }
 
   listener_ = worker_->createListener(
       port_, Communicator::cStyleListenerCallback, this);
@@ -105,14 +118,22 @@ void Communicator::run() {
   while (running_) {
     try {
       // wait for progress.
-      worker_->progressWorkerEvent(0);
+      if (CudfConfig::getInstance().ucxxBlockingPolling) {
+        worker_->progressWorkerEvent(0);
+      } else {
+        worker_->progress();
+      }
 
       // process the work queue. Make sure that communication is progressed
       // after each call to a comms element, otherwise we will deadlock.
       while (!workQueue_.empty()) {
         auto comms = workQueue_.pop();
         comms->process();
-        worker_->progressWorkerEvent(0);
+        if (CudfConfig::getInstance().ucxxBlockingPolling) {
+          worker_->progressWorkerEvent(0);
+        } else {
+          worker_->progress();
+        }
       }
     } catch (ucxx::IOError& e) {
       std::cerr << "In Communicator main loop UCXX Exception: " << e.what()
@@ -167,13 +188,15 @@ std::shared_ptr<EndpointRef> Communicator::assocEndpointRef(
   }
   // endpoint doesn't exist. Need to connect. Enable error handling.
   auto ep = worker_->createEndpointFromHostname(
-      hostPort.hostname, hostPort.port, true);
+      hostPort.hostname, hostPort.port, CudfConfig::getInstance().ucxxErrorHandling);
   std::shared_ptr<EndpointRef> epRef = nullptr;
   if (ep != nullptr) {
     epRef = std::make_shared<EndpointRef>(ep);
     epRef->addCommElem(comms);
-    // register on close callback.
-    ep->setCloseCallback(EndpointRef::onClose, epRef);
+    if (CudfConfig::getInstance().ucxxErrorHandling) {
+      // register on close callback.
+      ep->setCloseCallback(EndpointRef::onClose, epRef);
+    }
     endpoints_.insert(std::pair{hostPort, epRef});
   }
   return epRef;
@@ -222,9 +245,11 @@ void Communicator::listenerCallback(ucp_conn_request_h conn_request) {
   // shared. This guarantees that between any two nodes, there will be at most 2
   // endpoints, one per direction. For compatibility reasons, both incoming and
   // outgoing endpoints are represented using the EndpointRef.
-  auto endpoint = listener_->createEndpointFromConnRequest(conn_request, true);
+  auto endpoint = listener_->createEndpointFromConnRequest(conn_request, CudfConfig::getInstance().ucxxErrorHandling);
   auto epRef = std::make_shared<EndpointRef>(endpoint);
-  endpoint->setCloseCallback(EndpointRef::onClose, epRef);
+  if (CudfConfig::getInstance().ucxxErrorHandling) {
+    endpoint->setCloseCallback(EndpointRef::onClose, epRef);
+  }
   // Add this endpoint reference to the list of endpoints.
   unsigned long val = std::strtoul(port_str, nullptr, 10);
   VELOX_CHECK(
