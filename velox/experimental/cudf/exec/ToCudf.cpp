@@ -423,6 +423,13 @@ void CudfConfig::initialize(
   if (config.find(kCudfExchange) != config.end()) {
     exchange = folly::to<bool>(config[kCudfExchange]);
   }
+  if (config.find(kUcxxErrorHandling) != config.end()) {
+    ucxxErrorHandling = folly::to<bool>(config[kUcxxErrorHandling]);
+  }
+  if (config.find(kUcxxBlockingPolling) != config.end()) {
+    ucxxBlockingPolling = folly::to<bool>(config[kUcxxBlockingPolling]);
+  }
+
 }
 
 } // namespace facebook::velox::cudf_velox
