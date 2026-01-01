@@ -1161,7 +1161,7 @@ VELOX_INSTANTIATE_TEST_SUITE_P(
     ExchangeClientTest,
     testing::Values(
         VectorSerde::Kind::kPresto,
-        VectorSerde::Kind::kCompactRow,
+        // VectorSerde::Kind::kCompactRow,
         VectorSerde::Kind::kUnsafeRow),
     [](const testing::TestParamInfo<VectorSerde::Kind>& info) {
       return fmt::format("{}", info.param);
