@@ -259,7 +259,6 @@ std::shared_ptr<::arrow::Field> updateFieldNameAndIdRecursive(
     }
     newField = newField->WithType(::arrow::struct_(newFields));
   } else if (type.isArray()) {
-    newField = field->WithName(name);
     auto listType =
         std::dynamic_pointer_cast<::arrow::BaseListType>(newField->type());
     auto elementType = type.asArray().elementType();
@@ -270,7 +269,6 @@ std::shared_ptr<::arrow::Field> updateFieldNameAndIdRecursive(
     newField = newField->WithType(::arrow::list(updatedElementField));
   } else if (type.isMap()) {
     auto mapType = type.asMap();
-    newField = field->WithName(name);
     auto arrowMapType =
         std::dynamic_pointer_cast<::arrow::MapType>(newField->type());
     const auto* keySetting = fieldId ? &fieldId->children.at(0) : nullptr;
