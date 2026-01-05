@@ -20,6 +20,7 @@
 #include <folly/String.h>
 #include <folly/Uri.h>
 #include "velox/experimental/cudf-exchange/CudfExchangeSource.h"
+#include "velox/experimental/cudf-exchange/IntraNodeTransferRegistry.h"
 #include "velox/experimental/cudf/exec/Utilities.h"
 
 using namespace facebook::velox::exec;
@@ -93,20 +94,33 @@ void CudfExchangeSource::process() {
       communicator_->addToWorkQueue(getSelfPtr());
     } break;
     case ReceiverState::WaitingForHandshakeComplete:
-      // Waiting for metadata is handled by an upcall from UCXX. Nothing to do
+      // Waiting for handshake send completion is handled by callback.
+      break;
+    case ReceiverState::WaitingForHandshakeResponse:
+      // Waiting for HandshakeResponse is handled by callback.
       break;
     case ReceiverState::ReadyToReceive:
-      // change state before calling getMetadata since immediate upcalls in
-      // getMetadata will also change state.
-      setStateIf(
-          ReceiverState::ReadyToReceive, ReceiverState::WaitingForMetadata);
-      getMetadata();
+      if (isIntraNodeTransfer_) {
+        // INTRA-NODE TRANSFER: Use registry instead of UCXX
+        setStateIf(
+            ReceiverState::ReadyToReceive, ReceiverState::WaitingForIntraNodeData);
+        waitForIntraNodeData();
+      } else {
+        // REMOTE EXCHANGE: Use UCXX for metadata and data
+        setStateIf(
+            ReceiverState::ReadyToReceive, ReceiverState::WaitingForMetadata);
+        getMetadata();
+      }
       break;
     case ReceiverState::WaitingForMetadata:
       // Waiting for metadata is handled by an upcall from UCXX. Nothing to do
       break;
     case ReceiverState::WaitingForData:
       // Waiting for data is handled by an upcall from UCXX. Nothing to do.
+      break;
+    case ReceiverState::WaitingForIntraNodeData:
+      // Poll for intra-node transfer data
+      waitForIntraNodeData();
       break;
     case ReceiverState::Done:
       // We need to call clean-up in this thread to remove any state
@@ -209,8 +223,7 @@ std::shared_ptr<CudfExchangeSource> CudfExchangeSource::getSelfPtr() {
 }
 
 void CudfExchangeSource::enqueue(
-    std::unique_ptr<cudf::packed_columns> columns,
-    MetadataMsg& metadata) {
+    std::unique_ptr<cudf::packed_columns> columns) {
   std::vector<velox::ContinuePromise> queuePromises;
   {
     std::lock_guard<std::mutex> l(queue_->mutex());
@@ -235,8 +248,20 @@ void CudfExchangeSource::sendHandshake() {
       partitionKey_.taskId.c_str(),
       sizeof(handshakeReq->taskId));
 
+  // Include our Communicator's listener address for same-node detection.
+  // The server will compare this with its own listener address.
+  std::string myIp = communicator_->getListenerIp();
+  strncpy(
+      handshakeReq->sourceListenerIp,
+      myIp.c_str(),
+      sizeof(handshakeReq->sourceListenerIp) - 1);
+  handshakeReq->sourceListenerIp[sizeof(handshakeReq->sourceListenerIp) - 1] =
+      '\0';
+  handshakeReq->sourceListenerPort = communicator_->getListenerPort();
+
   VLOG(3) << toString() << " Sending handshake with initial value: "
-          << partitionKey_.toString() << " to server";
+          << partitionKey_.toString() << " to server (sourceListener: " << myIp
+          << ":" << handshakeReq->sourceListenerPort << ")";
 
   // Create the handshake which will register client's existence with the server
   ucxx::AmReceiverCallbackInfo info(
@@ -275,15 +300,15 @@ void CudfExchangeSource::onHandshake(
     VLOG(0) << errorMsg;
     setState(ReceiverState::Done);
     queue_->setError(errorMsg); // Let the operator know via the queue
-
+    communicator_->addToWorkQueue(getSelfPtr());
   } else {
     VLOG(3) << toString() << "+ onHandshake " << ucs_status_string(status);
+    // Now wait for the HandshakeResponse from the server
     setStateIf(
         ReceiverState::WaitingForHandshakeComplete,
-        ReceiverState::ReadyToReceive);
+        ReceiverState::WaitingForHandshakeResponse);
+    receiveHandshakeResponse();
   }
-  // more work to do
-  communicator_->addToWorkQueue(getSelfPtr());
 }
 
 void CudfExchangeSource::getMetadata() {
@@ -343,7 +368,14 @@ void CudfExchangeSource::onMetadata(
 
     ptr->metadata =
         std::move(MetadataMsg::deserializeMetadataMsg(metadataMsg->data()));
-    // auto m = std::unique_ptr<MetadataMsg>(new MetadataMsg(msg));
+
+    // Update isIntraNodeTransfer_ from the server's detection result.
+    // The server determined this by comparing our listener address (from
+    // handshake) with its own Communicator's listener address.
+    if (ptr->metadata.isIntraNodeTransfer && !isIntraNodeTransfer_) {
+      isIntraNodeTransfer_ = true;
+      VLOG(3) << toString() << " Server confirmed same-node (intra-node transfer)";
+    }
 
     VLOG(3) << toString() << " Datasize bytes == "
             << ptr->metadata.dataSizeBytes;
@@ -355,58 +387,105 @@ void CudfExchangeSource::onMetadata(
       VLOG(3) << "There is no more data to transfer for " << toString();
       setStateIf(ReceiverState::WaitingForMetadata, ReceiverState::Done);
       communicator_->addToWorkQueue(getSelfPtr());
-      enqueue(nullptr, ptr->metadata);
+      enqueue(nullptr);
       // jump out of this function.
       return;
     }
 
-    // Now allocate memory for the CudaVector
-    // Get a stream from the global stream pool
-    auto stream =
-        facebook::velox::cudf_velox::cudfGlobalStreamPool().get_stream();
-    try {
-      ptr->dataBuf = std::make_unique<rmm::device_buffer>(
-          ptr->metadata.dataSizeBytes, stream);
-    } catch (const rmm::bad_alloc& e) {
-      VLOG(0) << toString() << " *** RMM  failed to allocate: " << e.what();
-      queue_->setError(
-          "Failed to alloc GPU memory"); // Let the operator know via the queue
-      setState(ReceiverState::Done);
-      communicator_->addToWorkQueue(getSelfPtr());
-      return;
+    if (ptr->metadata.isIntraNodeTransfer) {
+      // INTRA-NODE TRANSFER PATH: Retrieve data directly from the registry
+      // instead of allocating a buffer and receiving via UCXX.
+      VLOG(3) << toString()
+              << " Intra-node transfer: retrieving data for sequence "
+              << sequenceNumber_;
+
+      IntraNodeTransferKey key{
+          partitionKey_.taskId, partitionKey_.destination, sequenceNumber_};
+      auto intraNodeData = IntraNodeTransferRegistry::getInstance()->retrieve(key);
+
+      if (intraNodeData) {
+        VLOG(3) << toString()
+                << " Retrieved intra-node transfer data for sequence "
+                << sequenceNumber_ << " with " << ptr->metadata.dataSizeBytes
+                << " bytes";
+
+        // Create a new packed_columns from the retrieved data
+        auto uniqueData = std::make_unique<cudf::packed_columns>(
+            std::move(intraNodeData->metadata), std::move(intraNodeData->gpu_data));
+
+        metrics_.numPackedColumns_.addValue(1);
+        metrics_.totalBytes_.addValue(ptr->metadata.dataSizeBytes);
+
+        enqueue(std::move(uniqueData));
+
+        this->sequenceNumber_++;
+        setStateIf(ReceiverState::WaitingForMetadata, ReceiverState::ReadyToReceive);
+        communicator_->addToWorkQueue(getSelfPtr());
+      } else {
+        // Error - data not found in registry
+        std::string errorMsg = fmt::format(
+            "Intra-node transfer data not found for task {}, dest {}, seq {}",
+            partitionKey_.taskId,
+            partitionKey_.destination,
+            sequenceNumber_);
+        VLOG(0) << toString() << " " << errorMsg;
+        queue_->setError(errorMsg);
+        setState(ReceiverState::Done);
+        communicator_->addToWorkQueue(getSelfPtr());
+      }
+    } else {
+      // REMOTE EXCHANGE PATH: Allocate buffer and receive via UCXX
+      // Get a stream from the global stream pool
+      auto stream =
+          facebook::velox::cudf_velox::cudfGlobalStreamPool().get_stream();
+      try {
+        ptr->dataBuf = std::make_unique<rmm::device_buffer>(
+            ptr->metadata.dataSizeBytes, stream);
+      } catch (const rmm::bad_alloc& e) {
+        VLOG(0) << toString() << " *** RMM  failed to allocate: " << e.what();
+        queue_->setError(
+            "Failed to alloc GPU memory"); // Let the operator know via the
+                                           // queue
+        setState(ReceiverState::Done);
+        communicator_->addToWorkQueue(getSelfPtr());
+        return;
+      }
+
+      // sync after allocating.
+      stream.synchronize();
+
+      VLOG(3) << toString() << " Allocated " << ptr->metadata.dataSizeBytes
+              << " bytes of device memory";
+
+      // Initiate the transfer of the actual data from GPU-2-GPU
+      uint64_t dataTag = getDataTag(partitionKeyHash_, sequenceNumber_);
+      VLOG(3) << toString()
+              << " waiting for data for chunk: " << sequenceNumber_
+              << " using tag: " << std::hex << dataTag << std::dec;
+
+      if (!setStateIf(
+              ReceiverState::WaitingForMetadata,
+              ReceiverState::WaitingForData)) {
+        VLOG(1) << toString() << " onMetadata Invalid previous state ";
+        return;
+      }
+      // Use weak_ptr to prevent use-after-free if close() is called during
+      // callback
+      std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
+      request_ = endpointRef_->endpoint_->tagRecv(
+          ptr->dataBuf->data(),
+          ptr->metadata.dataSizeBytes,
+          ucxx::Tag{dataTag},
+          ucxx::TagMaskFull,
+          false,
+          [weak](ucs_status_t status, std::shared_ptr<void> arg) {
+            if (auto self = weak.lock()) {
+              self->onData(status, arg);
+            }
+          },
+          ptr // DataAndMetadata
+      );
     }
-
-    // sync after allocating.
-    stream.synchronize();
-
-    VLOG(3) << toString() << " Allocated " << ptr->metadata.dataSizeBytes
-            << " bytes of device memory";
-
-    // Initiate the transfer of the actual data from GPU-2-GPU
-    uint64_t dataTag = getDataTag(partitionKeyHash_, sequenceNumber_);
-    VLOG(3) << toString() << " waiting for data for chunk: " << sequenceNumber_
-            << " using tag: " << std::hex << dataTag << std::dec;
-
-    if (!setStateIf(
-            ReceiverState::WaitingForMetadata, ReceiverState::WaitingForData)) {
-      VLOG(1) << toString() << " onMetadata Invalid previous state ";
-      return;
-    }
-    // Use weak_ptr to prevent use-after-free if close() is called during callback
-    std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
-    request_ = endpointRef_->endpoint_->tagRecv(
-        ptr->dataBuf->data(),
-        ptr->metadata.dataSizeBytes,
-        ucxx::Tag{dataTag},
-        ucxx::TagMaskFull,
-        false,
-        [weak](ucs_status_t status, std::shared_ptr<void> arg) {
-          if (auto self = weak.lock()) {
-            self->onData(status, arg);
-          }
-        },
-        ptr // DataAndMetadata
-    );
   }
 }
 
@@ -445,9 +524,147 @@ void CudfExchangeSource::onData(
     std::unique_ptr<cudf::packed_columns> columns =
         std::make_unique<cudf::packed_columns>(
             std::move(ptr->metadata.cudfMetadata), std::move(ptr->dataBuf));
-    enqueue(std::move(columns), ptr->metadata);
+    enqueue(std::move(columns));
     setStateIf(ReceiverState::WaitingForData, ReceiverState::ReadyToReceive);
   }
+  communicator_->addToWorkQueue(getSelfPtr());
+}
+
+void CudfExchangeSource::receiveHandshakeResponse() {
+  auto responseBuffer = std::make_shared<HandshakeResponse>();
+  uint64_t responseTag = getHandshakeResponseTag(partitionKeyHash_);
+
+  VLOG(3) << toString() << " waiting for HandshakeResponse with tag: "
+          << std::hex << responseTag << std::dec;
+
+  // Use weak_ptr to prevent use-after-free if close() is called during callback
+  std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
+  request_ = endpointRef_->endpoint_->tagRecv(
+      responseBuffer.get(),
+      sizeof(HandshakeResponse),
+      ucxx::Tag{responseTag},
+      ucxx::TagMaskFull,
+      false,
+      [weak](ucs_status_t status, std::shared_ptr<void> arg) {
+        if (auto self = weak.lock()) {
+          self->onHandshakeResponse(status, arg);
+        }
+      },
+      responseBuffer);
+}
+
+void CudfExchangeSource::onHandshakeResponse(
+    ucs_status_t status,
+    std::shared_ptr<void> arg) {
+  // Check if close() was called - avoid processing if we're shutting down
+  if (closed_.load(std::memory_order_acquire)) {
+    VLOG(3) << toString()
+            << " onHandshakeResponse called after close, ignoring";
+    return;
+  }
+
+  if (status != UCS_OK) {
+    std::string errorMsg = fmt::format(
+        "Failed to receive HandshakeResponse from host {}:{}, task {}: {}",
+        host_,
+        port_,
+        partitionKey_.toString(),
+        ucs_status_string(status));
+    VLOG(0) << errorMsg;
+    setState(ReceiverState::Done);
+    queue_->setError(errorMsg);
+    communicator_->addToWorkQueue(getSelfPtr());
+    return;
+  }
+
+  std::shared_ptr<HandshakeResponse> response =
+      std::static_pointer_cast<HandshakeResponse>(arg);
+
+  isIntraNodeTransfer_ = response->isIntraNodeTransfer;
+
+  VLOG(3) << toString() << " + onHandshakeResponse isIntraNodeTransfer="
+          << isIntraNodeTransfer_;
+
+  setStateIf(
+      ReceiverState::WaitingForHandshakeResponse, ReceiverState::ReadyToReceive);
+  communicator_->addToWorkQueue(getSelfPtr());
+}
+
+void CudfExchangeSource::waitForIntraNodeData() {
+  // Check if close() was called
+  if (closed_.load(std::memory_order_acquire)) {
+    VLOG(3) << toString() << " waitForIntraNodeData called after close, ignoring";
+    return;
+  }
+
+  IntraNodeTransferKey key{
+      partitionKey_.taskId, partitionKey_.destination, sequenceNumber_};
+
+  VLOG(3) << toString() << " polling for intra-node transfer data, seq="
+          << sequenceNumber_;
+
+  auto result = IntraNodeTransferRegistry::getInstance()->poll(key);
+
+  if (!result.has_value()) {
+    // Data not ready yet, re-queue to try again
+    communicator_->addToWorkQueue(getSelfPtr());
+    return;
+  }
+
+  auto [data, atEnd] = result.value();
+  onIntraNodeData(std::move(data), atEnd);
+}
+
+void CudfExchangeSource::onIntraNodeData(
+    std::shared_ptr<cudf::packed_columns> data,
+    bool atEnd) {
+  // Check if close() was called
+  if (closed_.load(std::memory_order_acquire)) {
+    VLOG(3) << toString() << " onIntraNodeData called after close, ignoring";
+    return;
+  }
+
+  if (atEnd) {
+    // End of stream
+    atEnd_ = true;
+    VLOG(3) << toString() << " Intra-node transfer: end of stream";
+    setState(ReceiverState::Done);
+
+    // Enqueue nullptr to mark end for this source
+    enqueue(nullptr);
+
+    communicator_->addToWorkQueue(getSelfPtr());
+    return;
+  }
+
+  if (!data) {
+    // Error - should not happen if atEnd is false
+    std::string errorMsg = fmt::format(
+        "Intra-node transfer data is null for task {}, dest {}, seq {}",
+        partitionKey_.taskId,
+        partitionKey_.destination,
+        sequenceNumber_);
+    VLOG(0) << toString() << " " << errorMsg;
+    queue_->setError(errorMsg);
+    setState(ReceiverState::Done);
+    communicator_->addToWorkQueue(getSelfPtr());
+    return;
+  }
+
+  VLOG(3) << toString() << " Intra-node transfer: received data for seq="
+          << sequenceNumber_ << " size=" << data->gpu_data->size();
+
+  metrics_.numPackedColumns_.addValue(1);
+  metrics_.totalBytes_.addValue(data->gpu_data->size());
+
+  // Convert shared_ptr to unique_ptr for enqueue
+  auto uniqueData = std::make_unique<cudf::packed_columns>(
+      std::move(data->metadata), std::move(data->gpu_data));
+
+  enqueue(std::move(uniqueData));
+
+  this->sequenceNumber_++;
+  setStateIf(ReceiverState::WaitingForIntraNodeData, ReceiverState::ReadyToReceive);
   communicator_->addToWorkQueue(getSelfPtr());
 }
 

@@ -114,9 +114,11 @@ class CudfExchangeSource
   enum class ReceiverState : uint32_t {
     Created,
     WaitingForHandshakeComplete,
+    WaitingForHandshakeResponse, // Waiting for server's HandshakeResponse
     ReadyToReceive,
     WaitingForMetadata,
     WaitingForData,
+    WaitingForIntraNodeData, // Intra-node transfer: waiting on registry
     Done
   };
 
@@ -151,8 +153,7 @@ class CudfExchangeSource
 
   // Put the received data into the exchange queue.
   void enqueue(
-      std::unique_ptr<cudf::packed_columns> columns,
-      MetadataMsg& metadata);
+      std::unique_ptr<cudf::packed_columns> columns);
 
   /// @brief Sets the endpoint for this receiver.
   void setEndpoint(std::shared_ptr<EndpointRef> endpointRef);
@@ -177,6 +178,22 @@ class CudfExchangeSource
   /// @param status indication by transport layer of transfer status
   /// @param arg
   void onData(ucs_status_t status, std::shared_ptr<void> arg);
+
+  /// @brief Initiates receiving the HandshakeResponse from server.
+  void receiveHandshakeResponse();
+
+  /// @brief Called when HandshakeResponse is received from server.
+  /// @param status indication by transport layer of transfer status
+  /// @param arg The HandshakeResponse data
+  void onHandshakeResponse(ucs_status_t status, std::shared_ptr<void> arg);
+
+  /// @brief For intra-node transfer: initiates waiting for data from registry.
+  void waitForIntraNodeData();
+
+  /// @brief For intra-node transfer: handles data retrieved from registry.
+  /// @param data The packed_columns from registry (nullptr if atEnd or error)
+  /// @param atEnd True if this is end-of-stream
+  void onIntraNodeData(std::shared_ptr<cudf::packed_columns> data, bool atEnd);
 
   /// @brief Sets the new state of this exchange source using
   /// sequential consistency.
@@ -218,6 +235,13 @@ class CudfExchangeSource
   const std::shared_ptr<CudfExchangeQueue> queue_{nullptr};
   std::atomic<bool> closed_{false};
   bool atEnd_{false}; // set when "atEnd" is being received.
+
+  /// True if the server detected that this source is on the same node.
+  /// Set from the isIntraNodeTransfer flag in HandshakeResponse, which the
+  /// server determines by comparing this source's listener address (sent in
+  /// HandshakeMsg) with its own Communicator's listener address.
+  /// When true, intra-node transfer optimizations bypass UCXX transfers.
+  bool isIntraNodeTransfer_{false};
 
   // Some metrics/counters:
   CudfExchangeMetrics metrics_;

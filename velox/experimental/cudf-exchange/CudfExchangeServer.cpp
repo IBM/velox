@@ -18,6 +18,7 @@
 #include "cuda_runtime.h"
 #include "velox/experimental/cudf-exchange/Communicator.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeProtocol.h"
+#include "velox/experimental/cudf-exchange/IntraNodeTransferRegistry.h"
 
 namespace facebook::velox::cudf_exchange {
 
@@ -25,21 +26,38 @@ namespace facebook::velox::cudf_exchange {
 CudfExchangeServer::CudfExchangeServer(
     const std::shared_ptr<Communicator> communicator,
     std::shared_ptr<EndpointRef> endpointRef,
-    const PartitionKey& key)
+    const PartitionKey& key,
+    const std::string& sourceListenerIp,
+    uint16_t sourceListenerPort)
     : CommElement(communicator, endpointRef),
       partitionKey_(key),
       partitionKeyHash_(fnv1a_32(partitionKey_.toString())),
+      sourceListenerIp_(sourceListenerIp),
+      sourceListenerPort_(sourceListenerPort),
       queueMgr_(CudfOutputQueueManager::getInstanceRef()) {
   setState(ServerState::Created);
+
+  // Detect if the source is on the same node by comparing listener addresses.
+  std::string myIp = communicator_->getListenerIp();
+  uint16_t myPort = communicator_->getListenerPort();
+  isIntraNodeTransfer_ = (myIp == sourceListenerIp_) && (myPort == sourceListenerPort_);
+
+  if (isIntraNodeTransfer_) {
+    VLOG(3) << "@" << partitionKey_.taskId
+            << " Detected same-node source (intra-node transfer) for "
+            << partitionKey_.toString();
+  }
 }
 
 // static
 std::shared_ptr<CudfExchangeServer> CudfExchangeServer::create(
     const std::shared_ptr<Communicator> communicator,
     std::shared_ptr<EndpointRef> endpointRef,
-    const PartitionKey& key) {
-  auto ptr = std::shared_ptr<CudfExchangeServer>(
-      new CudfExchangeServer(communicator, endpointRef, key));
+    const PartitionKey& key,
+    const std::string& sourceListenerIp,
+    uint16_t sourceListenerPort) {
+  auto ptr = std::shared_ptr<CudfExchangeServer>(new CudfExchangeServer(
+      communicator, endpointRef, key, sourceListenerIp, sourceListenerPort));
   return ptr;
 }
 
@@ -105,6 +123,19 @@ void CudfExchangeServer::process() {
       // Waiting for send complete is handled by an upcall from UCXX. Nothing to
       // do
       break;
+    case ServerState::WaitingForIntraNodeRetrieve:
+      // Intra-node transfer: check if the source has retrieved the data
+      if (intraNodeRetrieveFuture_.valid()) {
+        auto status = intraNodeRetrieveFuture_.wait_for(std::chrono::milliseconds(0));
+        if (status == std::future_status::ready) {
+          intraNodeRetrieveFuture_.get(); // Clear the future
+          onIntraNodeRetrieveComplete();
+        } else {
+          // Not ready yet, re-queue to check later
+          communicator_->addToWorkQueue(getSelfPtr());
+        }
+      }
+      break;
     case ServerState::Done:
       close();
       if (endpointRef_) {
@@ -153,11 +184,56 @@ std::shared_ptr<CudfExchangeServer> CudfExchangeServer::getSelfPtr() {
 }
 
 void CudfExchangeServer::sendData() {
-  // Create the MetaDataRecord.
-  std::shared_ptr<MetadataMsg> metadataMsg = std::make_shared<MetadataMsg>();
+  std::lock_guard<std::recursive_mutex> lock(dataMutex_);
 
-  {
-    std::lock_guard<std::recursive_mutex> lock(dataMutex_);
+  if (isIntraNodeTransfer_) {
+    // INTRA-NODE TRANSFER PATH: Use registry for all communication, no UCXX needed
+    sendStart_ = std::chrono::high_resolution_clock::now();
+
+    if (dataPtr_) {
+      bytes_ = dataPtr_->gpu_data->size();
+
+      VLOG(3) << "@" << partitionKey_.taskId
+              << " Intra-node transfer: publishing data for sequence "
+              << sequenceNumber_ << " of size " << bytes_;
+
+      // Convert the data to shared_ptr for sharing with the source
+      auto sharedData = std::make_shared<cudf::packed_columns>(
+          std::move(dataPtr_->metadata), std::move(dataPtr_->gpu_data));
+      dataPtr_.reset();
+
+      IntraNodeTransferKey key{
+          partitionKey_.taskId, partitionKey_.destination, sequenceNumber_};
+      intraNodeRetrieveFuture_ =
+          IntraNodeTransferRegistry::getInstance()->publish(key, sharedData, /*atEnd=*/false);
+      intraNodeAtEndPublished_ = false;
+
+      // Transition to WaitingForIntraNodeRetrieve state
+      setState(ServerState::WaitingForIntraNodeRetrieve);
+      communicator_->addToWorkQueue(getSelfPtr());
+    } else {
+      // Data pointer is null, so no more data will be coming.
+      // Publish atEnd marker to registry
+      VLOG(3) << "@" << partitionKey_.taskId
+              << " Intra-node transfer: publishing atEnd for sequence "
+              << sequenceNumber_;
+
+      IntraNodeTransferKey key{
+          partitionKey_.taskId, partitionKey_.destination, sequenceNumber_};
+      intraNodeRetrieveFuture_ =
+          IntraNodeTransferRegistry::getInstance()->publish(key, nullptr, /*atEnd=*/true);
+      intraNodeAtEndPublished_ = true;
+
+      queueMgr_->deleteResults(partitionKey_.taskId, partitionKey_.destination);
+
+      // Wait for source to acknowledge atEnd before finishing
+      setState(ServerState::WaitingForIntraNodeRetrieve);
+      communicator_->addToWorkQueue(getSelfPtr());
+    }
+  } else {
+    // REMOTE EXCHANGE PATH: Use UCXX for metadata and data transfer
+    std::shared_ptr<MetadataMsg> metadataMsg = std::make_shared<MetadataMsg>();
+
     if (dataPtr_) {
       metadataMsg->cudfMetadata = std::move(dataPtr_->metadata);
       metadataMsg->dataSizeBytes = dataPtr_->gpu_data->size();
@@ -171,52 +247,52 @@ void CudfExchangeServer::sendData() {
       metadataMsg->remainingBytes = {};
       metadataMsg->atEnd = true;
     }
-  }
+    metadataMsg->isIntraNodeTransfer = false;
 
-  auto [serializedMetadata, serMetaSize] = metadataMsg->serialize();
+    auto [serializedMetadata, serMetaSize] = metadataMsg->serialize();
 
-  // send metadata.
-  uint64_t metadataTag =
-      getMetadataTag(this->partitionKeyHash_, this->sequenceNumber_);
-  // Use weak_ptr to prevent use-after-free if close() is called during callback
-  std::weak_ptr<CudfExchangeServer> weakMeta = weak_from_this();
-  metaRequest_ = endpointRef_->endpoint_->tagSend(
-      serializedMetadata.get(),
-      serMetaSize,
-      ucxx::Tag{metadataTag},
-      false,
-      [tid = partitionKey_.toString(), metadataTag, weakMeta](
-          ucs_status_t status, std::shared_ptr<void> arg) {
-        auto self = weakMeta.lock();
-        if (!self) {
-          return; // Object was destroyed, safe to ignore
-        }
-        // Check if close() was called - avoid processing if we're shutting down
-        if (self->closed_.load(std::memory_order_acquire)) {
-          VLOG(3) << "@" << self->partitionKey_.taskId
-                  << " metadata send callback called after close, ignoring";
-          return;
-        }
-        if (status == UCS_OK) {
-          VLOG(3) << "@" << self->partitionKey_.taskId
-                  << " metadata successfully sent to " << tid
-                  << " with tag: " << std::hex << metadataTag;
-        } else {
-          VLOG(0) << "@" << self->partitionKey_.taskId
-                  << " Error in sendData, send metadata "
-                  << ucs_status_string(status) << " failed for task: " << tid;
-          self->setState(ServerState::Done);
-          self->communicator_->addToWorkQueue(self);
-        }
-      },
-      serializedMetadata);
+    // send metadata.
+    uint64_t metadataTag =
+        getMetadataTag(this->partitionKeyHash_, this->sequenceNumber_);
+    // Use weak_ptr to prevent use-after-free if close() is called during
+    // callback
+    std::weak_ptr<CudfExchangeServer> weakMeta = weak_from_this();
+    metaRequest_ = endpointRef_->endpoint_->tagSend(
+        serializedMetadata.get(),
+        serMetaSize,
+        ucxx::Tag{metadataTag},
+        false,
+        [tid = partitionKey_.toString(), metadataTag, weakMeta](
+            ucs_status_t status, std::shared_ptr<void> arg) {
+          auto self = weakMeta.lock();
+          if (!self) {
+            return; // Object was destroyed, safe to ignore
+          }
+          // Check if close() was called
+          if (self->closed_.load(std::memory_order_acquire)) {
+            VLOG(3) << "@" << self->partitionKey_.taskId
+                    << " metadata send callback called after close, ignoring";
+            return;
+          }
+          if (status == UCS_OK) {
+            VLOG(3) << "@" << self->partitionKey_.taskId
+                    << " metadata successfully sent to " << tid
+                    << " with tag: " << std::hex << metadataTag;
+          } else {
+            VLOG(0) << "@" << self->partitionKey_.taskId
+                    << " Error in sendData, send metadata "
+                    << ucs_status_string(status) << " failed for task: " << tid;
+            self->setState(ServerState::Done);
+            self->communicator_->addToWorkQueue(self);
+          }
+        },
+        serializedMetadata);
 
-  // send the data chunk (if any)
-  {
-    std::lock_guard<std::recursive_mutex> lock(dataMutex_);
+    // send the data chunk (if any)
     if (dataPtr_) {
       sendStart_ = std::chrono::high_resolution_clock::now();
       bytes_ = dataPtr_->gpu_data->size();
+
       VLOG(3) << "@" << partitionKey_.taskId << " Sending rmm::buffer: "
               << std::hex << dataPtr_->gpu_data.get()
               << " pointing to device memory: " << std::hex
@@ -227,7 +303,8 @@ void CudfExchangeServer::sendData() {
       setState(ServerState::WaitingForSendComplete);
       uint64_t dataTag =
           getDataTag(this->partitionKeyHash_, this->sequenceNumber_);
-      // Use weak_ptr to prevent use-after-free if close() is called during callback
+      // Use weak_ptr to prevent use-after-free if close() is called during
+      // callback
       std::weak_ptr<CudfExchangeServer> weakData = weak_from_this();
       dataRequest_ = endpointRef_->endpoint_->tagSend(
           dataPtr_->gpu_data->data(),
@@ -287,6 +364,43 @@ void CudfExchangeServer::sendComplete(
             << " Error in sendComplete, send complete "
             << ucs_status_string(status);
     setState(ServerState::Done);
+  }
+  communicator_->addToWorkQueue(getSelfPtr());
+}
+
+void CudfExchangeServer::onIntraNodeRetrieveComplete() {
+  // Check if close() was called - avoid processing if we're shutting down
+  if (closed_.load(std::memory_order_acquire)) {
+    VLOG(3) << "@" << partitionKey_.taskId
+            << " onIntraNodeRetrieveComplete called after close, ignoring";
+    return;
+  }
+
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration = end - sendStart_;
+  auto micros =
+      std::chrono::duration_cast<std::chrono::microseconds>(duration).count();
+  auto throughput = (micros > 0) ? (bytes_ / micros) : 0;
+
+  VLOG(3) << "@" << partitionKey_.taskId << " Intra-node transfer duration: "
+          << std::chrono::duration_cast<std::chrono::milliseconds>(duration)
+                 .count()
+          << " ms ";
+  VLOG(3) << "@" << partitionKey_.taskId
+          << " Intra-node transfer throughput: " << throughput << " MByte/s";
+
+  VLOG(3) << "@" << partitionKey_.taskId
+          << " Intra-node transfer complete for sequence " << sequenceNumber_;
+
+  if (intraNodeAtEndPublished_) {
+    // This was the final atEnd marker, we're done
+    VLOG(3) << "@" << partitionKey_.taskId
+            << " Intra-node transfer: atEnd acknowledged, finishing";
+    setState(ServerState::Done);
+  } else {
+    // More data may be coming, continue transfer loop
+    this->sequenceNumber_++;
+    setState(ServerState::ReadyToTransfer);
   }
   communicator_->addToWorkQueue(getSelfPtr());
 }

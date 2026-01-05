@@ -109,6 +109,17 @@ class Communicator {
   // Returns the URL of the coordinator.
   const std::string& getCoordinatorUrl();
 
+  /// @brief Get the listener's bound IP address.
+  /// Used for same-node detection in intra-node transfer optimization.
+  /// @returns The IP address string from the UCXX listener, or empty if not
+  /// initialized.
+  std::string getListenerIp() const;
+
+  /// @brief Get the listener's bound port.
+  /// Used for same-node detection in intra-node transfer optimization.
+  /// @returns The port number from the UCXX listener.
+  uint16_t getListenerPort() const;
+
  private:
   Communicator() =
       default; // Private constructor to prevent direct instantiation
