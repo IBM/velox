@@ -227,6 +227,20 @@ const std::string& Communicator::getCoordinatorUrl() {
   return coordinatorURL_;
 }
 
+std::string Communicator::getListenerIp() const {
+  if (listener_) {
+    return listener_->getIp();
+  }
+  return "";
+}
+
+uint16_t Communicator::getListenerPort() const {
+  if (listener_) {
+    return listener_->getPort();
+  }
+  return port_;
+}
+
 /// @brief The callback method that is invoked when a client connects.
 void Communicator::listenerCallback(ucp_conn_request_h conn_request) {
   char ip_str[INET6_ADDRSTRLEN];
@@ -262,4 +276,5 @@ void Communicator::listenerCallback(ucp_conn_request_h conn_request) {
   VELOX_CHECK(res.second, "Endpoint already exists!");
   acceptor_.registerEndpointRef(epRef);
 }
+
 } // namespace facebook::velox::cudf_exchange

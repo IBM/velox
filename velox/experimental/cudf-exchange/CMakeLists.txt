@@ -29,6 +29,7 @@ add_library(
   Acceptor.cpp
   EndpointRef.cpp
   NetUtil.cpp
+  IntraNodeTransferRegistry.cpp
 )
 
 find_package(ucx REQUIRED)

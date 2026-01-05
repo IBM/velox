@@ -45,7 +45,13 @@ void Acceptor::cStyleAMCallback(
   std::shared_ptr<EndpointRef> epRef = it->second;
 
   const PartitionKey key = {handshakePtr->taskId, handshakePtr->destination};
-  auto exchangeServer = CudfExchangeServer::create(communicator, epRef, key);
+
+  // Extract source's listener address for same-node detection.
+  std::string sourceListenerIp(handshakePtr->sourceListenerIp);
+  uint16_t sourceListenerPort = handshakePtr->sourceListenerPort;
+
+  auto exchangeServer = CudfExchangeServer::create(
+      communicator, epRef, key, sourceListenerIp, sourceListenerPort);
 
   // Add this exchangeServer to the endpoint reference.
   epRef->addCommElem(exchangeServer);
@@ -53,7 +59,37 @@ void Acceptor::cStyleAMCallback(
   // Register exchangeServer with communicator.
   communicator->registerCommElement(exchangeServer);
   VLOG(3) << "Registered new exchange server task: "
-          << exchangeServer->toString();
+          << exchangeServer->toString() << " (sourceListener: "
+          << sourceListenerIp << ":" << sourceListenerPort << ")";
+
+  // Send HandshakeResponse back to the source to inform about intra-node transfer.
+  // This allows the source to bypass UCXX for all subsequent data transfers.
+  auto response = std::make_shared<HandshakeResponse>();
+  response->isIntraNodeTransfer = exchangeServer->isIntraNodeTransfer();
+
+  uint32_t keyHash = fnv1a_32(key.toString());
+  uint64_t responseTag = getHandshakeResponseTag(keyHash);
+
+  VLOG(3) << "Sending HandshakeResponse to " << key.toString()
+          << " isIntraNodeTransfer=" << response->isIntraNodeTransfer
+          << " tag=" << std::hex << responseTag;
+
+  // Fire-and-forget: we don't need to track this request completion
+  epRef->endpoint_->tagSend(
+      response.get(),
+      sizeof(HandshakeResponse),
+      ucxx::Tag{responseTag},
+      false,
+      [response, keyStr = key.toString()](
+          ucs_status_t status, std::shared_ptr<void> arg) {
+        if (status == UCS_OK) {
+          VLOG(3) << "HandshakeResponse sent successfully to " << keyStr;
+        } else {
+          VLOG(0) << "Failed to send HandshakeResponse to " << keyStr << ": "
+                  << ucs_status_string(status);
+        }
+      },
+      response);
 }
 
 // Add endpoint reference to ucp_cp -> epRef map.

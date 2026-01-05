@@ -22,6 +22,7 @@
 #include <velox/exec/Task.h>
 #include <velox/experimental/cudf-exchange/CudfOutputQueueManager.h>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <tuple>
 #include "velox/experimental/cudf-exchange/CommElement.h"
@@ -34,10 +35,20 @@ class CudfExchangeServer
     : public CommElement,
       public std::enable_shared_from_this<CudfExchangeServer> {
  public:
+  /// @brief Factory method to create a CudfExchangeServer.
+  /// @param communicator The Communicator instance.
+  /// @param endpointRef The endpoint reference for UCXX communication.
+  /// @param key The partition key identifying the data to serve.
+  /// @param sourceListenerIp The source's Communicator listener IP address
+  ///        (from HandshakeMsg) for same-node detection.
+  /// @param sourceListenerPort The source's Communicator listener port
+  ///        (from HandshakeMsg) for same-node detection.
   static std::shared_ptr<CudfExchangeServer> create(
       const std::shared_ptr<Communicator> communicator,
       std::shared_ptr<EndpointRef> endpointRef,
-      const PartitionKey& key);
+      const PartitionKey& key,
+      const std::string& sourceListenerIp,
+      uint16_t sourceListenerPort);
 
   void process() override;
 
@@ -49,6 +60,11 @@ class CudfExchangeServer
     return partitionKey_;
   }
 
+  /// @brief Returns true if this server detected same-node with the source.
+  bool isIntraNodeTransfer() const {
+    return isIntraNodeTransfer_;
+  }
+
  private:
   enum class ServerState : uint32_t {
     Created,
@@ -56,13 +72,16 @@ class CudfExchangeServer
     WaitingForDataFromQueue,
     DataReady,
     WaitingForSendComplete,
+    WaitingForIntraNodeRetrieve, // Intra-node transfer: waiting for source to retrieve
     Done
   };
 
   explicit CudfExchangeServer(
       const std::shared_ptr<Communicator> communicator,
       std::shared_ptr<EndpointRef> endpointRef,
-      const PartitionKey& key);
+      const PartitionKey& key,
+      const std::string& sourceListenerIp,
+      uint16_t sourceListenerPort);
 
   /// @return A shared pointer to itself.
   std::shared_ptr<CudfExchangeServer> getSelfPtr();
@@ -72,6 +91,10 @@ class CudfExchangeServer
 
   /// @brief Completion handler after data has been sent.
   void sendComplete(ucs_status_t status, std::shared_ptr<void> arg);
+
+  /// @brief Completion handler for intra-node transfer after source retrieves
+  /// data.
+  void onIntraNodeRetrieveComplete();
 
   /// @brief Sets the new state of this exchange server using
   /// sequential consistency.
@@ -92,6 +115,7 @@ class CudfExchangeServer
         "WaitingForDataFromQueue",
         "DataReady",
         "WaitingForSendComplete",
+        "WaitingForIntraNodeRetrieve",
         "Done"};
     return stateMap[static_cast<uint32_t>(state_.load())];
   }
@@ -100,10 +124,25 @@ class CudfExchangeServer
   const uint32_t
       partitionKeyHash_; // A hash of above, used to create unique tags.
 
+  /// Source's Communicator listener IP address (from HandshakeMsg).
+  const std::string sourceListenerIp_;
+  /// Source's Communicator listener port (from HandshakeMsg).
+  const uint16_t sourceListenerPort_;
+  /// True if server and source are on the same node (same Communicator
+  /// listener address). When true, data is passed via IntraNodeTransferRegistry
+  /// instead of UCXX transfer.
+  bool isIntraNodeTransfer_{false};
+
   std::atomic<ServerState> state_;
   std::unique_ptr<cudf::packed_columns> dataPtr_{nullptr};
   std::recursive_mutex dataMutex_; // mutex for above ptr.
   std::atomic<bool> closed_{false};
+
+  /// Future for intra-node transfer - signaled when source retrieves data.
+  std::future<void> intraNodeRetrieveFuture_;
+
+  /// For intra-node transfer: true if the last published entry was atEnd.
+  bool intraNodeAtEndPublished_{false};
 
   uint32_t sequenceNumber_{0};
 

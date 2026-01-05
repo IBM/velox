@@ -41,6 +41,7 @@ void cudaCheck(CUresult result);
 // Definition of the operations.
 constexpr uint64_t METADATA_TAG = 0x02000000;
 constexpr uint64_t DATA_TAG = 0x03000000;
+constexpr uint64_t HANDSHAKE_RESPONSE_TAG = 0x04000000;
 
 // Implementation of the fowler-noll-vo hash function for 32 bits.
 uint32_t fnv1a_32(const std::string& s);
@@ -57,10 +58,41 @@ inline uint64_t getDataTag(uint64_t taskHash, uint64_t sequenceNumber) {
   return (taskHash << 32) | DATA_TAG | sequenceNumber;
 }
 
-// Request that is sent from the client to the server after connection.
+// Gets the tag used for handshake response communication.
+// Note: taskHash is implicitly converted to 64 bits.
+inline uint64_t getHandshakeResponseTag(uint64_t taskHash) {
+  return (taskHash << 32) | HANDSHAKE_RESPONSE_TAG;
+}
+
+/// Maximum length for listener IP address (supports IPv6).
+constexpr size_t kMaxListenerIpLen = 64;
+
+/// @brief Request that is sent from the client (CudfExchangeSource) to the
+/// server (CudfExchangeServer) after connection.
+///
+/// The handshake establishes the partition key for data exchange and includes
+/// the source's Communicator listener address. The server uses this to detect
+/// if the source is on the same node (same Communicator instance) by comparing
+/// with its own listener address. Same-node detection enables local exchange
+/// optimizations that bypass UCXX transfers.
 struct HandshakeMsg {
   char taskId[256];
   uint32_t destination;
+  /// Source's Communicator listener IP address for same-node detection.
+  char sourceListenerIp[kMaxListenerIpLen];
+  /// Source's Communicator listener port for same-node detection.
+  uint16_t sourceListenerPort;
+};
+
+/// @brief Response sent from server to source after handshake.
+/// Informs the source whether intra-node transfer optimization is available,
+/// allowing the source to bypass UCXX for all subsequent data transfers.
+struct HandshakeResponse {
+  /// True if server and source are on the same node (same Communicator).
+  /// When true, source should use IntraNodeTransferRegistry instead of UCXX.
+  bool isIntraNodeTransfer{false};
+  /// Padding for alignment
+  uint8_t padding[7]{};
 };
 
 constexpr uint32_t kMagicNumber = 0x12345678;
@@ -71,6 +103,13 @@ struct MetadataMsg {
   int64_t dataSizeBytes;
   std::vector<int64_t> remainingBytes;
   bool atEnd;
+  /// True if server and source are on the same node and data should be
+  /// retrieved from the IntraNodeTransferRegistry instead of via UCXX.
+  /// Set by the server after comparing the source's listener address
+  /// (from HandshakeMsg) with its own Communicator's listener address.
+  /// When true, the source retrieves data directly from the registry
+  /// using (taskId, destination, sequenceNumber) as the key.
+  bool isIntraNodeTransfer{false};
 
   uint32_t getSerializedSize() {
     // The header: the magic number and the metadata length (an uint32_t).
@@ -87,6 +126,8 @@ struct MetadataMsg {
     totalSize += remainingBytes.size() * sizeof(uint64_t);
 
     totalSize += sizeof(uint8_t); // atEnd, encoded in a byte.
+
+    totalSize += sizeof(uint8_t); // isIntraNodeTransfer, encoded in a byte.
 
     return totalSize;
   }
@@ -141,6 +182,10 @@ struct MetadataMsg {
 
     // Serialize atEnd bool as 0/1.
     *ptr = atEnd ? 1 : 0;
+    ptr += sizeof(uint8_t);
+
+    // Serialize isIntraNodeTransfer bool as 0/1.
+    *ptr = isIntraNodeTransfer ? 1 : 0;
 
     return std::make_pair<std::shared_ptr<uint8_t>, size_t>(
         std::move(buffer), totalSize);
@@ -211,6 +256,17 @@ struct MetadataMsg {
     // Deserialize bool `atEnd` (stored as a single byte: 1 for true, 0 for
     // false)
     record.atEnd = (*ptr != 0);
+    ptr += sizeof(uint8_t);
+
+    // Deserialize bool `isIntraNodeTransfer` (stored as a single byte: 1 for
+    // true, 0 for false)
+    if (ptr < endPtr) {
+      record.isIntraNodeTransfer = (*ptr != 0);
+    } else {
+      // For backwards compatibility with older servers that don't send this
+      // field
+      record.isIntraNodeTransfer = false;
+    }
 
     return record;
   }
