@@ -17,11 +17,14 @@
 #include "velox/connectors/hive/iceberg/tests/IcebergTestBase.h"
 
 #include <filesystem>
-
+#include "velox/connectors/hive/iceberg/IcebergConnector.h"
 #include "velox/connectors/hive/iceberg/IcebergSplit.h"
 #include "velox/connectors/hive/iceberg/PartitionSpec.h"
+#include "velox/expression/Expr.h"
 
 namespace facebook::velox::connector::hive::iceberg::test {
+
+const std::string kIcebergConnectorId{"test-iceberg"};
 
 void IcebergTestBase::SetUp() {
   HiveConnectorTestBase::SetUp();
@@ -30,6 +33,15 @@ void IcebergTestBase::SetUp() {
   parquet::registerParquetWriterFactory();
 #endif
   Type::registerSerDe();
+
+  // Register IcebergConnector.
+  IcebergConnectorFactory icebergFactory;
+  auto icebergConnector = icebergFactory.newConnector(
+      kIcebergConnectorId,
+      std::make_shared<config::ConfigBase>(
+          std::unordered_map<std::string, std::string>()),
+      ioExecutor_.get());
+  registerConnector(icebergConnector);
 
   connectorSessionProperties_ = std::make_shared<config::ConfigBase>(
       std::unordered_map<std::string, std::string>(), true);
@@ -51,6 +63,7 @@ void IcebergTestBase::TearDown() {
   connectorPool_.reset();
   opPool_.reset();
   root_.reset();
+  unregisterConnector(kIcebergConnectorId);
   HiveConnectorTestBase::TearDown();
 }
 
@@ -292,7 +305,7 @@ IcebergTestBase::createSplitsForDirectory(const std::string& directory) {
                           ->openFileForRead(filePath);
     splits.push_back(
         std::make_shared<HiveIcebergSplit>(
-            exec::test::kHiveConnectorId,
+            kIcebergConnectorId,
             filePath,
             fileFormat_,
             0,
