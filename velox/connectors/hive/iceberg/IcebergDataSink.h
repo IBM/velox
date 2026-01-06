@@ -53,6 +53,10 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
   /// @param locationHandle Contains the target location information including:
   /// - Base directory path where data files will be written.
   /// - File naming scheme and temporary directory paths.
+  /// @param tableStorageFormat File format to use for writing data files.
+  /// @param partitionSpec Optional partition specification defining how to
+  /// partition the data. If nullptr, the table is unpartitioned and all data
+  /// is written to a single directory.
   /// @param compressionKind Optional compression to apply to data files.
   /// @param serdeParameters Additional serialization/deserialization parameters
   /// for the file format.
