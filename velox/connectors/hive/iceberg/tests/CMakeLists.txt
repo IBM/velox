@@ -60,6 +60,7 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
 
   add_executable(
     velox_hive_iceberg_insert_test
+    IcebergConnectorTest.cpp
     ColumnTransformTest.cpp
     IcebergInsertTest.cpp
     IcebergPartitionIdGeneratorTest.cpp
@@ -82,6 +83,7 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
     velox_hive_iceberg_splitreader
     velox_vector_fuzzer
     GTest::gtest
+    GTest::gtest_main
   )
 
   if(VELOX_ENABLE_PARQUET)
