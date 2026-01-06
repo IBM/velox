@@ -30,10 +30,13 @@
 
 namespace facebook::velox::connector::hive::iceberg::test {
 
+extern const std::string kIcebergConnectorId;
+
 struct PartitionField {
-  int32_t id; // Index of column in RowType, start from 0.
+  // 0-based column index.
+  int32_t id;
   TransformType type;
-  std::optional<int32_t> parameter; // Optional parameter of transform.
+  std::optional<int32_t> parameter;
 };
 
 class IcebergTestBase : public exec::test::HiveConnectorTestBase {
