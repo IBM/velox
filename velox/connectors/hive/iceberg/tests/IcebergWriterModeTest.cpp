@@ -74,7 +74,12 @@ TEST_P(IcebergWriterModeTest, identityPartitioning) {
   dataSink->close();
   createDuckDbTable({vector1, vector2});
   auto splits = createSplitsForDirectory(outputDirectory->getPath());
-  auto plan = exec::test::PlanBuilder().tableScan(rowType_).planNode();
+  auto plan = exec::test::PlanBuilder()
+                  .startTableScan()
+                  .connectorId(test::kIcebergConnectorId)
+                  .outputType(rowType_)
+                  .endTableScan()
+                  .planNode();
   assertQuery(plan, splits, fmt::format("SELECT * FROM tmp"));
 }
 
@@ -105,7 +110,12 @@ TEST_P(IcebergWriterModeTest, clusteredInput) {
   createDuckDbTable({vector1, vector2});
   auto splits = createSplitsForDirectory(outputDirectory->getPath());
   ASSERT_EQ(splits.size(), 1);
-  auto plan = exec::test::PlanBuilder().tableScan(rowType_).planNode();
+  auto plan = exec::test::PlanBuilder()
+                  .startTableScan()
+                  .connectorId(test::kIcebergConnectorId)
+                  .outputType(rowType_)
+                  .endTableScan()
+                  .planNode();
   assertQuery(plan, splits, fmt::format("SELECT * FROM tmp"));
 }
 
@@ -135,7 +145,12 @@ TEST_P(IcebergWriterModeTest, clusteredNullInput) {
   createDuckDbTable({vector1, vector2});
   auto splits = createSplitsForDirectory(outputDirectory->getPath());
   ASSERT_EQ(splits.size(), 1);
-  auto plan = exec::test::PlanBuilder().tableScan(rowType_).planNode();
+  auto plan = exec::test::PlanBuilder()
+                  .startTableScan()
+                  .connectorId(test::kIcebergConnectorId)
+                  .outputType(rowType_)
+                  .endTableScan()
+                  .planNode();
   assertQuery(plan, splits, fmt::format("SELECT * FROM tmp"));
 }
 
@@ -165,7 +180,12 @@ TEST_P(IcebergWriterModeTest, sortedByAndIdentityPartittioning) {
   createDuckDbTable({vector1, vector2});
   auto splits = createSplitsForDirectory(outputDirectory->getPath());
   ASSERT_EQ(splits.size(), size * 2);
-  auto plan = exec::test::PlanBuilder().tableScan(rowType_).planNode();
+  auto plan = exec::test::PlanBuilder()
+                  .startTableScan()
+                  .connectorId(test::kIcebergConnectorId)
+                  .outputType(rowType_)
+                  .endTableScan()
+                  .planNode();
   assertQuery(plan, splits, fmt::format("SELECT * FROM tmp"));
 }
 
@@ -198,7 +218,12 @@ TEST_P(IcebergWriterModeTest, nonClusteredInput) {
     dataSink->close();
     createDuckDbTable({vector1, vector2});
     auto splits = createSplitsForDirectory(outputDirectory->getPath());
-    auto plan = exec::test::PlanBuilder().tableScan(rowType_).planNode();
+    auto plan = exec::test::PlanBuilder()
+                    .startTableScan()
+                    .connectorId(test::kIcebergConnectorId)
+                    .outputType(rowType_)
+                    .endTableScan()
+                    .planNode();
     assertQuery(plan, splits, fmt::format("SELECT * FROM tmp"));
   }
 }
