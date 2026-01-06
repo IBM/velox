@@ -15,6 +15,7 @@
  */
 
 #include "velox/common/base/tests/GTestUtils.h"
+#include "velox/connectors/hive/iceberg/IcebergConnector.h"
 #include "velox/connectors/hive/iceberg/tests/IcebergTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 
@@ -25,7 +26,7 @@ class IcebergInsertTest : public test::IcebergTestBase {
  protected:
   void test(const RowTypePtr& rowType, double nullRatio = 0.0) {
     const auto outputDirectory = exec::test::TempDirectoryPath::create();
-    const auto dataPath = fmt::format("{}", outputDirectory->getPath());
+    const auto dataPath = outputDirectory->getPath();
     constexpr int32_t numBatches = 10;
     constexpr int32_t vectorSize = 5'000;
     const auto vectors =
@@ -42,7 +43,12 @@ class IcebergInsertTest : public test::IcebergTestBase {
     createDuckDbTable(vectors);
     auto splits = createSplitsForDirectory(dataPath);
     ASSERT_EQ(splits.size(), commitTasks.size());
-    auto plan = exec::test::PlanBuilder().tableScan(rowType).planNode();
+    auto plan = exec::test::PlanBuilder()
+                    .startTableScan()
+                    .connectorId(test::kIcebergConnectorId)
+                    .outputType(rowType)
+                    .endTableScan()
+                    .planNode();
     assertQuery(plan, splits, "SELECT * FROM tmp");
   }
 };
@@ -135,7 +141,11 @@ TEST_F(IcebergInsertTest, testSingleColumnAsPartition) {
              rowType->childAt(colIndex))});
 
     auto plan = exec::test::PlanBuilder(pool_.get())
-                    .tableScan(rowType, {}, "", nullptr, assignments)
+                    .startTableScan()
+                    .connectorId(test::kIcebergConnectorId)
+                    .assignments(assignments)
+                    .outputType(rowType)
+                    .endTableScan()
                     .planNode();
 
     assertQuery(plan, splits, fmt::format("SELECT * FROM tmp"));
@@ -252,7 +262,11 @@ TEST_F(IcebergInsertTest, testColumnCombinationsAsPartition) {
     }
 
     auto plan = exec::test::PlanBuilder(pool_.get())
-                    .tableScan(rowType, {}, "", nullptr, assignments)
+                    .startTableScan()
+                    .connectorId(test::kIcebergConnectorId)
+                    .assignments(assignments)
+                    .outputType(rowType)
+                    .endTableScan()
                     .planNode();
 
     assertQuery(plan, splits, fmt::format("SELECT * FROM tmp"));
@@ -293,8 +307,12 @@ TEST_F(IcebergInsertTest, testInfinityValues) {
   createDuckDbTable({vector});
   auto splits = createSplitsForDirectory(outputDirectory->getPath());
 
-  auto plan =
-      exec::test::PlanBuilder(pool_.get()).tableScan(rowType).planNode();
+  auto plan = exec::test::PlanBuilder(pool_.get())
+                  .startTableScan()
+                  .connectorId(test::kIcebergConnectorId)
+                  .outputType(rowType)
+                  .endTableScan()
+                  .planNode();
 
   assertQuery(plan, splits, "SELECT * FROM tmp ORDER BY id");
 }
