@@ -207,7 +207,10 @@ class IcebergTransformE2ETest : public IcebergTestBase {
     auto splits = createSplitsForDirectory(outputPath);
 
     const auto plan = PlanBuilder()
-                          .tableScan(rowType)
+                          .startTableScan()
+                          .connectorId(test::kIcebergConnectorId)
+                          .outputType(rowType)
+                          .endTableScan()
                           .singleAggregation({}, {"count(1)"})
                           .planNode();
 
@@ -230,7 +233,10 @@ class IcebergTransformE2ETest : public IcebergTestBase {
     const auto splits = createSplitsForDirectory(partitionPath);
 
     const auto countPlan = PlanBuilder()
-                               .tableScan(rowType)
+                               .startTableScan()
+                               .connectorId(test::kIcebergConnectorId)
+                               .outputType(rowType)
+                               .endTableScan()
                                .singleAggregation({}, {"count(1)"})
                                .planNode();
 
@@ -249,7 +255,10 @@ class IcebergTransformE2ETest : public IcebergTestBase {
     }
 
     const auto dataPlan = PlanBuilder()
-                              .tableScan(rowType)
+                              .startTableScan()
+                              .connectorId(test::kIcebergConnectorId)
+                              .outputType(rowType)
+                              .endTableScan()
                               .filter(partitionFilter)
                               .singleAggregation({}, {"count(1)"})
                               .planNode();
@@ -352,7 +361,10 @@ TEST_F(IcebergTransformE2ETest, bucketPartitioning) {
   for (const auto& dir : partitionDirs) {
     auto splits = createSplitsForDirectory(dir);
     auto countPlan = PlanBuilder()
-                         .tableScan(rowType_)
+                         .startTableScan()
+                         .connectorId(test::kIcebergConnectorId)
+                         .outputType(rowType_)
+                         .endTableScan()
                          .singleAggregation({}, {"count(1)"})
                          .planNode();
     auto countResult =
@@ -371,8 +383,13 @@ TEST_F(IcebergTransformE2ETest, bucketPartitioning) {
     const auto dirName = std::filesystem::path(dir).filename().string();
     const auto equalsPos = dirName.find('=');
     ASSERT_NE(equalsPos, std::string::npos);
-    auto dataPlan =
-        PlanBuilder().tableScan(rowType_).project({"c_varchar"}).planNode();
+    auto dataPlan = PlanBuilder()
+                        .startTableScan()
+                        .connectorId(test::kIcebergConnectorId)
+                        .outputType(rowType_)
+                        .endTableScan()
+                        .project({"c_varchar"})
+                        .planNode();
     auto dataResult = AssertQueryBuilder(dataPlan)
                           .splits(createSplitsForDirectory(dir))
                           .copyResults(opPool_.get());
@@ -381,7 +398,10 @@ TEST_F(IcebergTransformE2ETest, bucketPartitioning) {
     for (auto i = 0; i < dataResult->size(); i++) {
       StringView value = varcharColumn->valueAt(i);
       auto valuePlan = PlanBuilder()
-                           .tableScan(rowType_)
+                           .startTableScan()
+                           .connectorId(test::kIcebergConnectorId)
+                           .outputType(rowType_)
+                           .endTableScan()
                            .filter(fmt::format("c_varchar = '{}'", value.str()))
                            .project({"c_varchar"})
                            .planNode();
@@ -393,7 +413,10 @@ TEST_F(IcebergTransformE2ETest, bucketPartitioning) {
       auto valueCount = valueResult->size();
       auto partitionValuePlan =
           PlanBuilder()
-              .tableScan(rowType_)
+              .startTableScan()
+              .connectorId(test::kIcebergConnectorId)
+              .outputType(rowType_)
+              .endTableScan()
               .filter(fmt::format("c_varchar = '{}'", value.str()))
               .project({"c_varchar"})
               .planNode();
@@ -443,7 +466,10 @@ TEST_F(IcebergTransformE2ETest, yearPartitioning) {
       if (dirName == expectedDirName) {
         foundPartition = true;
         auto datePlan = PlanBuilder()
-                            .tableScan(rowType_)
+                            .startTableScan()
+                            .connectorId(test::kIcebergConnectorId)
+                            .outputType(rowType_)
+                            .endTableScan()
                             .filter(yearFilter(year))
                             .singleAggregation({}, {"count(1)"})
                             .planNode();
@@ -455,7 +481,10 @@ TEST_F(IcebergTransformE2ETest, yearPartitioning) {
         auto partitionRowCount =
             dateResult->childAt(0)->asFlatVector<int64_t>()->valueAt(0);
         auto countPlan = PlanBuilder()
-                             .tableScan(rowType_)
+                             .startTableScan()
+                             .connectorId(test::kIcebergConnectorId)
+                             .outputType(rowType_)
+                             .endTableScan()
                              .singleAggregation({}, {"count(1)"})
                              .planNode();
         auto countResult = AssertQueryBuilder(countPlan)
@@ -571,7 +600,10 @@ TEST_F(IcebergTransformE2ETest, multipleTransformsOnSameColumn) {
         // Verify the partition has data.
         auto splits = createSplitsForDirectory(leafDir);
         auto countPlan = PlanBuilder()
-                             .tableScan(rowType_)
+                             .startTableScan()
+                             .connectorId(test::kIcebergConnectorId)
+                             .outputType(rowType_)
+                             .endTableScan()
                              .singleAggregation({}, {"count(1)"})
                              .planNode();
         auto countResult =

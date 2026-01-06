@@ -50,8 +50,13 @@ class IcebergSortOrderTest : public IcebergTestBase {
       allColumns.push_back(rowType_->nameOf(i));
     }
 
-    auto plan =
-        PlanBuilder().tableScan(rowType_).project(allColumns).planNode();
+    auto plan = PlanBuilder()
+                    .startTableScan()
+                    .connectorId(test::kIcebergConnectorId)
+                    .outputType(rowType_)
+                    .endTableScan()
+                    .project(allColumns)
+                    .planNode();
     auto result =
         AssertQueryBuilder(plan).splits(splits).copyResults(opPool_.get());
 
@@ -201,8 +206,13 @@ class IcebergSortOrderTest : public IcebergTestBase {
       allColumns.push_back(rowType_->nameOf(i));
     }
 
-    auto plan =
-        PlanBuilder().tableScan(rowType_).project(allColumns).planNode();
+    auto plan = PlanBuilder()
+                    .startTableScan()
+                    .connectorId(test::kIcebergConnectorId)
+                    .outputType(rowType_)
+                    .endTableScan()
+                    .project(allColumns)
+                    .planNode();
     auto result =
         AssertQueryBuilder(plan).splits(splits).copyResults(opPool_.get());
 
