@@ -369,14 +369,6 @@ void CudfExchangeSource::onMetadata(
     ptr->metadata =
         std::move(MetadataMsg::deserializeMetadataMsg(metadataMsg->data()));
 
-    // Update isIntraNodeTransfer_ from the server's detection result.
-    // The server determined this by comparing our listener address (from
-    // handshake) with its own Communicator's listener address.
-    if (ptr->metadata.isIntraNodeTransfer && !isIntraNodeTransfer_) {
-      isIntraNodeTransfer_ = true;
-      VLOG(3) << toString() << " Server confirmed same-node (intra-node transfer)";
-    }
-
     VLOG(3) << toString() << " Datasize bytes == "
             << ptr->metadata.dataSizeBytes;
 
@@ -392,100 +384,57 @@ void CudfExchangeSource::onMetadata(
       return;
     }
 
-    if (ptr->metadata.isIntraNodeTransfer) {
-      // INTRA-NODE TRANSFER PATH: Retrieve data directly from the registry
-      // instead of allocating a buffer and receiving via UCXX.
-      VLOG(3) << toString()
-              << " Intra-node transfer: retrieving data for sequence "
-              << sequenceNumber_;
-
-      IntraNodeTransferKey key{
-          partitionKey_.taskId, partitionKey_.destination, sequenceNumber_};
-      auto intraNodeData = IntraNodeTransferRegistry::getInstance()->retrieve(key);
-
-      if (intraNodeData) {
-        VLOG(3) << toString()
-                << " Retrieved intra-node transfer data for sequence "
-                << sequenceNumber_ << " with " << ptr->metadata.dataSizeBytes
-                << " bytes";
-
-        // Create a new packed_columns from the retrieved data
-        auto uniqueData = std::make_unique<cudf::packed_columns>(
-            std::move(intraNodeData->metadata), std::move(intraNodeData->gpu_data));
-
-        metrics_.numPackedColumns_.addValue(1);
-        metrics_.totalBytes_.addValue(ptr->metadata.dataSizeBytes);
-
-        enqueue(std::move(uniqueData));
-
-        this->sequenceNumber_++;
-        setStateIf(ReceiverState::WaitingForMetadata, ReceiverState::ReadyToReceive);
-        communicator_->addToWorkQueue(getSelfPtr());
-      } else {
-        // Error - data not found in registry
-        std::string errorMsg = fmt::format(
-            "Intra-node transfer data not found for task {}, dest {}, seq {}",
-            partitionKey_.taskId,
-            partitionKey_.destination,
-            sequenceNumber_);
-        VLOG(0) << toString() << " " << errorMsg;
-        queue_->setError(errorMsg);
-        setState(ReceiverState::Done);
-        communicator_->addToWorkQueue(getSelfPtr());
-      }
-    } else {
-      // REMOTE EXCHANGE PATH: Allocate buffer and receive via UCXX
-      // Get a stream from the global stream pool
-      auto stream =
-          facebook::velox::cudf_velox::cudfGlobalStreamPool().get_stream();
-      try {
-        ptr->dataBuf = std::make_unique<rmm::device_buffer>(
-            ptr->metadata.dataSizeBytes, stream);
-      } catch (const rmm::bad_alloc& e) {
-        VLOG(0) << toString() << " *** RMM  failed to allocate: " << e.what();
-        queue_->setError(
-            "Failed to alloc GPU memory"); // Let the operator know via the
-                                           // queue
-        setState(ReceiverState::Done);
-        communicator_->addToWorkQueue(getSelfPtr());
-        return;
-      }
-
-      // sync after allocating.
-      stream.synchronize();
-
-      VLOG(3) << toString() << " Allocated " << ptr->metadata.dataSizeBytes
-              << " bytes of device memory";
-
-      // Initiate the transfer of the actual data from GPU-2-GPU
-      uint64_t dataTag = getDataTag(partitionKeyHash_, sequenceNumber_);
-      VLOG(3) << toString()
-              << " waiting for data for chunk: " << sequenceNumber_
-              << " using tag: " << std::hex << dataTag << std::dec;
-
-      if (!setStateIf(
-              ReceiverState::WaitingForMetadata,
-              ReceiverState::WaitingForData)) {
-        VLOG(1) << toString() << " onMetadata Invalid previous state ";
-        return;
-      }
-      // Use weak_ptr to prevent use-after-free if close() is called during
-      // callback
-      std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
-      request_ = endpointRef_->endpoint_->tagRecv(
-          ptr->dataBuf->data(),
-          ptr->metadata.dataSizeBytes,
-          ucxx::Tag{dataTag},
-          ucxx::TagMaskFull,
-          false,
-          [weak](ucs_status_t status, std::shared_ptr<void> arg) {
-            if (auto self = weak.lock()) {
-              self->onData(status, arg);
-            }
-          },
-          ptr // DataAndMetadata
-      );
+    // REMOTE EXCHANGE PATH: Allocate buffer and receive via UCXX
+    // Get a stream from the global stream pool
+    auto stream =
+        facebook::velox::cudf_velox::cudfGlobalStreamPool().get_stream();
+    try {
+      ptr->dataBuf = std::make_unique<rmm::device_buffer>(
+          ptr->metadata.dataSizeBytes, stream);
+    } catch (const rmm::bad_alloc& e) {
+      VLOG(0) << toString() << " *** RMM  failed to allocate: " << e.what();
+      queue_->setError(
+          "Failed to alloc GPU memory"); // Let the operator know via the
+                                         // queue
+      setState(ReceiverState::Done);
+      communicator_->addToWorkQueue(getSelfPtr());
+      return;
     }
+
+    // sync after allocating.
+    stream.synchronize();
+
+    VLOG(3) << toString() << " Allocated " << ptr->metadata.dataSizeBytes
+            << " bytes of device memory";
+
+    // Initiate the transfer of the actual data from GPU-2-GPU
+    uint64_t dataTag = getDataTag(partitionKeyHash_, sequenceNumber_);
+    VLOG(3) << toString()
+            << " waiting for data for chunk: " << sequenceNumber_
+            << " using tag: " << std::hex << dataTag << std::dec;
+
+    if (!setStateIf(
+            ReceiverState::WaitingForMetadata,
+            ReceiverState::WaitingForData)) {
+      VLOG(1) << toString() << " onMetadata Invalid previous state ";
+      return;
+    }
+    // Use weak_ptr to prevent use-after-free if close() is called during
+    // callback
+    std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
+    request_ = endpointRef_->endpoint_->tagRecv(
+        ptr->dataBuf->data(),
+        ptr->metadata.dataSizeBytes,
+        ucxx::Tag{dataTag},
+        ucxx::TagMaskFull,
+        false,
+        [weak](ucs_status_t status, std::shared_ptr<void> arg) {
+          if (auto self = weak.lock()) {
+            self->onData(status, arg);
+          }
+        },
+        ptr // DataAndMetadata
+    );
   }
 }
 

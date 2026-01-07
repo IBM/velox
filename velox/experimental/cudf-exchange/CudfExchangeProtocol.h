@@ -103,13 +103,6 @@ struct MetadataMsg {
   int64_t dataSizeBytes;
   std::vector<int64_t> remainingBytes;
   bool atEnd;
-  /// True if server and source are on the same node and data should be
-  /// retrieved from the IntraNodeTransferRegistry instead of via UCXX.
-  /// Set by the server after comparing the source's listener address
-  /// (from HandshakeMsg) with its own Communicator's listener address.
-  /// When true, the source retrieves data directly from the registry
-  /// using (taskId, destination, sequenceNumber) as the key.
-  bool isIntraNodeTransfer{false};
 
   uint32_t getSerializedSize() {
     // The header: the magic number and the metadata length (an uint32_t).
@@ -126,8 +119,6 @@ struct MetadataMsg {
     totalSize += remainingBytes.size() * sizeof(uint64_t);
 
     totalSize += sizeof(uint8_t); // atEnd, encoded in a byte.
-
-    totalSize += sizeof(uint8_t); // isIntraNodeTransfer, encoded in a byte.
 
     return totalSize;
   }
@@ -182,10 +173,6 @@ struct MetadataMsg {
 
     // Serialize atEnd bool as 0/1.
     *ptr = atEnd ? 1 : 0;
-    ptr += sizeof(uint8_t);
-
-    // Serialize isIntraNodeTransfer bool as 0/1.
-    *ptr = isIntraNodeTransfer ? 1 : 0;
 
     return std::make_pair<std::shared_ptr<uint8_t>, size_t>(
         std::move(buffer), totalSize);
@@ -256,17 +243,6 @@ struct MetadataMsg {
     // Deserialize bool `atEnd` (stored as a single byte: 1 for true, 0 for
     // false)
     record.atEnd = (*ptr != 0);
-    ptr += sizeof(uint8_t);
-
-    // Deserialize bool `isIntraNodeTransfer` (stored as a single byte: 1 for
-    // true, 0 for false)
-    if (ptr < endPtr) {
-      record.isIntraNodeTransfer = (*ptr != 0);
-    } else {
-      // For backwards compatibility with older servers that don't send this
-      // field
-      record.isIntraNodeTransfer = false;
-    }
 
     return record;
   }
