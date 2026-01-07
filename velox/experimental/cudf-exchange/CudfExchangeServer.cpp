@@ -247,7 +247,6 @@ void CudfExchangeServer::sendData() {
       metadataMsg->remainingBytes = {};
       metadataMsg->atEnd = true;
     }
-    metadataMsg->isIntraNodeTransfer = false;
 
     auto [serializedMetadata, serMetaSize] = metadataMsg->serialize();
 
