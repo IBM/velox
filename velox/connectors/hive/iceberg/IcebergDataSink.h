@@ -45,6 +45,21 @@ class IcebergSortingColumn : public ISerializable {
   const core::SortOrder sortOrder_;
 };
 
+class IcebergFileNameGenerator : public FileNameGenerator {
+ public:
+  IcebergFileNameGenerator() {}
+
+  std::pair<std::string, std::string> gen(
+      std::optional<uint32_t> bucketId,
+      const std::shared_ptr<const HiveInsertTableHandle> insertTableHandle,
+      const ConnectorQueryCtx& connectorQueryCtx,
+      bool commitRequired) const override;
+
+  folly::dynamic serialize() const override;
+
+  std::string toString() const override;
+};
+
 // Represents a request for Iceberg write.
 class IcebergInsertTableHandle final : public HiveInsertTableHandle {
  public:
@@ -69,6 +84,8 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
   /// @param compressionKind Optional compression to apply to data files.
   /// @param serdeParameters Additional serialization/deserialization parameters
   /// for the file format.
+  /// @param fileNameGenerator File name generator for generating unique file
+  /// names for data files. If nullptr, will use IcebergFileNameGenerator.
   /// @param writeKind Selects between data-file emission (default) and V3
   /// deletion-vector emission. The default preserves existing INSERT
   /// semantics.
@@ -82,6 +99,8 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
       const std::vector<IcebergSortingColumn>& sortedBy = {},
       std::optional<common::CompressionKind> compressionKind = {},
       const std::unordered_map<std::string, std::string>& serdeParameters = {},
+      std::shared_ptr<const FileNameGenerator> fileNameGenerator =
+          std::make_shared<const IcebergFileNameGenerator>(),
       WriteKind writeKind = WriteKind::kData);
 
   std::shared_ptr<const IcebergPartitionSpec> partitionSpec() const {
