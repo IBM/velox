@@ -196,7 +196,7 @@ class DataSink {
     uint64_t recodeTimeNs{0};
     uint64_t compressionTimeNs{0};
 
-    common::SpillStats spillStats;
+    velox::common::SpillStats spillStats;
 
     bool empty() const;
 
