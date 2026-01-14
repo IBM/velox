@@ -33,10 +33,11 @@ velox_add_library(
 )
 
 add_subdirectory(iceberg)
+add_subdirectory(delta)
 
 velox_link_libraries(
   velox_hive_connector
-  PRIVATE velox_hive_iceberg_splitreader
+  PRIVATE velox_hive_iceberg_splitreader velox_hive_delta_splitreader
   PRIVATE velox_common_io velox_connector velox_dwio_catalog_fbhive velox_hive_partition_function
 )
 
