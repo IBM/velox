@@ -19,15 +19,10 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
-#include <memory>
-#include <string>
-#include <utility>
-#include <vector>
 
 #include "velox/common/base/Fs.h"
 #include "velox/common/encode/Base64.h"
 #include "velox/connectors/hive/PartitionIdGenerator.h"
-#include "velox/connectors/hive/iceberg/IcebergColumnHandle.h"
 #include "velox/connectors/hive/iceberg/TransformExprBuilder.h"
 #include "velox/exec/OperatorUtils.h"
 
@@ -109,16 +104,14 @@ std::string IcebergFileNameGenerator::toString() const {
 } // namespace
 
 IcebergInsertTableHandle::IcebergInsertTableHandle(
-    std::vector<IcebergColumnHandlePtr> inputColumns,
+    std::vector<HiveColumnHandlePtr> inputColumns,
     LocationHandlePtr locationHandle,
     dwio::common::FileFormat tableStorageFormat,
     IcebergPartitionSpecPtr partitionSpec,
     std::optional<common::CompressionKind> compressionKind,
     const std::unordered_map<std::string, std::string>& serdeParameters)
     : HiveInsertTableHandle(
-          std::vector<HiveColumnHandlePtr>(
-              inputColumns.begin(),
-              inputColumns.end()),
+          std::move(inputColumns),
           std::move(locationHandle),
           tableStorageFormat,
           nullptr,
