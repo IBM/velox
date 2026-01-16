@@ -106,7 +106,10 @@ bool canBeEvaluatedByCudf(
   }
 
   auto precompilePool = memory::memoryManager()->addLeafPool(
-      "cudf-expr-precompile", /*threadSafe*/ false);
+      // Complains that LeafPool already exists
+      //"cudf-expr-precompile", /*threadSafe*/ false);
+      "",
+      /*threadSafe*/ false);
   core::ExecCtx precompileCtx(precompilePool.get(), queryCtx);
 
   bool lazyDereference = false;
