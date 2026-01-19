@@ -467,7 +467,7 @@ VectorPtr CastExpr::applyMap(
     newMapKeys = input->mapKeys();
   } else {
     {
-      ScopedVarSetter holder(&inTopLevel, false);
+      ScopedVarSetter holder(&inTopLevel_, false);
       apply(
           nestedRows,
           mapKeys,
@@ -484,7 +484,7 @@ VectorPtr CastExpr::applyMap(
     newMapValues = mapValues;
   } else {
     {
-      ScopedVarSetter holder(&inTopLevel, false);
+      ScopedVarSetter holder(&inTopLevel_, false);
       apply(
           nestedRows,
           mapValues,
@@ -558,7 +558,7 @@ VectorPtr CastExpr::applyArray(
 
   VectorPtr newElements;
   {
-    ScopedVarSetter holder(&inTopLevel, false);
+    ScopedVarSetter holder(&inTopLevel_, false);
     apply(
         nestedRows,
         arrayElements,
@@ -669,7 +669,7 @@ VectorPtr CastExpr::applyRow(
         outputChild = inputChild;
       } else {
         // Apply cast for the child.
-        ScopedVarSetter holder(&inTopLevel, false);
+        ScopedVarSetter holder(&inTopLevel_, false);
         apply(
             rows,
             inputChild,
@@ -1082,7 +1082,7 @@ void CastExpr::evalSpecialForm(
   auto fromType = inputs_[0]->type();
   auto toType = std::const_pointer_cast<const Type>(type_);
 
-  inTopLevel = true;
+  inTopLevel_ = true;
   if (isTryCast()) {
     ScopedVarSetter holder{context.mutableThrowOnError(), false};
     ScopedVarSetter captureErrorDetails(

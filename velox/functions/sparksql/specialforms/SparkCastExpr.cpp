@@ -37,8 +37,8 @@ exec::ExprPtr SparkCastCallToSpecialForm::constructSpecialForm(
       type,
       std::move(compiledChildren[0]),
       trackCpuUsage,
-      true,
-      std::make_shared<SparkCastHooks>(config, true));
+      false,
+      std::make_shared<SparkCastHooks>(config, !config.sparkAnsiEnabled()));
 }
 
 exec::ExprPtr SparkTryCastCallToSpecialForm::constructSpecialForm(

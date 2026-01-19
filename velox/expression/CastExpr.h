@@ -314,23 +314,31 @@ class CastExpr : public SpecialForm {
       exec::EvalCtx& context,
       const BaseVector& input);
 
+ protected:
   bool isTryCast() const {
     return isTryCast_;
   }
 
-  bool setNullInResultAtError() const {
-    return isTryCast() && (inTopLevel || hooks_->applyTryCastRecursively());
+  bool inTopLevel() const {
+    return inTopLevel_;
   }
 
+  virtual bool setNullInResultAtError() const {
+    return isTryCast() && (inTopLevel_ || hooks_->applyTryCastRecursively());
+  }
+
+ protected:
+  bool isTryCast_;
+
+  std::shared_ptr<CastHooks> hooks_;
+
+ private:
   CastOperatorPtr getCastOperator(const TypePtr& type);
 
   // Custom cast operators for to and from top-level as well as nested types.
   folly::F14FastMap<std::string, CastOperatorPtr> castOperators_;
 
-  bool isTryCast_;
-  std::shared_ptr<CastHooks> hooks_;
-
-  bool inTopLevel = false;
+  bool inTopLevel_ = false;
 };
 
 class CastCallToSpecialForm : public FunctionCallToSpecialForm {

@@ -34,6 +34,13 @@ class SparkCastExpr : public exec::CastExpr {
       std::shared_ptr<SparkCastHooks> hooks)
       : exec::CastExpr(type, std::move(expr), trackCpuUsage, isTryCast, hooks) {
   }
+
+ protected:
+  bool setNullInResultAtError() const override {
+    auto sparkHooks = std::dynamic_pointer_cast<SparkCastHooks>(hooks_);
+    return !sparkHooks->isAnsiEnabled() &&
+        (inTopLevel() || hooks_->applyTryCastRecursively());
+  }
 };
 
 class SparkCastCallToSpecialForm : public exec::CastCallToSpecialForm {
