@@ -16,12 +16,34 @@
 #pragma once
 
 #include <cudf/contiguous_split.hpp>
+#include <rmm/cuda_stream_view.hpp>
 #include <cinttypes>
 #include <memory>
 #include "velox/common/base/Exceptions.h"
 #include "velox/common/future/VeloxPromise.h"
 
 namespace facebook::velox::cudf_exchange {
+
+/// Struct that bundles a packed_table with the CUDA stream that was used
+/// to allocate its memory. This allows the receiver to reuse the same stream
+/// for subsequent operations on the data.
+struct PackedTableWithStream {
+  std::unique_ptr<cudf::packed_table> packedTable;
+  rmm::cuda_stream_view stream;
+
+  PackedTableWithStream() = default;
+  PackedTableWithStream(
+      std::unique_ptr<cudf::packed_table>&& table,
+      rmm::cuda_stream_view s)
+      : packedTable(std::move(table)), stream(s) {}
+
+  /// Returns the size of the GPU data buffer, or 0 if packedTable is null.
+  size_t gpuDataSize() const {
+    return packedTable ? packedTable->data.gpu_data->size() : 0;
+  }
+};
+
+using PackedTableWithStreamPtr = std::unique_ptr<PackedTableWithStream>;
 
 class CudfExchangeQueue {
  public:
@@ -42,14 +64,14 @@ class CudfExchangeQueue {
     return queue_.empty();
   }
 
-  /// Enqueues 'columns' to the queue. One random promise(top of promise queue)
+  /// Enqueues 'data' to the queue. One random promise(top of promise queue)
   /// associated with the future that is waiting for the data from the queue
-  /// is returned in 'promises' if 'columns' is not nullptr. When 'columns' is
+  /// is returned in 'promises' if 'data' is not nullptr. When 'data' is
   /// nullptr and the queue is completed serving data, all left over promises
-  /// will be returned in 'promises'. When 'columns' is nullptr and the queue is
+  /// will be returned in 'promises'. When 'data' is nullptr and the queue is
   /// not completed serving data, no 'promises' will be added and returned.
   void enqueueLocked(
-      std::unique_ptr<cudf::packed_columns>&& columns,
+      PackedTableWithStreamPtr&& data,
       std::vector<ContinuePromise>& promises);
 
   /// If data is permanently not available, e.g. the source cannot be
@@ -60,15 +82,15 @@ class CudfExchangeQueue {
   bool isInError() {
     return !error_.empty();
   }
-  /// Returns a packed_columns object.
+  /// Returns a PackedTableWithStream object.
   ///
   /// Returns a nullptr if no data is available. If data is still expected,
   /// sets 'atEnd' to false and 'future' to a Future that will complete when
   /// data arrives. If no more data is expected, sets 'atEnd' to true. Returns
-  /// one packed_columns if data is available.
+  /// one PackedTableWithStream if data is available.
   /// It's possible that the same consumer is already waiting for data. In this
   /// case, a stalePromise is returned which needs to be cleaned up.
-  std::unique_ptr<cudf::packed_columns> dequeueLocked(
+  PackedTableWithStreamPtr dequeueLocked(
       int consumerId,
       bool* atEnd,
       ContinueFuture* future,
@@ -78,7 +100,7 @@ class CudfExchangeQueue {
     return queue_.size();
   }
 
-  /// Returns the total bytes held by packed_columns in 'this'.
+  /// Returns the total bytes held by packed tables in 'this'.
   int64_t totalBytes() const {
     return totalBytes_;
   }
@@ -88,15 +110,15 @@ class CudfExchangeQueue {
     return peakBytes_;
   }
 
-  /// Returns total number of packed_columns received from all sources.
-  uint64_t receivedColumns() const {
-    return receivedColumns_;
+  /// Returns total number of packed tables received from all sources.
+  uint64_t receivedTables() const {
+    return receivedTables_;
   }
 
-  /// Returns an average size of columns. Returns 0 if hasn't received
-  /// any columns yet.
-  uint64_t averageReceivedColumnsBytes() const {
-    return receivedColumns_ > 0 ? receivedBytes_ / receivedColumns_ : 0;
+  /// Returns an average size of tables. Returns 0 if hasn't received
+  /// any tables yet.
+  uint64_t averageReceivedTablesBytes() const {
+    return receivedTables_ > 0 ? receivedBytes_ / receivedTables_ : 0;
   }
 
   void addSourceLocked() {
@@ -161,18 +183,18 @@ class CudfExchangeQueue {
   bool atEnd_{false};
 
   std::mutex mutex_;
-  std::deque<std::unique_ptr<cudf::packed_columns>> queue_;
+  std::deque<PackedTableWithStreamPtr> queue_;
   // The map from consumer id to the waiting promise
   folly::F14FastMap<int, ContinuePromise> promises_;
 
   // When set, all promises will be realized and the next dequeue will
   // throw an exception with this message.
   std::string error_;
-  // Total size of packed_columns in queue.
+  // Total size of packed tables in queue.
   int64_t totalBytes_{0};
-  // Number of packed_columns received.
-  int64_t receivedColumns_{0};
-  // Total size of packed_columns received. Used to calculate an average
+  // Number of packed tables received.
+  int64_t receivedTables_{0};
+  // Total size of packed tables received. Used to calculate an average
   // expected size.
   int64_t receivedBytes_{0};
   // Maximum value of totalBytes_.

@@ -40,8 +40,8 @@ void CudfExchangeClient::addRemoteTaskId(const std::string& remoteTaskId) {
     } else {
       sources_.push_back(source);
       queue_->addSourceLocked();
-      VLOG(3) << "@" << taskId_ << " Added remote split for task: "
-              << remoteTaskId;
+      VLOG(3) << "@" << taskId_
+              << " Added remote split for task: " << remoteTaskId;
     }
   }
 
@@ -104,32 +104,32 @@ folly::F14FastMap<std::string, RuntimeMetric> CudfExchangeClient::stats()
   return stats;
 }
 
-std::unique_ptr<cudf::packed_columns>
+PackedTableWithStreamPtr
 CudfExchangeClient::next(int consumerId, bool* atEnd, ContinueFuture* future) {
-  VLOG(3) << "@" << taskId_ << " CudfExchangeClient::next called for consumerId "
-          << consumerId;
-  std::unique_ptr<cudf::packed_columns> columns;
+  VLOG(3) << "@" << taskId_
+          << " CudfExchangeClient::next called for consumerId " << consumerId;
+  PackedTableWithStreamPtr data;
   ContinuePromise stalePromise = ContinuePromise::makeEmpty();
   {
     std::lock_guard<std::mutex> l(queue_->mutex());
     if (closed_) {
       *atEnd = true;
-      return columns;
+      return data;
     }
 
-    // not closed, get packed columns from the queue.
+    // not closed, get packed table from the queue.
     *atEnd = false;
-    columns = queue_->dequeueLocked(consumerId, atEnd, future, &stalePromise);
+    data = queue_->dequeueLocked(consumerId, atEnd, future, &stalePromise);
     if (*atEnd) {
       // queue is closed!
-      return columns;
+      return data;
     }
 
     // TODO: Review this primitive form of flow control.
-    // Maybe need to inspect the #bytes rather than the #columns?
+    // Maybe need to inspect the #bytes rather than the #tables?
     // Don't request more data when queue size exceeds the configured limit.
-    if (columns != nullptr && queue_->size() > maxQueuedColumns_) {
-      return columns;
+    if (data != nullptr && queue_->size() > maxQueuedColumns_) {
+      return data;
     }
   }
 
@@ -137,7 +137,7 @@ CudfExchangeClient::next(int consumerId, bool* atEnd, ContinueFuture* future) {
   if (stalePromise.valid()) {
     stalePromise.setValue();
   }
-  return columns;
+  return data;
 }
 
 CudfExchangeClient::~CudfExchangeClient() {

@@ -37,9 +37,9 @@ void CudfExchangeQueue::close() {
 }
 
 void CudfExchangeQueue::enqueueLocked(
-    std::unique_ptr<cudf::packed_columns>&& columns,
+    PackedTableWithStreamPtr&& data,
     std::vector<ContinuePromise>& promises) {
-  if (columns == nullptr) {
+  if (data == nullptr) {
     ++numCompleted_;
     auto completedPromises = checkCompleteLocked();
     promises.reserve(promises.size() + completedPromises.size());
@@ -49,20 +49,21 @@ void CudfExchangeQueue::enqueueLocked(
     return;
   }
 
-  totalBytes_ += columns->gpu_data->size();
+  auto dataSize = data->gpuDataSize();
+  totalBytes_ += dataSize;
   if (peakBytes_ < totalBytes_) {
     peakBytes_ = totalBytes_;
   }
 
-  ++receivedColumns_;
-  receivedBytes_ += columns->gpu_data->size();
+  ++receivedTables_;
+  receivedBytes_ += dataSize;
 
-  queue_.push_back(std::move(columns));
+  queue_.push_back(std::move(data));
   while (!promises_.empty()) {
     VELOX_CHECK_LE(promises_.size(), numberOfConsumers_);
     const int32_t unblockedConsumers = numberOfConsumers_ - promises_.size();
-    const int64_t unasignedColumns = queue_.size() - unblockedConsumers;
-    if (unasignedColumns <= 0) {
+    const int64_t unassignedTables = queue_.size() - unblockedConsumers;
+    if (unassignedTables <= 0) {
       break;
     }
     // Resume one of the waiting drivers.
@@ -89,7 +90,7 @@ void CudfExchangeQueue::addPromiseLocked(
   VELOX_CHECK_LE(promises_.size(), numberOfConsumers_);
 }
 
-std::unique_ptr<cudf::packed_columns> CudfExchangeQueue::dequeueLocked(
+PackedTableWithStreamPtr CudfExchangeQueue::dequeueLocked(
     int consumerId,
     bool* atEnd,
     ContinueFuture* future,
@@ -103,22 +104,21 @@ std::unique_ptr<cudf::packed_columns> CudfExchangeQueue::dequeueLocked(
   *atEnd = false;
 
   // check whether the queue is empty.
-  std::unique_ptr<cudf::packed_columns> column = nullptr;
+  PackedTableWithStreamPtr data = nullptr;
   if (queue_.empty()) {
     if (atEnd_) {
       *atEnd = true;
     } else {
       addPromiseLocked(consumerId, future, stalePromise);
     }
-    return column;
+    return data;
   }
 
-  column = std::move(queue_.front());
+  data = std::move(queue_.front());
   queue_.pop_front();
-  receivedColumns_++;
-  totalBytes_ -= column->gpu_data->size();
+  totalBytes_ -= data->gpuDataSize();
 
-  return column;
+  return data;
 }
 
 void CudfExchangeQueue::setError(const std::string& error) {
