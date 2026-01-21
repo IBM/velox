@@ -86,9 +86,9 @@ class HybridExchange : public SourceOperator {
   // result does not contain a vector of pages.
   const SerPageVector* getResultPages();
 
-  // Returns the packed columns pointer from the result variant. This fails if
-  // the result does not contain a packed columns pointer.
-  const PackedColPtr* getResultPackedColumns();
+  // Returns the packed table with stream pointer from the result variant. This
+  // fails if the result does not contain a packed table with stream pointer.
+  const PackedTableWithStreamPtr* getResultPackedTable();
 
   // Invoked to create exchange client for remote tasks. The function shuffles
   // the source task ids first to randomize the source tasks we fetch data from.
@@ -99,10 +99,10 @@ class HybridExchange : public SourceOperator {
   // This is a no-op except when called from driver 0.
   // Fetches splits from the task until there are no more splits or task returns
   // a future that will be complete when more splits arrive. Adds splits to
-  // exchangeClient_. Sets "noMoreSplits_" if the task returns not blocked without
-  // a split, this is the end-of-splits signal.
-  // Decides on the first split whether the exchangeClient_ is backed by
-  // the HTTP exchange client or the Cudf exchange client.
+  // exchangeClient_. Sets "noMoreSplits_" if the task returns not blocked
+  // without a split, this is the end-of-splits signal. Decides on the first
+  // split whether the exchangeClient_ is backed by the HTTP exchange client or
+  // the Cudf exchange client.
   void getSplits(ContinueFuture* future);
 
   // Converts the results from the HTTP exchange client into a cudf vector.
@@ -119,7 +119,8 @@ class HybridExchange : public SourceOperator {
       const SerPageVector* pages);
 
   // Converts the results from the Cudf exchange client into a cudf vector.
-  RowVectorPtr getOutputFromPackedColumns(const PackedColPtr* colsPtr);
+  RowVectorPtr getOutputFromPackedTable(
+      const PackedTableWithStreamPtr* dataPtr);
 
   // Fetches runtime stats from ExchangeClient and replaces these in this
   // operator's stats.

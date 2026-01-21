@@ -66,13 +66,13 @@ class CudfExchangeClient
     return queue_;
   }
 
-  /// Returns a packed_columns object from the queue or null.
+  /// Returns a PackedTableWithStream object from the queue or null.
   ///
   /// If no data is available returns a nullptr and sets 'atEnd' to true if no
   /// more data is expected. If data is still expected, sets 'atEnd' to false
   /// and sets 'future' to a Future that will complete when data arrives.
   ///
-  std::unique_ptr<cudf::packed_columns>
+  PackedTableWithStreamPtr
   next(int consumerId, bool* atEnd, ContinueFuture* future);
 
   std::string toString() const;
