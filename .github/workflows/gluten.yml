@@ -19,7 +19,7 @@ on:
     paths:
       - .github/workflows/gluten.yml
 env:
-  MVN_CMD: mvn -ntp
+  MVN_CMD: ./build/mvn -ntp
 
 jobs:
 
@@ -94,7 +94,7 @@ jobs:
           path: .m2/repository/org/apache/arrow/
           if-no-files-found: error
 
-  spark-test-spark32:
+  spark-test-spark35:
     needs: gluten-cpp-build
     runs-on: ubuntu-22.04
     container: apache/gluten:centos-8-jdk8
@@ -112,7 +112,7 @@ jobs:
         with:
           name: arrow-jars-centos-7-${{github.sha}}
           path: /root/.m2/repository/org/apache/arrow/
-      - name: Build package for Spark 3.2
+      - name: Build package for Spark 3.5
         run: |
           cd $GITHUB_WORKSPACE/gluten
           export SPARK_SCALA_VERSION=2.12
@@ -120,7 +120,7 @@ jobs:
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
           export PATH=$JAVA_HOME/bin:$PATH
           java -version
-          $MVN_CMD clean package -Pspark-3.2 -Pbackends-velox -Piceberg -Pdelta -Phudi -DskipTests
+          $MVN_CMD clean package -Pspark-3.5 -Pbackends-velox -Piceberg -Pdelta -Phudi -DskipTests
 
   spark-test-spark34-slow:
     needs: gluten-cpp-build
