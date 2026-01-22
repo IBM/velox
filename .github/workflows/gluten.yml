@@ -19,7 +19,7 @@ on:
     paths:
       - .github/workflows/gluten.yml
 env:
-  MVN_CMD: mvn -ntp
+  MVN_CMD: ./build/mvn -ntp
 
 jobs:
 
@@ -49,22 +49,21 @@ jobs:
           # sed -i 's/VELOX_BRANCH=2025.*/VELOX_BRANCH=${BRANCH}/g' ep/build-velox/src/get-velox.sh
       - name: Build Gluten native libraries
         run: |
-          docker pull apache/gluten:vcpkg-centos-7
-          docker run -v $GITHUB_WORKSPACE:/work -w /work apache/gluten:vcpkg-centos-7 bash -c "
+          docker run -v $GITHUB_WORKSPACE:/work -w /work apache/gluten:vcpkg-centos-7-gcc13 bash -c "
             git config --global --add safe.directory /work
             set -e
             df -a
             cd /work
             git log -n 3
             cd /work/gluten
+            git config --global --add safe.directory /work/gluten
+            bash ./dev/install-linux-socket-header.sh
             git log -n 3
             export CCACHE_DIR=/work/.ccache
             export CCACHE_SLOPPINESS=file_macro,locale,time_macros
             mkdir -p /work/.ccache
             ccache -M 1G
             ccache -sz
-            source /opt/rh/devtoolset-11/enable
-            source /opt/rh/rh-git227/enable
             export NUM_THREADS=4
             ./dev/builddeps-veloxbe.sh --enable_vcpkg=ON --build_arrow=OFF --build_tests=OFF --build_benchmarks=OFF \
                            --build_examples=OFF --enable_s3=ON --enable_gcs=ON --enable_hdfs=ON --enable_abfs=ON --enable_enhanced_features=ON --velox_home=/work               
@@ -94,7 +93,7 @@ jobs:
           path: .m2/repository/org/apache/arrow/
           if-no-files-found: error
 
-  spark-test-spark32:
+  spark-test-spark35:
     needs: gluten-cpp-build
     runs-on: ubuntu-22.04
     container: apache/gluten:centos-8-jdk8
@@ -112,7 +111,7 @@ jobs:
         with:
           name: arrow-jars-centos-7-${{github.sha}}
           path: /root/.m2/repository/org/apache/arrow/
-      - name: Build package for Spark 3.2
+      - name: Build package for Spark 3.5
         run: |
           cd $GITHUB_WORKSPACE/gluten
           export SPARK_SCALA_VERSION=2.12
@@ -120,7 +119,7 @@ jobs:
           export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
           export PATH=$JAVA_HOME/bin:$PATH
           java -version
-          $MVN_CMD clean package -Pspark-3.2 -Pbackends-velox -Piceberg -Pdelta -Phudi -DskipTests
+          $MVN_CMD clean package -Pspark-3.5 -Pbackends-velox -Piceberg -Pdelta -Phudi -DskipTests
 
   spark-test-spark34-slow:
     needs: gluten-cpp-build
