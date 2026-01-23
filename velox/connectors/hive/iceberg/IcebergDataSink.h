@@ -154,7 +154,7 @@ class IcebergDataSink : public HiveDataSink {
       const HiveWriterId& id) const override;
 
   std::unique_ptr<dwio::common::Writer> maybeCreateBucketSortWriter(
-      std::unique_ptr<dwio::common::Writer> writer) override;
+      std::unique_ptr<dwio::common::Writer> writer);
 
   void buildPartitionData(int32_t index);
 
