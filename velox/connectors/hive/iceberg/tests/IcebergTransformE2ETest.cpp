@@ -230,8 +230,6 @@ class IcebergTransformE2ETest : public IcebergTestBase {
       const std::string& partitionFilter,
       const int32_t expectedRowCount,
       bool skipRowCountCheck = false) {
-    const auto splits = createSplitsForDirectory(partitionPath);
-
     const auto countPlan = PlanBuilder()
                                .startTableScan()
                                .connectorId(test::kIcebergConnectorId)
@@ -241,7 +239,9 @@ class IcebergTransformE2ETest : public IcebergTestBase {
                                .planNode();
 
     const auto countResult =
-        AssertQueryBuilder(countPlan).splits(splits).copyResults(opPool_.get());
+        AssertQueryBuilder(countPlan)
+            .splits(createSplitsForDirectory(partitionPath))
+            .copyResults(opPool_.get());
 
     ASSERT_EQ(countResult->size(), 1);
     const auto actualRowCount =
@@ -262,8 +262,9 @@ class IcebergTransformE2ETest : public IcebergTestBase {
                               .filter(partitionFilter)
                               .singleAggregation({}, {"count(1)"})
                               .planNode();
-    const auto dataResult =
-        AssertQueryBuilder(dataPlan).splits(splits).copyResults(opPool_.get());
+    const auto dataResult = AssertQueryBuilder(dataPlan)
+                                .splits(createSplitsForDirectory(partitionPath))
+                                .copyResults(opPool_.get());
     ASSERT_EQ(dataResult->size(), 1);
     const auto filteredRowCount =
         dataResult->childAt(0)->asFlatVector<int64_t>()->valueAt(0);
