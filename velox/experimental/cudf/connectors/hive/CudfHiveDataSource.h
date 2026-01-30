@@ -37,6 +37,7 @@
 #include <cudf/io/types.hpp>
 
 #include <mutex>
+#include <unordered_map>
 
 namespace facebook::velox::cudf_velox::connector::hive {
 
@@ -141,6 +142,21 @@ class CudfHiveDataSource : public DataSource, public NvtxHelper {
 
   std::shared_ptr<io::IoStatistics> ioStatistics_;
   std::shared_ptr<velox::IoStats> ioStats_;
+
+  // Mapping from logical column names (from DDL/Hive schema) to physical
+  // column names (in parquet file). This handles cases where DDL has different
+  // column names than the parquet file (e.g., case differences or completely
+  // different names). The mapping is done by positional index.
+  std::unordered_map<std::string, std::string> logicalToPhysicalColumnMap_;
+
+  // Build the logical-to-physical column name mapping by reading parquet
+  // metadata and matching columns by index position.
+  void buildColumnNameMapping(const cudf::io::source_info& sourceInfo);
+
+  // Map a vector of logical column names to their physical parquet column
+  // names. If a column is not found in the mapping, the original name is used.
+  std::vector<std::string> mapToPhysicalColumnNames(
+      const std::vector<std::string>& logicalNames) const;
 
   dwio::common::ReaderOptions baseReaderOpts_;
 

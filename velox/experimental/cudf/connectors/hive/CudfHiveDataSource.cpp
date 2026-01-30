@@ -39,6 +39,7 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
+#include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/stream_compaction.hpp>
@@ -224,11 +225,12 @@ std::optional<RowVectorPtr> CudfHiveDataSource::next(
       auto tmpOptions = readerOptions_;
 
       if (readerOptions_.get_filter().has_value()) {
-        // Filter expression converter
+        // Filter expression converter - use mapped physical column names
+        // to handle DDL/parquet column name mismatches
         auto exprConverter = referenceToNameConverter(
             readerOptions_.get_filter(),
             exptSplitReader_->parquet_metadata().schema,
-            readColumnNames_);
+            mapToPhysicalColumnNames(readColumnNames_));
         tmpOptions.set_filter(exprConverter.convertedExpression());
 
         // Create a temporary split reader for filtering row groups. TODO(mh):
@@ -612,13 +614,19 @@ void CudfHiveDataSource::setupCudfDataSourceAndOptions() {
     readerOptions_.set_num_bytes(split_->size());
   }
 
+  // Build column name mapping from logical (DDL) to physical (parquet) names.
+  // This handles cases where DDL column names differ from parquet column names
+  // (e.g., case differences like "_col_0" vs "_COL_0", or completely different
+  // names). The mapping is done by matching columns at the same index position.
+  buildColumnNameMapping(cudf::io::source_info{split_->filePath});
+
   if (subfieldFilterExpr_ != nullptr) {
     readerOptions_.set_filter(*subfieldFilterExpr_);
   }
 
-  // Set column projection if needed
+  // Set column projection if needed, using mapped physical column names
   if (readColumnNames_.size()) {
-    readerOptions_.set_column_names(readColumnNames_);
+    readerOptions_.set_columns(mapToPhysicalColumnNames(readColumnNames_));
   }
 }
 
@@ -658,12 +666,80 @@ CudfHybridScanReaderPtr CudfHiveDataSource::createExperimentalSplitReader() {
   return exptSplitReader;
 }
 
+void CudfHiveDataSource::buildColumnNameMapping(
+    const cudf::io::source_info& sourceInfo) {
+  // Get logical schema from tableHandle
+  const auto& dataColumns = tableHandle_->dataColumns();
+  if (!dataColumns) {
+    // No logical schema available, skip mapping
+    return;
+  }
+
+  try {
+    // Read parquet metadata to get actual column names
+    auto metadata = cudf::io::read_parquet_metadata(sourceInfo);
+    const auto& parquetSchema = metadata.schema().root();
+
+    // Build index-based mapping: logical_name[i] -> parquet_name[i]
+    const auto& logicalNames = dataColumns->names();
+    const auto numColumns =
+        std::min(logicalNames.size(), parquetSchema.num_children());
+
+    for (size_t i = 0; i < numColumns; ++i) {
+      std::string physicalName(parquetSchema.child(i).name());
+      const auto& logicalName = logicalNames[i];
+
+      // Only add to map if names differ
+      if (logicalName != physicalName) {
+        logicalToPhysicalColumnMap_[logicalName] = physicalName;
+        VLOG(1) << "Column name mapping: logical '" << logicalName
+                << "' (index " << i << ") -> physical '" << physicalName << "'";
+      }
+    }
+
+    if (!logicalToPhysicalColumnMap_.empty()) {
+      LOG(INFO) << "Built column name mapping with "
+                << logicalToPhysicalColumnMap_.size()
+                << " entries for file: " << split_->filePath;
+    }
+  } catch (const std::exception& e) {
+    LOG(WARNING) << "Failed to build column name mapping for file "
+                 << split_->filePath << ": " << e.what()
+                 << ". Proceeding with original column names.";
+    logicalToPhysicalColumnMap_.clear();
+  }
+}
+
+std::vector<std::string> CudfHiveDataSource::mapToPhysicalColumnNames(
+    const std::vector<std::string>& logicalNames) const {
+  if (logicalToPhysicalColumnMap_.empty()) {
+    // No mapping needed, return original names
+    return logicalNames;
+  }
+
+  std::vector<std::string> physicalNames;
+  physicalNames.reserve(logicalNames.size());
+
+  for (const auto& name : logicalNames) {
+    auto it = logicalToPhysicalColumnMap_.find(name);
+    if (it != logicalToPhysicalColumnMap_.end()) {
+      physicalNames.push_back(it->second);
+    } else {
+      // Column not in mapping, use original name
+      physicalNames.push_back(name);
+    }
+  }
+
+  return physicalNames;
+}
+
 void CudfHiveDataSource::resetSplit() {
   split_.reset();
   splitReader_.reset();
   exptSplitReader_.reset();
   tableMaterialized_.reset();
   dataSource_.reset();
+  logicalToPhysicalColumnMap_.clear();
 }
 
 std::unordered_map<std::string, RuntimeMetric>
