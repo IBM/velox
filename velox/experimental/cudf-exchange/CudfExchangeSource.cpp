@@ -389,6 +389,7 @@ void CudfExchangeSource::onMetadata(
     // Get a stream from the global stream pool
     auto stream =
         facebook::velox::cudf_velox::cudfGlobalStreamPool().get_stream();
+    ptr->stream = stream;
     try {
       ptr->dataBuf = std::make_unique<rmm::device_buffer>(
           ptr->metadata.dataSizeBytes, stream);
