@@ -251,7 +251,7 @@ void PrestoVectorSerde::serializeSingleColumn(
   Scratch scratch;
   serializeColumn(vector, folly::Range(&range, 1), stream.get(), scratch);
 
-  if (!opts->exchangeChecksum) {
+  if (opts && !opts->exchangeChecksum) {
     OStreamOutputStream outputStream(output, nullptr);
     stream->flush(&outputStream);
   } else {
