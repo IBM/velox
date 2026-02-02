@@ -414,6 +414,71 @@ cudf::ast::expression const& createAstFromSubfieldFilter(
       return tree.push(Operation{Op::NOT, nullCheck});
     }
 
+    case common::FilterKind::kBigintMultiRange: {
+      auto* multiRange = static_cast<const common::BigintMultiRange*>(&filter);
+      const auto& ranges = multiRange->ranges();
+
+      // Empty OR list is always false
+      if (ranges.empty()) {
+        return tree.push(Operation{Op::NOT_EQUAL, columnRef, columnRef});
+      }
+
+      auto const& columnType = inputRowSchema->childAt(columnIndex);
+      std::vector<const cudf::ast::expression*> exprRefs;
+      exprRefs.reserve(ranges.size());
+
+      for (const auto& range : ranges) {
+        // Reuse buildBigintRangeExpr for each BigintRange
+        auto result = VELOX_DYNAMIC_TYPE_DISPATCH(
+            buildBigintRangeExpr,
+            columnType->kind(),
+            *range,
+            tree,
+            scalars,
+            columnRef,
+            stream,
+            mr,
+            columnType);
+        exprRefs.push_back(&result.get());
+      }
+
+      // Combine with NULL_LOGICAL_OR
+      const cudf::ast::expression* result = exprRefs[0];
+      for (size_t i = 1; i < exprRefs.size(); ++i) {
+        result =
+            &tree.push(Operation{Op::NULL_LOGICAL_OR, *result, *exprRefs[i]});
+      }
+      return *result;
+    }
+
+    case common::FilterKind::kMultiRange: {
+      auto* multiRange = static_cast<const common::MultiRange*>(&filter);
+      const auto& filters = multiRange->filters();
+
+      // Empty OR list is always false
+      if (filters.empty()) {
+        return tree.push(Operation{Op::NOT_EQUAL, columnRef, columnRef});
+      }
+
+      std::vector<const cudf::ast::expression*> exprRefs;
+      exprRefs.reserve(filters.size());
+
+      for (const auto& subFilter : filters) {
+        // Recursively convert each sub-filter
+        auto const& subExpr = createAstFromSubfieldFilter(
+            subfield, *subFilter, tree, scalars, inputRowSchema);
+        exprRefs.push_back(&subExpr);
+      }
+
+      // Combine with NULL_LOGICAL_OR
+      const cudf::ast::expression* result = exprRefs[0];
+      for (size_t i = 1; i < exprRefs.size(); ++i) {
+        result =
+            &tree.push(Operation{Op::NULL_LOGICAL_OR, *result, *exprRefs[i]});
+      }
+      return *result;
+    }
+
     default:
       VELOX_NYI(
           "Filter type {} not yet supported for subfield filter conversion",
