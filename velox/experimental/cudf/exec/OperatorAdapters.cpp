@@ -23,6 +23,7 @@
 #include "velox/experimental/cudf/exec/CudfLocalPartition.h"
 #include "velox/experimental/cudf/exec/CudfOrderBy.h"
 #include "velox/experimental/cudf/exec/CudfTopN.h"
+#include "velox/experimental/cudf/exec/CudfTopNRowNumber.h"
 #include "velox/experimental/cudf/exec/OperatorAdapters.h"
 #include "velox/experimental/cudf/exec/Utilities.h"
 #include "velox/experimental/cudf/expression/ExpressionEvaluator.h"
@@ -40,6 +41,7 @@
 #include "velox/exec/TableScan.h"
 #include "velox/exec/Task.h"
 #include "velox/exec/TopN.h"
+#include "velox/exec/TopNRowNumber.h"
 #include "velox/exec/Values.h"
 
 namespace facebook::velox::cudf_velox {
@@ -677,6 +679,50 @@ class CallbackSinkAdapter : public OperatorAdapter {
   }
 };
 
+/// TopNRowNumberAdapter - Replaces with CudfTopNRowNumber
+class TopNRowNumberAdapter : public OperatorAdapter {
+ public:
+  TopNRowNumberAdapter() : OperatorAdapter("TopNRowNumber") {}
+
+  bool canHandle(const exec::Operator* op) const override {
+    return dynamic_cast<const exec::TopNRowNumber*>(op) != nullptr;
+  }
+
+  bool canRunOnGPU(
+      const exec::Operator* /*op*/,
+      const core::PlanNodePtr& planNode,
+      exec::DriverCtx* /*ctx*/) const override {
+    return std::dynamic_pointer_cast<const core::TopNRowNumberNode>(planNode) !=
+        nullptr;
+  }
+
+  bool acceptsGpuInput() const override {
+    return true;
+  }
+
+  bool producesGpuOutput() const override {
+    return true;
+  }
+
+  std::vector<std::unique_ptr<exec::Operator>> createReplacements(
+      const exec::Operator* /*op*/,
+      const core::PlanNodePtr& planNode,
+      exec::DriverCtx* ctx,
+      int32_t operatorId) const override {
+    auto topNRowNumberPlanNode =
+        std::dynamic_pointer_cast<const core::TopNRowNumberNode>(planNode);
+
+    std::vector<std::unique_ptr<exec::Operator>> result;
+    VELOX_CHECK(
+        CudfTopNRowNumber::shouldReplace(topNRowNumberPlanNode),
+        "CudfTopNRowNumber only supports limit=1 with row_number function");
+    result.push_back(
+        std::make_unique<CudfTopNRowNumber>(
+            operatorId, ctx, topNRowNumberPlanNode));
+    return result;
+  }
+};
+
 /// Registration Function
 void registerAllOperatorAdapters() {
   auto& registry = OperatorAdapterRegistry::getInstance();
@@ -698,6 +744,7 @@ void registerAllOperatorAdapters() {
   registry.registerAdapter(std::make_unique<AssignUniqueIdAdapter>());
   registry.registerAdapter(std::make_unique<ValuesAdapter>());
   registry.registerAdapter(std::make_unique<CallbackSinkAdapter>());
+  registry.registerAdapter(std::make_unique<TopNRowNumberAdapter>());
 }
 
 } // namespace facebook::velox::cudf_velox

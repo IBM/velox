@@ -23,6 +23,7 @@ add_library(
   CudfLocalPartition.cpp
   CudfOrderBy.cpp
   CudfTopN.cpp
+  CudfTopNRowNumber.cpp
   DebugUtil.cpp
   OperatorAdapters.cpp
   ToCudf.cpp
