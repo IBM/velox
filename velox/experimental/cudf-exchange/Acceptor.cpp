@@ -18,6 +18,7 @@
 #include "velox/experimental/cudf-exchange/CudfExchangeProtocol.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeServer.h"
 #include "velox/experimental/cudf-exchange/EndpointRef.h"
+#include "velox/experimental/cudf-exchange/NetUtil.h"
 
 namespace facebook::velox::cudf_exchange {
 
@@ -53,12 +54,24 @@ void Acceptor::cStyleAMCallback(
 
   const PartitionKey key = {handshakePtr->taskId, handshakePtr->destination};
 
-  // Extract source's listener address for same-node detection.
-  std::string sourceListenerIp(handshakePtr->sourceListenerIp);
-  uint16_t sourceListenerPort = handshakePtr->sourceListenerPort;
+  // Get the peer's actual IP from the connection (not from the handshake message).
+  // This is reliable because it comes from the network layer, not client-reported data.
+  std::string peerIp = epRef->getPeerIp();
+
+  // Cache local IPs on first use (thread-safe in C++11+).
+  static auto localIps = getLocalIpAddresses();
+
+  // Determine if this is an intra-node transfer by checking if the peer's
+  // actual IP is in our set of local IPs.
+  bool isIntraNodeTransfer = localIps.count(peerIp) > 0;
+
+  LOG(INFO) << "[EXCHANGE_DEBUG] Acceptor received handshake for task=" << key.taskId
+            << " dest=" << key.destination
+            << " peerIp=" << peerIp
+            << " isIntraNodeTransfer=" << isIntraNodeTransfer;
 
   auto exchangeServer = CudfExchangeServer::create(
-      communicator, epRef, key, sourceListenerIp, sourceListenerPort);
+      communicator, epRef, key, isIntraNodeTransfer);
 
   // Add this exchangeServer to the endpoint reference.
   epRef->addCommElem(exchangeServer);
@@ -67,8 +80,8 @@ void Acceptor::cStyleAMCallback(
   communicator->registerCommElement(exchangeServer);
   VLOG(3) << "Registered new exchange server task: "
           << exchangeServer->toString()
-          << " (sourceListener: " << sourceListenerIp << ":"
-          << sourceListenerPort << ")";
+          << " peerIp=" << peerIp
+          << " isIntraNodeTransfer=" << isIntraNodeTransfer;
 
   // Send HandshakeResponse back to the source to inform about intra-node
   // transfer. This allows the source to bypass UCXX for all subsequent data

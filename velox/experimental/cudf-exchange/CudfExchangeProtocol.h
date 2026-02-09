@@ -64,24 +64,15 @@ inline uint64_t getHandshakeResponseTag(uint64_t taskHash) {
   return (taskHash << 32) | HANDSHAKE_RESPONSE_TAG;
 }
 
-/// Maximum length for listener IP address (supports IPv6).
-constexpr size_t kMaxListenerIpLen = 64;
-
 /// @brief Request that is sent from the client (CudfExchangeSource) to the
 /// server (CudfExchangeServer) after connection.
 ///
-/// The handshake establishes the partition key for data exchange and includes
-/// the source's Communicator listener address. The server uses this to detect
-/// if the source is on the same node (same Communicator instance) by comparing
-/// with its own listener address. Same-node detection enables local exchange
-/// optimizations that bypass UCXX transfers.
+/// The handshake establishes the partition key for data exchange.
+/// Intra-node detection is done server-side by checking if the peer's actual
+/// IP (from the connection) is in the local IP set.
 struct HandshakeMsg {
   char taskId[256];
   uint32_t destination;
-  /// Source's Communicator listener IP address for same-node detection.
-  char sourceListenerIp[kMaxListenerIpLen];
-  /// Source's Communicator listener port for same-node detection.
-  uint16_t sourceListenerPort;
 };
 
 /// @brief Response sent from server to source after handshake.

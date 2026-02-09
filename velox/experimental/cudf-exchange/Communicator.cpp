@@ -286,7 +286,8 @@ void Communicator::listenerCallback(ucp_conn_request_h conn_request) {
   // outgoing endpoints are represented using the EndpointRef.
   auto endpoint = listener_->createEndpointFromConnRequest(
       conn_request, CudfConfig::getInstance().ucxxErrorHandling);
-  auto epRef = std::make_shared<EndpointRef>(endpoint);
+  // Pass the peer's actual IP to EndpointRef for reliable intra-node detection.
+  auto epRef = std::make_shared<EndpointRef>(endpoint, std::string(ip_str));
   if (CudfConfig::getInstance().ucxxErrorHandling) {
     endpoint->setCloseCallback(EndpointRef::onClose, epRef);
   }

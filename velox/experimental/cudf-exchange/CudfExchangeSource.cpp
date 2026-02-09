@@ -252,20 +252,8 @@ void CudfExchangeSource::sendHandshake() {
       sizeof(handshakeReq->taskId) - 1);
   handshakeReq->taskId[sizeof(handshakeReq->taskId) - 1] = '\0';
 
-  // Include our Communicator's listener address for same-node detection.
-  // The server will compare this with its own listener address.
-  std::string myIp = communicator_->getListenerIp();
-  strncpy(
-      handshakeReq->sourceListenerIp,
-      myIp.c_str(),
-      sizeof(handshakeReq->sourceListenerIp) - 1);
-  handshakeReq->sourceListenerIp[sizeof(handshakeReq->sourceListenerIp) - 1] =
-      '\0';
-  handshakeReq->sourceListenerPort = communicator_->getListenerPort();
-
   VLOG(3) << toString() << " Sending handshake with initial value: "
-          << partitionKey_.toString() << " to server (sourceListener: " << myIp
-          << ":" << handshakeReq->sourceListenerPort << ")";
+          << partitionKey_.toString() << " to server";
 
   // Create the handshake which will register client's existence with the server
   ucxx::AmReceiverCallbackInfo info(

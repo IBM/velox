@@ -39,16 +39,13 @@ class CudfExchangeServer
   /// @param communicator The Communicator instance.
   /// @param endpointRef The endpoint reference for UCXX communication.
   /// @param key The partition key identifying the data to serve.
-  /// @param sourceListenerIp The source's Communicator listener IP address
-  ///        (from HandshakeMsg) for same-node detection.
-  /// @param sourceListenerPort The source's Communicator listener port
-  ///        (from HandshakeMsg) for same-node detection.
+  /// @param isIntraNodeTransfer True if the source is on the same node,
+  ///        determined by checking if the peer's IP is in the local IP set.
   static std::shared_ptr<CudfExchangeServer> create(
       const std::shared_ptr<Communicator> communicator,
       std::shared_ptr<EndpointRef> endpointRef,
       const PartitionKey& key,
-      const std::string& sourceListenerIp,
-      uint16_t sourceListenerPort);
+      bool isIntraNodeTransfer);
 
   void process() override;
 
@@ -81,8 +78,7 @@ class CudfExchangeServer
       const std::shared_ptr<Communicator> communicator,
       std::shared_ptr<EndpointRef> endpointRef,
       const PartitionKey& key,
-      const std::string& sourceListenerIp,
-      uint16_t sourceListenerPort);
+      bool isIntraNodeTransfer);
 
   /// @return A shared pointer to itself.
   std::shared_ptr<CudfExchangeServer> getSelfPtr();
@@ -125,13 +121,9 @@ class CudfExchangeServer
   const uint32_t
       partitionKeyHash_; // A hash of above, used to create unique tags.
 
-  /// Source's Communicator listener IP address (from HandshakeMsg).
-  const std::string sourceListenerIp_;
-  /// Source's Communicator listener port (from HandshakeMsg).
-  const uint16_t sourceListenerPort_;
-  /// True if server and source are on the same node (same Communicator
-  /// listener address). When true, data is passed via IntraNodeTransferRegistry
-  /// instead of UCXX transfer.
+  /// True if server and source are on the same node (determined by checking
+  /// if peer's actual IP is in the local IP set). When true, data is passed
+  /// via IntraNodeTransferRegistry instead of UCXX transfer.
   bool isIntraNodeTransfer_{false};
 
   std::atomic<ServerState> state_;

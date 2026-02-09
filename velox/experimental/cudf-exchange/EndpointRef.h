@@ -29,8 +29,10 @@ namespace facebook::velox::cudf_exchange {
 /// is done, it notifies the endpoint. This class is not thread safe.
 class EndpointRef : std::enable_shared_from_this<EndpointRef> {
  public:
-  EndpointRef(const std::shared_ptr<ucxx::Endpoint> endpoint)
-      : endpoint_{endpoint}, communicators_{} {}
+  EndpointRef(
+      const std::shared_ptr<ucxx::Endpoint> endpoint,
+      std::string peerIp = "")
+      : endpoint_{endpoint}, peerIp_{std::move(peerIp)}, communicators_{} {}
 
   /// @brief Static method that is called when the underlying UCXX system closes
   /// the endpoint. In this case, all communication elements are informed that
@@ -54,9 +56,18 @@ class EndpointRef : std::enable_shared_from_this<EndpointRef> {
   /// std::map
   bool operator<(EndpointRef const& other);
 
+  /// @brief Get the peer's IP address as seen from the connection.
+  /// Used for reliable intra-node detection.
+  const std::string& getPeerIp() const {
+    return peerIp_;
+  }
+
   const std::shared_ptr<ucxx::Endpoint> endpoint_;
 
  private:
+  /// The peer's actual IP address extracted from the connection request.
+  /// Used for server-side intra-node detection instead of client-reported IPs.
+  std::string peerIp_;
   void cleanup(); // cleans up expired communication elements.
 
   std::set<

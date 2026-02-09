@@ -28,21 +28,13 @@ CudfExchangeServer::CudfExchangeServer(
     const std::shared_ptr<Communicator> communicator,
     std::shared_ptr<EndpointRef> endpointRef,
     const PartitionKey& key,
-    const std::string& sourceListenerIp,
-    uint16_t sourceListenerPort)
+    bool isIntraNodeTransfer)
     : CommElement(communicator, endpointRef),
       partitionKey_(key),
       partitionKeyHash_(fnv1a_32(partitionKey_.toString())),
-      sourceListenerIp_(sourceListenerIp),
-      sourceListenerPort_(sourceListenerPort),
+      isIntraNodeTransfer_(isIntraNodeTransfer),
       queueMgr_(CudfOutputQueueManager::getInstanceRef()) {
   setState(ServerState::Created);
-
-  // Detect if the source is on the same node by comparing listener addresses.
-  std::string myIp = communicator_->getListenerIp();
-  uint16_t myPort = communicator_->getListenerPort();
-  isIntraNodeTransfer_ =
-      (myIp == sourceListenerIp_) && (myPort == sourceListenerPort_);
 
   if (isIntraNodeTransfer_) {
     VLOG(3) << "@" << partitionKey_.taskId
@@ -56,10 +48,9 @@ std::shared_ptr<CudfExchangeServer> CudfExchangeServer::create(
     const std::shared_ptr<Communicator> communicator,
     std::shared_ptr<EndpointRef> endpointRef,
     const PartitionKey& key,
-    const std::string& sourceListenerIp,
-    uint16_t sourceListenerPort) {
+    bool isIntraNodeTransfer) {
   auto ptr = std::shared_ptr<CudfExchangeServer>(new CudfExchangeServer(
-      communicator, endpointRef, key, sourceListenerIp, sourceListenerPort));
+      communicator, endpointRef, key, isIntraNodeTransfer));
   return ptr;
 }
 
