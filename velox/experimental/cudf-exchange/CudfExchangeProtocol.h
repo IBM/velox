@@ -127,6 +127,13 @@ struct MetadataMsg {
   std::pair<std::shared_ptr<uint8_t>, size_t> serialize() {
     uint32_t totalSize = getSerializedSize();
 
+    VELOX_CHECK_LE(
+        totalSize,
+        kMetaBufSize,
+        "Metadata serialized size ({}) exceeds buffer size ({})",
+        totalSize,
+        kMetaBufSize);
+
     // Allocate a contiguous block of memory
     // Use shared_ptr with a custom deleter for arrays.
     auto deleter = [](uint8_t* p) { delete[] p; };
