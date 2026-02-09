@@ -1385,6 +1385,10 @@ bool registerStepAwareBuiltinAggregationFunctions(const std::string& prefix) {
       FunctionSignatureBuilder()
           .returnType("double")
           .argumentType("double")
+          .build(),
+      FunctionSignatureBuilder()
+          .returnType("varchar")
+          .argumentType("varchar")
           .build()};
 
   registerAggregationFunctionForStep(
