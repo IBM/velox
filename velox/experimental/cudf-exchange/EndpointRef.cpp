@@ -20,6 +20,11 @@ namespace facebook::velox::cudf_exchange {
 
 /* static */
 void EndpointRef::onClose(ucs_status_t status, std::shared_ptr<void> arg) {
+  // NOTE: This callback is called from within the UCX progress thread.
+  // We must NOT call any blocking operations or progress functions here.
+  // In particular, we must NOT call removeEndpointRef() which calls
+  // closeBlocking() internally.
+
   std::shared_ptr<EndpointRef> ep = std::static_pointer_cast<EndpointRef>(arg);
   ep->cleanup();
   while (!ep->communicators_.empty()) {
@@ -31,8 +36,12 @@ void EndpointRef::onClose(ucs_status_t status, std::shared_ptr<void> arg) {
     ep->communicators_.erase(ptr);
   }
 
+  // Defer the actual endpoint cleanup to the main progress loop.
+  // This is necessary because closeBlocking() (called by removeEndpointRef)
+  // internally progresses the UCX worker, which is not allowed from within
+  // a callback.
   auto c = Communicator::getInstance();
-  c->removeEndpointRef(ep);
+  c->deferEndpointCleanup(ep);
 }
 
 bool EndpointRef::addCommElem(std::shared_ptr<CommElement> commElem) {

@@ -104,7 +104,16 @@ class Communicator {
 
   /// @brief Removes an endpoint from the communicator. This is required when
   /// the endpoint has become stale since the other side has disappeared.
+  /// NOTE: This should NOT be called from within a UCX callback. Use
+  /// deferEndpointCleanup() instead.
   void removeEndpointRef(std::shared_ptr<EndpointRef> ep);
+
+  /// @brief Defers endpoint cleanup to the main progress loop.
+  /// This MUST be used instead of removeEndpointRef when called from
+  /// within a UCX callback, because UCX callbacks cannot call progress
+  /// functions (which closeBlocking() does internally).
+  /// @param ep The endpoint to be cleaned up later.
+  void deferEndpointCleanup(std::shared_ptr<EndpointRef> ep);
 
   // Returns the URL of the coordinator.
   const std::string& getCoordinatorUrl();
@@ -171,6 +180,11 @@ class Communicator {
 
   // The map that maintains the shared endpoints.
   std::map<HostPort, std::shared_ptr<EndpointRef>> endpoints_;
+
+  // Queue of endpoints that need cleanup, populated by callbacks.
+  // UCX callbacks cannot call progress functions (like closeBlocking),
+  // so they defer cleanup to the main loop via this queue.
+  WorkQueue<EndpointRef> deferredEndpointCleanup_;
 };
 
 } // namespace facebook::velox::cudf_exchange
