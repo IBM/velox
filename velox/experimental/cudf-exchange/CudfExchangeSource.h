@@ -85,6 +85,12 @@ class CudfExchangeSource
   /// once it received enough data.
   void close();
 
+  /// @brief Marks this source as registered with the exchange queue.
+  /// Must be called after addSourceLocked() increments numSources_ for this
+  /// source. Without this, deliverEndMarker() will not enqueue the nullptr
+  /// (preventing spurious numCompleted_ increments for unregistered sources).
+  void setRegistered() { registered_ = true; }
+
   // Returns runtime statistics. ExchangeSource is expected to report
   // background CPU time by including a runtime metric named
   // ExchangeClient::kBackgroundCpuTimeMs.
@@ -215,6 +221,13 @@ class CudfExchangeSource
   /// state-machine
   void cleanUp();
 
+  /// @brief Delivers the nullptr end-of-stream marker to the queue exactly
+  /// once. Safe to call from any thread. Uses atomic CAS on
+  /// endMarkerDelivered_ to guarantee at-most-once delivery.
+  /// Returns early without enqueuing if the source was never registered
+  /// with the queue (i.e., registered_ is false).
+  void deliverEndMarker();
+
   /// @brief Sets the state to "desired" if and only if the current
   /// state is "expected".
   /// @param expected The expected state
@@ -239,6 +252,16 @@ class CudfExchangeSource
   const std::shared_ptr<CudfExchangeQueue> queue_{nullptr};
   std::atomic<bool> closed_{false};
   bool atEnd_{false}; // set when "atEnd" is being received.
+
+  /// @brief Guards exactly-once delivery of the nullptr end-of-stream marker.
+  /// Only one thread can win the CAS and call enqueue(nullptr).
+  std::atomic<bool> endMarkerDelivered_{false};
+
+  /// @brief True only after addSourceLocked() has been called for this source.
+  /// Prevents deliverEndMarker() from incrementing numCompleted_ for sources
+  /// that were never registered with the queue (e.g., created after client
+  /// close).
+  bool registered_{false};
 
   /// True if the server detected that this source is on the same node.
   /// Set from the isIntraNodeTransfer flag in HandshakeResponse, which the

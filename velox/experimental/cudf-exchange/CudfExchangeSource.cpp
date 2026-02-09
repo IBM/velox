@@ -90,6 +90,7 @@ void CudfExchangeSource::process() {
         // connection failed.
         VLOG(0) << toString() << " Failed to connect to " << host_ << ":"
                 << std::to_string(port_);
+        deliverEndMarker();
         setState(ReceiverState::Done);
       }
       communicator_->addToWorkQueue(getSelfPtr());
@@ -171,7 +172,10 @@ void CudfExchangeSource::close() {
 
   VLOG(1) << toString() << " CudfExchangeSource::close called.";
 
-  // Let the Communicator progress thread do the actual clean-up
+  // Guarantee the end marker is delivered before transitioning to Done.
+  deliverEndMarker();
+
+  // Let the Communicator progress thread do the actual clean-up.
   setState(ReceiverState::Done);
   communicator_->addToWorkQueue(getSelfPtr());
 }
@@ -237,6 +241,22 @@ void CudfExchangeSource::enqueue(PackedTableWithStreamPtr data) {
   }
 }
 
+void CudfExchangeSource::deliverEndMarker() {
+  if (!registered_) {
+    // Never registered with queue -- don't deliver end marker to avoid
+    // spurious numCompleted_ increments.
+    return;
+  }
+  bool expected = false;
+  if (!endMarkerDelivered_.compare_exchange_strong(
+          expected, true, std::memory_order_acq_rel)) {
+    // Already delivered by another thread/path.
+    return;
+  }
+  VLOG(3) << toString() << " delivering end-of-stream marker to queue";
+  enqueue(nullptr);
+}
+
 void CudfExchangeSource::setEndpoint(std::shared_ptr<EndpointRef> endpointRef) {
   endpointRef_ = std::move(endpointRef);
 }
@@ -280,6 +300,7 @@ void CudfExchangeSource::onHandshake(
   // Check if close() was called - avoid processing if we're shutting down
   if (closed_.load(std::memory_order_acquire)) {
     VLOG(3) << toString() << " onHandshake called after close, ignoring";
+    deliverEndMarker();
     return;
   }
   if (status != UCS_OK) {
@@ -290,8 +311,9 @@ void CudfExchangeSource::onHandshake(
         partitionKey_.toString(),
         ucs_status_string(status));
     VLOG(0) << errorMsg;
+    queue_->setError(errorMsg);
+    deliverEndMarker();
     setState(ReceiverState::Done);
-    queue_->setError(errorMsg); // Let the operator know via the queue
     communicator_->addToWorkQueue(getSelfPtr());
   } else {
     VLOG(3) << toString() << "+ onHandshake " << ucs_status_string(status);
@@ -335,6 +357,7 @@ void CudfExchangeSource::onMetadata(
   // Check if close() was called - avoid processing if we're shutting down
   if (closed_.load(std::memory_order_acquire)) {
     VLOG(3) << toString() << " onMetadata called after close, ignoring";
+    deliverEndMarker();
     return;
   }
   VLOG(3) << toString() << " + onMetadata " << ucs_status_string(status);
@@ -347,8 +370,9 @@ void CudfExchangeSource::onMetadata(
         partitionKey_.toString(),
         ucs_status_string(status));
     VLOG(0) << errorMsg;
+    queue_->setError(errorMsg);
+    deliverEndMarker();
     setState(ReceiverState::Done);
-    queue_->setError(errorMsg); // Let the operator know via the queue
     communicator_->addToWorkQueue(getSelfPtr());
   } else {
     VELOX_CHECK(arg != nullptr, "Didn't get metadata");
@@ -370,9 +394,9 @@ void CudfExchangeSource::onMetadata(
       atEnd_ = true;
       // enqueue a nullpointer to mark the end for this source.
       VLOG(3) << "There is no more data to transfer for " << toString();
+      deliverEndMarker();
       setStateIf(ReceiverState::WaitingForMetadata, ReceiverState::Done);
       communicator_->addToWorkQueue(getSelfPtr());
-      enqueue(nullptr);
       // jump out of this function.
       return;
     }
@@ -391,6 +415,7 @@ void CudfExchangeSource::onMetadata(
       VLOG(0) << toString() << " *** RMM  failed to allocate: " << e.what();
       queue_->setError("Failed to alloc GPU memory"); // Let the operator know
                                                       // via the queue
+      deliverEndMarker();
       setState(ReceiverState::Done);
       communicator_->addToWorkQueue(getSelfPtr());
       return;
@@ -437,6 +462,7 @@ void CudfExchangeSource::onData(
   // Check if close() was called - avoid processing if we're shutting down
   if (closed_.load(std::memory_order_acquire)) {
     VLOG(3) << toString() << " onData called after close, ignoring";
+    deliverEndMarker();
     return;
   }
   VLOG(3) << toString() << " + onData " << ucs_status_string(status);
@@ -449,8 +475,9 @@ void CudfExchangeSource::onData(
         partitionKey_.toString(),
         ucs_status_string(status));
     VLOG(0) << toString() << errorMsg;
+    queue_->setError(errorMsg);
+    deliverEndMarker();
     setState(ReceiverState::Done);
-    queue_->setError(errorMsg); // Let the operator know via the queue
   } else {
     VLOG(3) << toString() << "+ onData " << ucs_status_string(status)
             << " got chunk: " << sequenceNumber_;
@@ -513,6 +540,7 @@ void CudfExchangeSource::onHandshakeResponse(
   if (closed_.load(std::memory_order_acquire)) {
     VLOG(3) << toString()
             << " onHandshakeResponse called after close, ignoring";
+    deliverEndMarker();
     return;
   }
 
@@ -524,8 +552,9 @@ void CudfExchangeSource::onHandshakeResponse(
         partitionKey_.toString(),
         ucs_status_string(status));
     VLOG(0) << errorMsg;
-    setState(ReceiverState::Done);
     queue_->setError(errorMsg);
+    deliverEndMarker();
+    setState(ReceiverState::Done);
     communicator_->addToWorkQueue(getSelfPtr());
     return;
   }
@@ -549,6 +578,7 @@ void CudfExchangeSource::waitForIntraNodeData() {
   if (closed_.load(std::memory_order_acquire)) {
     VLOG(3) << toString()
             << " waitForIntraNodeData called after close, ignoring";
+    deliverEndMarker();
     return;
   }
 
@@ -575,6 +605,7 @@ void CudfExchangeSource::onIntraNodeData(
   // Check if close() was called
   if (closed_.load(std::memory_order_acquire)) {
     VLOG(3) << toString() << " onIntraNodeData called after close, ignoring";
+    deliverEndMarker();
     return;
   }
 
@@ -582,10 +613,8 @@ void CudfExchangeSource::onIntraNodeData(
     // End of stream
     atEnd_ = true;
     VLOG(3) << toString() << " Intra-node transfer: end of stream";
+    deliverEndMarker();
     setState(ReceiverState::Done);
-
-    // Enqueue nullptr to mark end for this source
-    enqueue(nullptr);
 
     communicator_->addToWorkQueue(getSelfPtr());
     return;
@@ -600,6 +629,7 @@ void CudfExchangeSource::onIntraNodeData(
         sequenceNumber_);
     VLOG(0) << toString() << " " << errorMsg;
     queue_->setError(errorMsg);
+    deliverEndMarker();
     setState(ReceiverState::Done);
     communicator_->addToWorkQueue(getSelfPtr());
     return;

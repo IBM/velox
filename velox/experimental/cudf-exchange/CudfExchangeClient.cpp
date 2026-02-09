@@ -40,6 +40,7 @@ void CudfExchangeClient::addRemoteTaskId(const std::string& remoteTaskId) {
     } else {
       sources_.push_back(source);
       queue_->addSourceLocked();
+      source->setRegistered();
       VLOG(3) << "@" << taskId_
               << " Added remote split for task: " << remoteTaskId;
     }
