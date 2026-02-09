@@ -181,6 +181,11 @@ class Communicator {
   // The map that maintains the shared endpoints.
   std::map<HostPort, std::shared_ptr<EndpointRef>> endpoints_;
 
+  /// @brief Signals the UCXX worker to wake up from a blocking
+  /// progressWorkerEvent() call. Thread-safe. No-op if worker_ is null
+  /// or if not in blocking progress mode.
+  void signalWorker();
+
   // Queue of endpoints that need cleanup, populated by callbacks.
   // UCX callbacks cannot call progress functions (like closeBlocking),
   // so they defer cleanup to the main loop via this queue.

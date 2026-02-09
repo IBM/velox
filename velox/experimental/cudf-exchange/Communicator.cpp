@@ -119,21 +119,14 @@ void Communicator::run() {
   promise_.setValue();
 
   VLOG(3) << "Communicator running.";
+  const bool blockingMode = CudfConfig::getInstance().ucxxBlockingPolling;
   while (running_) {
     try {
-      // wait for progress.
-      if (CudfConfig::getInstance().ucxxBlockingPolling) {
-        worker_->progressWorkerEvent(0);
-      } else {
-        worker_->progress();
-      }
-
       // Process deferred endpoint cleanups from callbacks.
       // UCX callbacks cannot call closeBlocking() (which progresses the
       // worker) or iterate communicators_, so they defer cleanup to
       // this main loop via deferEndpointCleanup().
-      while (!deferredEndpointCleanup_.empty()) {
-        auto ep = deferredEndpointCleanup_.pop();
+      while (auto ep = deferredEndpointCleanup_.pop()) {
         VLOG(3) << "Processing deferred endpoint cleanup";
         // First, close all communicators associated with this endpoint.
         // This must happen before removeEndpointRef() which may destroy
@@ -142,21 +135,30 @@ void Communicator::run() {
         removeEndpointRef(ep);
       }
 
-      // process the work queue. Make sure that communication is progressed
+      // Process the work queue. Make sure that communication is progressed
       // after each call to a comms element, otherwise we will deadlock.
-      while (!workQueue_.empty()) {
-        auto comms = workQueue_.pop();
+      while (auto comms = workQueue_.pop()) {
         comms->process();
-        if (CudfConfig::getInstance().ucxxBlockingPolling) {
-          worker_->progressWorkerEvent(0);
-        } else {
-          worker_->progress();
-        }
+        // Progress after each work item to allow UCXX to advance
+        // its internal state (complete sends/receives, fire callbacks).
+        // Use non-blocking progress here to avoid blocking between
+        // work items -- we want to drain the queue promptly.
+        worker_->progress();
+      }
+
+      // All queues are drained. Now wait for UCXX network events.
+      // In blocking mode, this will block until a UCXX event arrives
+      // or worker_->signal() is called (from addToWorkQueue,
+      // deferEndpointCleanup, or stop).
+      if (blockingMode) {
+        worker_->progressWorkerEvent(0);
+      } else {
+        worker_->progress();
       }
     } catch (ucxx::IOError& e) {
       std::cerr << "In Communicator main loop UCXX Exception: " << e.what()
                 << std::endl;
-      throw e;
+      throw;
     }
   }
   VLOG(3) << "Communicator stopping.";
@@ -165,6 +167,7 @@ void Communicator::run() {
 /// @brief Stops the communicator, called from an outside thread.
 void Communicator::stop() {
   running_.store(false);
+  signalWorker();
   VLOG(3) << "In Communicator::stop "
           << " elements_.size(): " << elements_.size()
           << " endpoints_.size(): " << endpoints_.size()
@@ -177,6 +180,13 @@ void Communicator::registerCommElement(std::shared_ptr<CommElement> comms) {
   VELOX_CHECK(ret.second, "CommElement already registered!");
   // Also put the comms element into the work queue.
   workQueue_.push(comms);
+  signalWorker();
+}
+
+void Communicator::signalWorker() {
+  if (worker_ && CudfConfig::getInstance().ucxxBlockingPolling) {
+    worker_->signal();
+  }
 }
 
 void Communicator::addToWorkQueue(std::shared_ptr<CommElement> comms) {
@@ -184,6 +194,7 @@ void Communicator::addToWorkQueue(std::shared_ptr<CommElement> comms) {
     return;
   }
   workQueue_.push(comms);
+  signalWorker();
 }
 
 void Communicator::unregister(std::shared_ptr<CommElement> comms) {
@@ -250,6 +261,7 @@ void Communicator::deferEndpointCleanup(std::shared_ptr<EndpointRef> ep) {
   // in the main run() loop.
   VLOG(3) << "Deferring endpoint cleanup to main loop";
   deferredEndpointCleanup_.push(ep);
+  signalWorker();
 }
 
 const std::string& Communicator::getCoordinatorUrl() {
