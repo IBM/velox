@@ -244,10 +244,13 @@ void CudfExchangeSource::setEndpoint(std::shared_ptr<EndpointRef> endpointRef) {
 void CudfExchangeSource::sendHandshake() {
   std::shared_ptr<HandshakeMsg> handshakeReq = std::make_shared<HandshakeMsg>();
   handshakeReq->destination = partitionKey_.destination;
+  // Use sizeof(...) - 1 and explicitly null-terminate to prevent buffer
+  // overread if taskId is longer than the destination buffer.
   strncpy(
       handshakeReq->taskId,
       partitionKey_.taskId.c_str(),
-      sizeof(handshakeReq->taskId));
+      sizeof(handshakeReq->taskId) - 1);
+  handshakeReq->taskId[sizeof(handshakeReq->taskId) - 1] = '\0';
 
   // Include our Communicator's listener address for same-node detection.
   // The server will compare this with its own listener address.
