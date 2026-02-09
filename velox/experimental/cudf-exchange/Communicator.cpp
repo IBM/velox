@@ -130,11 +130,15 @@ void Communicator::run() {
 
       // Process deferred endpoint cleanups from callbacks.
       // UCX callbacks cannot call closeBlocking() (which progresses the
-      // worker), so they defer cleanup to this main loop via
-      // deferEndpointCleanup().
+      // worker) or iterate communicators_, so they defer cleanup to
+      // this main loop via deferEndpointCleanup().
       while (!deferredEndpointCleanup_.empty()) {
         auto ep = deferredEndpointCleanup_.pop();
         VLOG(3) << "Processing deferred endpoint cleanup";
+        // First, close all communicators associated with this endpoint.
+        // This must happen before removeEndpointRef() which may destroy
+        // the endpoint.
+        ep->closeAndDrainCommunicators();
         removeEndpointRef(ep);
       }
 

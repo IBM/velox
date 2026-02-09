@@ -17,6 +17,7 @@
 
 #include <ucxx/api.h>
 #include <memory>
+#include <mutex>
 #include <set>
 
 #include "velox/experimental/cudf-exchange/CommElement.h"
@@ -26,7 +27,9 @@ namespace facebook::velox::cudf_exchange {
 /// @brief The endpoint reference keeps track of the communication elements that
 /// use a given UCXX endpoint. When this endpoint is closed, the elements
 /// (CudfExchangeSources and CudfExchangeServers) are notified. When an element
-/// is done, it notifies the endpoint. This class is not thread safe.
+/// is done, it notifies the endpoint. Access to the communicators_ set is
+/// protected by commMutex_. The onClose callback defers all work to the
+/// Communicator main loop thread via deferEndpointCleanup().
 class EndpointRef : std::enable_shared_from_this<EndpointRef> {
  public:
   EndpointRef(
@@ -52,6 +55,12 @@ class EndpointRef : std::enable_shared_from_this<EndpointRef> {
   /// CudfExchangeServer.
   void removeCommElem(std::shared_ptr<CommElement> commElem);
 
+  /// @brief Closes all registered communicators and drains the set.
+  /// Uses swap-and-drain pattern: swaps communicators_ into a local copy
+  /// under the lock, then iterates the copy without the lock.
+  /// Must be called from the Communicator main loop thread ONLY.
+  void closeAndDrainCommunicators();
+
   /// implement < operator such that this endpoint can be used in a
   /// std::map
   bool operator<(EndpointRef const& other);
@@ -74,5 +83,6 @@ class EndpointRef : std::enable_shared_from_this<EndpointRef> {
       std::weak_ptr<CommElement>,
       std::owner_less<std::weak_ptr<CommElement>>>
       communicators_;
+  std::mutex commMutex_; // Protects communicators_
 };
 } // namespace facebook::velox::cudf_exchange
