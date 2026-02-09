@@ -288,6 +288,11 @@ void CudfPartitionedOutput::splitAndEnqueue(
     rmm::cuda_stream_view stream) {
   auto contiguousTables = cudf::contiguous_split(tableView, offsets, stream);
 
+  // Synchronize the stream to ensure CUDA operations complete before enqueuing.
+  // UCXX/UCX is not stream-aware, so without syncing, data could be sent before
+  // the GPU kernels have finished writing to the buffers.
+  stream.synchronize();
+
   VELOX_CHECK_EQ(
       offsets.size() + 1, numPartitions_, "mismatch in numPartitions_");
   auto queueManager = sharedQueueManager();
