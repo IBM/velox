@@ -574,12 +574,14 @@ void CudfExchangeSource::waitForIntraNodeData() {
     return;
   }
 
-  auto [data, atEnd] = result.value();
-  onIntraNodeData(std::move(data), atEnd);
+  // Pass the stream along with the data so the consumer can synchronize if
+  // needed
+  onIntraNodeData(std::move(result->data), result->stream, result->atEnd);
 }
 
 void CudfExchangeSource::onIntraNodeData(
     std::shared_ptr<cudf::packed_columns> data,
+    rmm::cuda_stream_view producerStream,
     bool atEnd) {
   // Check if close() was called
   if (closed_.load(std::memory_order_acquire)) {
@@ -631,14 +633,12 @@ void CudfExchangeSource::onIntraNodeData(
   auto packedTable = std::make_unique<cudf::packed_table>(
       cudf::packed_table{tableView, std::move(packedCols)});
 
-  // Get a stream from the global stream pool for the PackedTableWithStream.
-  // For intra-node transfer, the data was allocated on the server side.
-  auto stream =
-      facebook::velox::cudf_velox::cudfGlobalStreamPool().get_stream();
-
-  // Bundle the packed_table with the stream
-  auto tableWithStream =
-      std::make_unique<PackedTableWithStream>(std::move(packedTable), stream);
+  // Use the producer's stream for proper stream ordering.
+  // Since the producer (CudfPartitionedOutput) synchronizes before publishing,
+  // the data is already ready, but we pass the stream for consistency.
+  // If future optimizations remove the sync, this ensures correctness.
+  auto tableWithStream = std::make_unique<PackedTableWithStream>(
+      std::move(packedTable), producerStream);
 
   enqueue(std::move(tableWithStream));
 

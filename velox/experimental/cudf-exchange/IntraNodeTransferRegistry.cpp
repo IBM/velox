@@ -32,6 +32,7 @@ IntraNodeTransferRegistry::getInstance() {
 std::future<void> IntraNodeTransferRegistry::publish(
     const IntraNodeTransferKey& key,
     std::shared_ptr<cudf::packed_columns> data,
+    rmm::cuda_stream_view stream,
     bool atEnd) {
   std::shared_ptr<IntraNodeTransferEntry> entry;
   std::future<void> future;
@@ -53,6 +54,7 @@ std::future<void> IntraNodeTransferRegistry::publish(
   {
     std::lock_guard<std::mutex> entryLock(entry->entryMutex);
     entry->data = std::move(data);
+    entry->stream = stream;
     entry->atEnd = atEnd;
     entry->ready = true;
     // Get the future while holding the lock to avoid race with consumer
@@ -69,8 +71,8 @@ std::future<void> IntraNodeTransferRegistry::publish(
   return future;
 }
 
-std::optional<std::pair<std::shared_ptr<cudf::packed_columns>, bool>>
-IntraNodeTransferRegistry::poll(const IntraNodeTransferKey& key) {
+std::optional<IntraNodeTransferResult> IntraNodeTransferRegistry::poll(
+    const IntraNodeTransferKey& key) {
   std::shared_ptr<IntraNodeTransferEntry> entry;
 
   {
@@ -87,8 +89,7 @@ IntraNodeTransferRegistry::poll(const IntraNodeTransferKey& key) {
   // FIX: Hold the entry lock for the entire retrieval operation to prevent
   // race conditions. Previously, the lock was released before accessing
   // entry->data, entry->atEnd, and entry->retrievedPromise.
-  std::shared_ptr<cudf::packed_columns> data;
-  bool atEnd;
+  IntraNodeTransferResult result;
   {
     std::lock_guard<std::mutex> entryLock(entry->entryMutex);
     if (!entry->ready) {
@@ -97,8 +98,9 @@ IntraNodeTransferRegistry::poll(const IntraNodeTransferKey& key) {
     }
 
     // Data is ready, retrieve it while holding the lock
-    data = std::move(entry->data);
-    atEnd = entry->atEnd;
+    result.data = std::move(entry->data);
+    result.stream = entry->stream;
+    result.atEnd = entry->atEnd;
 
     // Fulfill the promise to notify the server while still holding entry lock
     entry->retrievedPromise.set_value();
@@ -113,13 +115,12 @@ IntraNodeTransferRegistry::poll(const IntraNodeTransferKey& key) {
 
   VLOG(3) << "Retrieved intra-node transfer (poll): " << key.taskId
           << " dest=" << key.destination << " seq=" << key.sequenceNumber
-          << " atEnd=" << atEnd;
+          << " atEnd=" << result.atEnd;
 
-  return std::make_pair(std::move(data), atEnd);
+  return result;
 }
 
-std::pair<std::shared_ptr<cudf::packed_columns>, bool>
-IntraNodeTransferRegistry::waitFor(
+IntraNodeTransferResult IntraNodeTransferRegistry::waitFor(
     const IntraNodeTransferKey& key,
     std::chrono::milliseconds timeout) {
   std::shared_ptr<IntraNodeTransferEntry> entry;
@@ -141,8 +142,7 @@ IntraNodeTransferRegistry::waitFor(
   // FIX: Hold the entry lock for the entire wait and retrieval operation
   // to prevent race conditions. Previously, the lock was released before
   // accessing entry->data, entry->atEnd, and entry->retrievedPromise.
-  std::shared_ptr<cudf::packed_columns> data;
-  bool atEnd;
+  IntraNodeTransferResult result;
   {
     std::unique_lock<std::mutex> entryLock(entry->entryMutex);
     if (!entry->ready) {
@@ -152,13 +152,14 @@ IntraNodeTransferRegistry::waitFor(
         // Timeout - return empty result
         VLOG(0) << "Timeout waiting for intra-node transfer: " << key.taskId
                 << " dest=" << key.destination << " seq=" << key.sequenceNumber;
-        return {nullptr, false};
+        return {nullptr, rmm::cuda_stream_default, false};
       }
     }
 
     // Data is ready, retrieve it while holding the lock
-    data = std::move(entry->data);
-    atEnd = entry->atEnd;
+    result.data = std::move(entry->data);
+    result.stream = entry->stream;
+    result.atEnd = entry->atEnd;
 
     // Fulfill the promise to notify the server while still holding entry lock
     entry->retrievedPromise.set_value();
@@ -173,9 +174,9 @@ IntraNodeTransferRegistry::waitFor(
 
   VLOG(3) << "Retrieved intra-node transfer (wait): " << key.taskId
           << " dest=" << key.destination << " seq=" << key.sequenceNumber
-          << " atEnd=" << atEnd;
+          << " atEnd=" << result.atEnd;
 
-  return {std::move(data), atEnd};
+  return result;
 }
 
 std::shared_ptr<cudf::packed_columns> IntraNodeTransferRegistry::retrieve(

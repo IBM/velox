@@ -16,6 +16,7 @@
 #pragma once
 
 #include <cudf/contiguous_split.hpp>
+#include <rmm/cuda_stream_view.hpp>
 #include <condition_variable>
 #include <future>
 #include <map>
@@ -42,11 +43,21 @@ struct IntraNodeTransferKey {
   }
 };
 
+/// @brief Result from intra-node transfer containing data, stream, and end
+/// marker.
+struct IntraNodeTransferResult {
+  std::shared_ptr<cudf::packed_columns> data;
+  rmm::cuda_stream_view stream; // Stream on which data was produced
+  bool atEnd{false}; // True if this is the end-of-stream marker
+};
+
 /// @brief Entry in the intra-node transfer registry containing the data and
 /// synchronization primitives. The server publishes data and waits for
 /// retrieval; the source waits for data availability and retrieves it.
 struct IntraNodeTransferEntry {
   std::shared_ptr<cudf::packed_columns> data;
+  rmm::cuda_stream_view stream{
+      rmm::cuda_stream_default}; // Stream data was produced on
   bool atEnd{false}; // True if this is the end-of-stream marker
   std::promise<void> retrievedPromise; // Server waits on this after publishing
   std::condition_variable dataAvailable; // Source waits on this for data
@@ -77,19 +88,22 @@ class IntraNodeTransferRegistry {
   /// signaling. Server calls this to make data available to the source.
   /// @param key The unique key identifying this transfer (taskId, dest, seq)
   /// @param data The packed_columns data to share (nullptr for atEnd)
+  /// @param stream The CUDA stream on which the data was produced. Consumer
+  ///        must synchronize with this stream before using the data.
   /// @param atEnd True if this is the end-of-stream marker
   /// @return A future that completes when source has retrieved the data
-  std::future<void> publish(
+  [[nodiscard]] std::future<void> publish(
       const IntraNodeTransferKey& key,
       std::shared_ptr<cudf::packed_columns> data,
+      rmm::cuda_stream_view stream,
       bool atEnd);
 
   /// @brief Non-blocking poll for intra-node transfer data.
   /// Returns immediately whether data is available or not.
   /// @param key The unique key identifying this transfer
-  /// @return nullopt if not ready, or pair of (data, atEnd) if ready.
+  /// @return nullopt if not ready, or IntraNodeTransferResult if ready.
   ///         Data is nullptr when atEnd is true.
-  std::optional<std::pair<std::shared_ptr<cudf::packed_columns>, bool>> poll(
+  [[nodiscard]] std::optional<IntraNodeTransferResult> poll(
       const IntraNodeTransferKey& key);
 
   /// @brief Wait for and retrieve data from intra-node transfer registry.
@@ -97,8 +111,8 @@ class IntraNodeTransferRegistry {
   /// WARNING: This can block, use with caution on single-threaded contexts.
   /// @param key The unique key identifying this transfer
   /// @param timeout Maximum time to wait for data
-  /// @return Pair of (data, atEnd). Data is nullptr if atEnd or timeout.
-  std::pair<std::shared_ptr<cudf::packed_columns>, bool> waitFor(
+  /// @return IntraNodeTransferResult. Data is nullptr if atEnd or timeout.
+  [[nodiscard]] IntraNodeTransferResult waitFor(
       const IntraNodeTransferKey& key,
       std::chrono::milliseconds timeout);
 

@@ -15,6 +15,7 @@
  */
 #include "velox/experimental/cudf-exchange/CudfExchangeServer.h"
 #include <glog/logging.h>
+#include <rmm/cuda_stream_view.hpp>
 #include "cuda_runtime.h"
 #include "velox/experimental/cudf-exchange/Communicator.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeProtocol.h"
@@ -209,9 +210,11 @@ void CudfExchangeServer::sendData() {
 
       IntraNodeTransferKey key{
           partitionKey_.taskId, partitionKey_.destination, sequenceNumber_};
+      // Pass default stream since data is already synchronized (the producer
+      // calls stream.synchronize() before enqueuing).
       intraNodeRetrieveFuture_ =
           IntraNodeTransferRegistry::getInstance()->publish(
-              key, sharedData, /*atEnd=*/false);
+              key, sharedData, rmm::cuda_stream_default, /*atEnd=*/false);
       intraNodeAtEndPublished_ = false;
 
       // Transition to WaitingForIntraNodeRetrieve state
@@ -228,7 +231,7 @@ void CudfExchangeServer::sendData() {
           partitionKey_.taskId, partitionKey_.destination, sequenceNumber_};
       intraNodeRetrieveFuture_ =
           IntraNodeTransferRegistry::getInstance()->publish(
-              key, nullptr, /*atEnd=*/true);
+              key, nullptr, rmm::cuda_stream_default, /*atEnd=*/true);
       intraNodeAtEndPublished_ = true;
 
       queueMgr_->deleteResults(partitionKey_.taskId, partitionKey_.destination);
