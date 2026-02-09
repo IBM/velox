@@ -72,7 +72,9 @@ std::shared_ptr<Communicator> Communicator::getInstance() {
 
 Communicator::~Communicator() {
   listener_.reset();
-  auto req = worker_->flush();
+  // Note: worker_->flush() was removed - it only applies to RMA (Remote Memory
+  // Access) operations like ucp_put/ucp_get, which this code doesn't use.
+  // This code only uses tag send/recv and active messages.
   worker_->progressWorkerEvent(100);
   worker_.reset();
   context_.reset();
