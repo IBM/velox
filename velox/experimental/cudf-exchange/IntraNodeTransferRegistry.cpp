@@ -34,6 +34,7 @@ std::future<void> IntraNodeTransferRegistry::publish(
     std::shared_ptr<cudf::packed_columns> data,
     bool atEnd) {
   std::shared_ptr<IntraNodeTransferEntry> entry;
+  std::future<void> future;
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -54,6 +55,8 @@ std::future<void> IntraNodeTransferRegistry::publish(
     entry->data = std::move(data);
     entry->atEnd = atEnd;
     entry->ready = true;
+    // Get the future while holding the lock to avoid race with consumer
+    future = entry->retrievedPromise.get_future();
   }
 
   // Notify waiting source
@@ -63,7 +66,7 @@ std::future<void> IntraNodeTransferRegistry::publish(
           << " dest=" << key.destination << " seq=" << key.sequenceNumber
           << " atEnd=" << atEnd;
 
-  return entry->retrievedPromise.get_future();
+  return future;
 }
 
 std::optional<std::pair<std::shared_ptr<cudf::packed_columns>, bool>>
@@ -81,23 +84,28 @@ IntraNodeTransferRegistry::poll(const IntraNodeTransferKey& key) {
     entry = it->second;
   }
 
-  // Check if data is ready (non-blocking)
+  // FIX: Hold the entry lock for the entire retrieval operation to prevent
+  // race conditions. Previously, the lock was released before accessing
+  // entry->data, entry->atEnd, and entry->retrievedPromise.
+  std::shared_ptr<cudf::packed_columns> data;
+  bool atEnd;
   {
     std::lock_guard<std::mutex> entryLock(entry->entryMutex);
     if (!entry->ready) {
       // Entry exists but data not ready yet
       return std::nullopt;
     }
+
+    // Data is ready, retrieve it while holding the lock
+    data = std::move(entry->data);
+    atEnd = entry->atEnd;
+
+    // Fulfill the promise to notify the server while still holding entry lock
+    entry->retrievedPromise.set_value();
   }
 
-  // Data is ready, retrieve it
-  auto data = std::move(entry->data);
-  bool atEnd = entry->atEnd;
-
-  // Fulfill the promise to notify the server
-  entry->retrievedPromise.set_value();
-
-  // Remove entry from registry
+  // Remove entry from registry (after releasing entry lock but before
+  // returning)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     registry_.erase(key);
@@ -130,7 +138,11 @@ IntraNodeTransferRegistry::waitFor(
     }
   }
 
-  // Wait for data to be ready
+  // FIX: Hold the entry lock for the entire wait and retrieval operation
+  // to prevent race conditions. Previously, the lock was released before
+  // accessing entry->data, entry->atEnd, and entry->retrievedPromise.
+  std::shared_ptr<cudf::packed_columns> data;
+  bool atEnd;
   {
     std::unique_lock<std::mutex> entryLock(entry->entryMutex);
     if (!entry->ready) {
@@ -143,16 +155,17 @@ IntraNodeTransferRegistry::waitFor(
         return {nullptr, false};
       }
     }
+
+    // Data is ready, retrieve it while holding the lock
+    data = std::move(entry->data);
+    atEnd = entry->atEnd;
+
+    // Fulfill the promise to notify the server while still holding entry lock
+    entry->retrievedPromise.set_value();
   }
 
-  // Data is ready, retrieve it
-  auto data = std::move(entry->data);
-  bool atEnd = entry->atEnd;
-
-  // Fulfill the promise to notify the server
-  entry->retrievedPromise.set_value();
-
-  // Remove entry from registry
+  // Remove entry from registry (after releasing entry lock but before
+  // returning)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     registry_.erase(key);
