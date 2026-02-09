@@ -313,8 +313,9 @@ void CudfExchangeSource::onHandshake(
 }
 
 void CudfExchangeSource::getMetadata() {
-  uint32_t sizeMetadata = 4096; // shouldn't be a fixed size.
-  auto metadataReq = std::make_shared<std::vector<uint8_t>>(sizeMetadata);
+  // Use kMaxMetaBufSize to support tables with many columns.
+  // The sender allocates exact size needed; receiver pre-allocates max.
+  auto metadataReq = std::make_shared<std::vector<uint8_t>>(kMaxMetaBufSize);
   uint64_t metadataTag = getMetadataTag(partitionKeyHash_, sequenceNumber_);
 
   VLOG(3) << toString()
@@ -325,7 +326,7 @@ void CudfExchangeSource::getMetadata() {
   std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
   request_ = endpointRef_->endpoint_->tagRecv(
       reinterpret_cast<void*>(metadataReq->data()),
-      sizeMetadata,
+      kMaxMetaBufSize,
       ucxx::Tag{metadataTag},
       ucxx::TagMaskFull,
       false,

@@ -96,7 +96,14 @@ struct HandshakeResponse {
 };
 
 constexpr uint32_t kMagicNumber = 0x12345678;
-constexpr uint32_t kMetaBufSize = 4096;
+/// Maximum metadata buffer size for receiving. This should be large enough
+/// to handle tables with many columns. 1MB allows for ~10,000+ columns.
+/// The sender allocates exact size needed; receiver pre-allocates this max.
+constexpr uint32_t kMaxMetaBufSize = 1024 * 1024; // 1MB
+
+/// Minimum header size needed to read the totalSize field.
+/// Format: [magic (4 bytes)][totalSize (4 bytes)]
+constexpr uint32_t kMetaHeaderSize = sizeof(kMagicNumber) + sizeof(uint32_t);
 
 struct MetadataMsg {
   std::unique_ptr<std::vector<uint8_t>> cudfMetadata;
@@ -104,7 +111,7 @@ struct MetadataMsg {
   std::vector<int64_t> remainingBytes;
   bool atEnd;
 
-  uint32_t getSerializedSize() {
+  uint32_t getSerializedSize() const {
     // The header: the magic number and the metadata length (an uint32_t).
     uint32_t totalSize = 2 * sizeof(uint32_t);
     // cudfMetadata: lenght info and then the data.
@@ -127,19 +134,20 @@ struct MetadataMsg {
   std::pair<std::shared_ptr<uint8_t>, size_t> serialize() {
     uint32_t totalSize = getSerializedSize();
 
+    // Validate that the serialized size fits in the maximum allowed buffer.
+    // The receiver allocates kMaxMetaBufSize; sender must not exceed this.
     VELOX_CHECK_LE(
         totalSize,
-        kMetaBufSize,
-        "Metadata serialized size ({}) exceeds buffer size ({})",
+        kMaxMetaBufSize,
+        "Metadata serialized size ({}) exceeds maximum buffer size ({}). "
+        "This can happen with extremely wide tables. "
+        "Consider reducing table width or increasing kMaxMetaBufSize.",
         totalSize,
-        kMetaBufSize);
+        kMaxMetaBufSize);
 
-    // Allocate a contiguous block of memory
-    // Use shared_ptr with a custom deleter for arrays.
+    // Allocate exact size needed - no wasted memory for small metadata.
     auto deleter = [](uint8_t* p) { delete[] p; };
-    // allocate a fixed size buffer, make it easier for the receiving side.
-    // TODO: Extend the exchange protocol and send the actual size.
-    std::shared_ptr<uint8_t> buffer(new uint8_t[kMetaBufSize], deleter);
+    std::shared_ptr<uint8_t> buffer(new uint8_t[totalSize], deleter);
 
     uint8_t* ptr = buffer.get();
 
