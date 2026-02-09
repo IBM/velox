@@ -390,10 +390,33 @@ void CudfOutputQueue::deleteResults(int destination) {
 }
 
 void CudfOutputQueue::terminate() {
-  if (task_) {
-    VELOX_CHECK(!task_->isRunning());
-    // TODO: When support for queue-full is added, this must
-    // release the outstanding promises.
+  std::vector<CudfDataAvailable> pendingCallbacks;
+  std::vector<ContinuePromise> promises;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+    if (task_) {
+      VELOX_CHECK(!task_->isRunning());
+    }
+    // Fire all pending getData callbacks with nullptr to signal end-of-stream.
+    // This handles the case where a producer task fails or is cancelled before
+    // noMoreData() is called, preventing consumers from being orphaned.
+    for (auto& queue : queues_) {
+      if (queue != nullptr) {
+        queue->enqueueBack(nullptr);
+        pendingCallbacks.push_back(queue->getAndClearNotify());
+      }
+    }
+    // Release any outstanding producer-side promises (blocked on queue-full).
+    promises = std::move(promises_);
+  }
+
+  // Fire callbacks outside of mutex to avoid potential deadlocks.
+  for (auto& callback : pendingCallbacks) {
+    callback.notify();
+  }
+  // Unblock any blocked producers.
+  for (auto& promise : promises) {
+    promise.setValue();
   }
 }
 

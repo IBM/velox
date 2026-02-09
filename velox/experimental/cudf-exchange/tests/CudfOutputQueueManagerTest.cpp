@@ -441,3 +441,85 @@ TEST_F(CudfOutputQueueManagerTest, multiFetchers) {
     queueManager_->removeTask(taskId);
   }
 }
+
+// Test BUG B scenario (a): Producer never starts / never calls
+// initializeTask(). getData() creates a stub queue, then removeTask() is
+// called without initializeTask() ever being called. The pending callback
+// must fire with nullptr to unblock the consumer.
+TEST_F(CudfOutputQueueManagerTest, callbackFiredOnTerminateBeforeInit) {
+  const std::string taskId = "orphanTest";
+  queueManager_->removeTask(taskId); // ensure clean state
+
+  bool callbackFired = false;
+  bool receivedNullptr = false;
+  queueManager_->getData(
+      taskId,
+      0, // destination
+      [&callbackFired, &receivedNullptr](
+          std::unique_ptr<cudf::packed_columns> data,
+          std::vector<int64_t> remainingBytes) {
+        callbackFired = true;
+        receivedNullptr = (data == nullptr);
+      });
+
+  // Callback should NOT have fired yet (queue is empty, no data).
+  EXPECT_FALSE(callbackFired);
+
+  // Now simulate the producer failing: removeTask fires terminate().
+  // The stub queue has task_ == nullptr so the isRunning() check is skipped.
+  queueManager_->removeTask(taskId);
+
+  // Callback must have been fired with nullptr.
+  EXPECT_TRUE(callbackFired);
+  EXPECT_TRUE(receivedNullptr);
+}
+
+// Test BUG B scenario (b): Producer starts but crashes before noMoreData().
+// initializeTask() was called but noMoreData() was never called.
+// removeTask() must fire pending callbacks with nullptr.
+TEST_F(CudfOutputQueueManagerTest, callbackFiredOnTerminateAfterInit) {
+  const std::string taskId = "crashTest";
+  queueManager_->removeTask(taskId); // ensure clean state
+
+  auto task =
+      initializeTask(taskId, 2 /* numDestinations */, 1 /* numDrivers */);
+
+  // Register callbacks on both destinations.
+  bool callback0Fired = false;
+  bool callback0Nullptr = false;
+  bool callback1Fired = false;
+  bool callback1Nullptr = false;
+  queueManager_->getData(
+      taskId,
+      0,
+      [&callback0Fired, &callback0Nullptr](
+          std::unique_ptr<cudf::packed_columns> data,
+          std::vector<int64_t> remainingBytes) {
+        callback0Fired = true;
+        callback0Nullptr = (data == nullptr);
+      });
+  queueManager_->getData(
+      taskId,
+      1,
+      [&callback1Fired, &callback1Nullptr](
+          std::unique_ptr<cudf::packed_columns> data,
+          std::vector<int64_t> remainingBytes) {
+        callback1Fired = true;
+        callback1Nullptr = (data == nullptr);
+      });
+
+  // Neither callback should fire yet.
+  EXPECT_FALSE(callback0Fired);
+  EXPECT_FALSE(callback1Fired);
+
+  // Simulate task failure: abort the task so isRunning() returns false,
+  // which is required by terminate()'s VELOX_CHECK.
+  task->requestAbort().wait();
+
+  queueManager_->removeTask(taskId);
+
+  EXPECT_TRUE(callback0Fired);
+  EXPECT_TRUE(callback0Nullptr);
+  EXPECT_TRUE(callback1Fired);
+  EXPECT_TRUE(callback1Nullptr);
+}
