@@ -86,7 +86,7 @@ void Acceptor::cStyleAMCallback(
   // Fire-and-forget: we don't need to track this request completion
   epRef->endpoint_->tagSend(
       response.get(),
-      sizeof(HandshakeResponse),
+      sizeof(*response),
       ucxx::Tag{responseTag},
       false,
       [response, keyStr = key.toString()](

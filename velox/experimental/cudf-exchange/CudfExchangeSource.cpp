@@ -274,7 +274,7 @@ void CudfExchangeSource::sendHandshake() {
   std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
   request_ = endpointRef_->endpoint_->amSend(
       handshakeReq.get(),
-      sizeof(HandshakeMsg),
+      sizeof(*handshakeReq),
       UCS_MEMORY_TYPE_HOST,
       info,
       false,
@@ -506,7 +506,7 @@ void CudfExchangeSource::receiveHandshakeResponse() {
   std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
   request_ = endpointRef_->endpoint_->tagRecv(
       responseBuffer.get(),
-      sizeof(HandshakeResponse),
+      sizeof(*responseBuffer),
       ucxx::Tag{responseTag},
       ucxx::TagMaskFull,
       false,
@@ -566,9 +566,6 @@ void CudfExchangeSource::waitForIntraNodeData() {
 
   IntraNodeTransferKey key{
       partitionKey_.taskId, partitionKey_.destination, sequenceNumber_};
-
-  VLOG(3) << toString()
-          << " polling for intra-node transfer data, seq=" << sequenceNumber_;
 
   auto result = IntraNodeTransferRegistry::getInstance()->poll(key);
 

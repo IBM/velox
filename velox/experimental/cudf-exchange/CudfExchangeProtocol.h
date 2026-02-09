@@ -112,20 +112,19 @@ struct MetadataMsg {
   bool atEnd;
 
   uint32_t getSerializedSize() const {
-    // The header: the magic number and the metadata length (an uint32_t).
-    uint32_t totalSize = 2 * sizeof(uint32_t);
-    // cudfMetadata: lenght info and then the data.
-    totalSize += sizeof(size_t);
-    if (cudfMetadata && cudfMetadata->size() > 0) {
-      totalSize += cudfMetadata->size();
-    }
-    totalSize += sizeof(size_t); // dataSizeBytes
-
+    // The header: the magic number and the metadata length.
+    uint32_t totalSize = sizeof(kMagicNumber) + sizeof(totalSize);
+    // cudfMetadata: length info and then the data.
+    size_t cudfSize = cudfMetadata ? cudfMetadata->size() : 0;
+    totalSize += sizeof(cudfSize);
+    totalSize += cudfSize;
+    // dataSizeBytes
+    totalSize += sizeof(dataSizeBytes);
     // remainingBytes: length and then the data.
-    totalSize += sizeof(size_t);
-    totalSize += remainingBytes.size() * sizeof(uint64_t);
-
-    totalSize += sizeof(uint8_t); // atEnd, encoded in a byte.
+    totalSize += sizeof(size_t); // for numRemaining count
+    totalSize += remainingBytes.size() * sizeof(remainingBytes[0]);
+    // atEnd, encoded in a byte.
+    totalSize += sizeof(uint8_t);
 
     return totalSize;
   }
@@ -151,19 +150,18 @@ struct MetadataMsg {
 
     uint8_t* ptr = buffer.get();
 
-    // write the magic number
-    std::memcpy(ptr, &kMagicNumber, sizeof(uint32_t));
-    ptr += sizeof(uint32_t);
-    // write the size of the metadata
-    std::memcpy(ptr, &totalSize, sizeof(uint32_t));
-    ptr += sizeof(uint32_t);
+    // Write the magic number.
+    std::memcpy(ptr, &kMagicNumber, sizeof(kMagicNumber));
+    ptr += sizeof(kMagicNumber);
+
+    // Write the size of the metadata.
+    std::memcpy(ptr, &totalSize, sizeof(totalSize));
+    ptr += sizeof(totalSize);
 
     // Serialize cudfMetadata size.
-
     size_t cudfSize = cudfMetadata ? cudfMetadata->size() : 0;
-
-    std::memcpy(ptr, &cudfSize, sizeof(size_t));
-    ptr += sizeof(size_t);
+    std::memcpy(ptr, &cudfSize, sizeof(cudfSize));
+    ptr += sizeof(cudfSize);
 
     // If data exists, serialize each byte.
     if (cudfSize > 0) {
@@ -172,22 +170,24 @@ struct MetadataMsg {
     }
 
     // Serialize dataSizeBytes.
-    std::memcpy(ptr, &dataSizeBytes, sizeof(size_t));
-    ptr += sizeof(size_t);
+    std::memcpy(ptr, &dataSizeBytes, sizeof(dataSizeBytes));
+    ptr += sizeof(dataSizeBytes);
 
     // Serialize number of remainingBytes elements.
     size_t numRemaining = remainingBytes.size();
-    std::memcpy(ptr, &numRemaining, sizeof(size_t));
-    ptr += sizeof(size_t);
+    std::memcpy(ptr, &numRemaining, sizeof(numRemaining));
+    ptr += sizeof(numRemaining);
 
     // Serialize remainingBytes elements.
     if (numRemaining > 0) {
-      std::memcpy(ptr, remainingBytes.data(), numRemaining * sizeof(uint64_t));
-      ptr += numRemaining * sizeof(uint64_t);
+      size_t bytesSize = numRemaining * sizeof(remainingBytes[0]);
+      std::memcpy(ptr, remainingBytes.data(), bytesSize);
+      ptr += bytesSize;
     }
 
     // Serialize atEnd bool as 0/1.
-    *ptr = atEnd ? 1 : 0;
+    uint8_t atEndByte = atEnd ? 1 : 0;
+    *ptr = atEndByte;
 
     return std::make_pair<std::shared_ptr<uint8_t>, size_t>(
         std::move(buffer), totalSize);
@@ -201,58 +201,58 @@ struct MetadataMsg {
 
     MetadataMsg record;
 
+    // Extract magic number.
     uint32_t magicNumber = 0;
-    // extract magic number.
-    std::memcpy(&magicNumber, ptr, sizeof(uint32_t));
+    std::memcpy(&magicNumber, ptr, sizeof(magicNumber));
     VELOX_CHECK_EQ(magicNumber, kMagicNumber);
+    ptr += sizeof(magicNumber);
 
-    ptr += sizeof(uint32_t);
-    // extract the total size.
+    // Extract the total size.
     uint32_t totalSize = 0;
-    std::memcpy(&totalSize, ptr, sizeof(uint32_t));
-    ptr += sizeof(uint32_t);
+    std::memcpy(&totalSize, ptr, sizeof(totalSize));
+    ptr += sizeof(totalSize);
 
     const uint8_t* endPtr = buffer + totalSize;
 
     // Deserialize cudfMetadata:
-    // First read the size of the metadata (stored as size_t)
-    if (ptr + sizeof(size_t) > endPtr)
+    // First read the size of the metadata.
+    size_t metaSize = 0;
+    if (ptr + sizeof(metaSize) > endPtr)
       throw std::runtime_error("Insufficient data for cudfMetadata size");
-    uint64_t metaSize = 0;
-    std::memcpy(&metaSize, ptr, sizeof(size_t));
-    ptr += sizeof(size_t);
+    std::memcpy(&metaSize, ptr, sizeof(metaSize));
+    ptr += sizeof(metaSize);
 
     // Allocate a vector of the correct size.
     record.cudfMetadata = std::make_unique<std::vector<uint8_t>>(metaSize);
     if (metaSize > 0) {
-      if (ptr + metaSize * sizeof(uint8_t) > endPtr)
+      if (ptr + metaSize > endPtr)
         throw std::runtime_error("Insufficient data for cudfMetadata bytes");
       std::memcpy(record.cudfMetadata->data(), ptr, metaSize);
       ptr += metaSize;
     }
 
-    // Deserialize dataSizeBytes, stored as a size_t.
-    if (ptr + sizeof(size_t) > endPtr)
+    // Deserialize dataSizeBytes.
+    if (ptr + sizeof(record.dataSizeBytes) > endPtr)
       throw std::runtime_error("Insufficient data for dataSizeBytes");
-    std::memcpy(&record.dataSizeBytes, ptr, sizeof(size_t));
-    ptr += sizeof(size_t);
+    std::memcpy(&record.dataSizeBytes, ptr, sizeof(record.dataSizeBytes));
+    ptr += sizeof(record.dataSizeBytes);
 
     // Deserialize remainingBytes vector:
-    // Start with the count of elements (stored as size_t).
-    if (ptr + sizeof(size_t) > endPtr)
-      throw std::runtime_error("Insufficient data for remainingBytes count");
+    // Start with the count of elements.
     size_t numRemaining = 0;
-    std::memcpy(&numRemaining, ptr, sizeof(size_t));
-    ptr += sizeof(size_t);
+    if (ptr + sizeof(numRemaining) > endPtr)
+      throw std::runtime_error("Insufficient data for remainingBytes count");
+    std::memcpy(&numRemaining, ptr, sizeof(numRemaining));
+    ptr += sizeof(numRemaining);
 
-    // Reserve space in the vector and read each element of type uint64_t.
-    if (ptr + numRemaining * sizeof(uint64_t) > endPtr)
-      throw std::runtime_error("Insufficient data for remainingBytes values");
+    // Reserve space in the vector and read each element.
     record.remainingBytes.resize(numRemaining);
     if (numRemaining > 0) {
-      std::memcpy(
-          record.remainingBytes.data(), ptr, numRemaining * sizeof(uint64_t));
-      ptr += numRemaining * sizeof(uint64_t);
+      size_t bytesSize = numRemaining * sizeof(record.remainingBytes[0]);
+      if (ptr + bytesSize > endPtr)
+        throw std::runtime_error("Insufficient data for remainingBytes values");
+      std::memcpy(record.remainingBytes.data(), ptr, bytesSize);
+      ptr += bytesSize;
     }
 
     // Deserialize bool `atEnd` (stored as a single byte: 1 for true, 0 for
