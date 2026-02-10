@@ -160,6 +160,18 @@ CudfExchangeClient::next(int consumerId, bool* atEnd, ContinueFuture* future) {
                 << " queueBytes=" << queue_->totalBytes();
       }
     }
+
+    // Wake up backpressured sources when queue drains sufficiently.
+    // Sources go dormant (not in work queue) when the queue exceeds the
+    // high water mark. We resume them here on the consumer thread.
+    // The CAS inside resumeFromBackpressure() ensures each source is
+    // woken exactly once per dormant period.
+    if (data != nullptr &&
+        queue_->size() <= CudfExchangeSource::kBackpressureLowWaterMark) {
+      for (auto& source : sources_) {
+        source->resumeFromBackpressure();
+      }
+    }
   }
 
   // Outside of lock

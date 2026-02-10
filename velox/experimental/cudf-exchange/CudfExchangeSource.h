@@ -91,6 +91,15 @@ class CudfExchangeSource
   /// (preventing spurious numCompleted_ increments for unregistered sources).
   void setRegistered() { registered_ = true; }
 
+  /// @brief Called by CudfExchangeClient::next() on the consumer (driver)
+  /// thread to wake up this source after it went dormant due to backpressure.
+  /// Uses CAS to ensure exactly one wake-up per dormant period.
+  void resumeFromBackpressure();
+
+  // Backpressure thresholds. Public so CudfExchangeClient can use them.
+  static constexpr int32_t kBackpressureHighWaterMark = 32;
+  static constexpr int32_t kBackpressureLowWaterMark = 16;
+
   // Returns runtime statistics. ExchangeSource is expected to report
   // background CPU time by including a runtime metric named
   // ExchangeClient::kBackgroundCpuTimeMs.
@@ -286,12 +295,10 @@ class CudfExchangeSource
   /// When true, intra-node transfer optimizations bypass UCXX transfers.
   bool isIntraNodeTransfer_{false};
 
-  // Backpressure: stop posting receives when consumer queue is overloaded.
-  // Uses hysteresis (high/low water marks) to avoid rapid oscillation.
-  static constexpr int32_t kBackpressureHighWaterMark = 32;
-  static constexpr int32_t kBackpressureLowWaterMark = 16;
-  bool backpressureActive_{false};
-  uint32_t backpressurePollCount_{0};
+  // Backpressure: when queue exceeds kBackpressureHighWaterMark, the source
+  // goes dormant. The consumer thread wakes it via resumeFromBackpressure()
+  // when the queue drains to kBackpressureLowWaterMark.
+  std::atomic<bool> backpressureActive_{false};
 
   // Some metrics/counters:
   CudfExchangeMetrics metrics_;

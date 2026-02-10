@@ -111,37 +111,22 @@ void CudfExchangeSource::process() {
       break;
     case ReceiverState::ReadyToReceive: {
       // Backpressure: don't post the next receive if the consumer queue is
-      // overloaded. This creates natural backpressure — the server's tagSend
-      // for data will block at rendezvous until we post a matching tagRecv.
-      // For intra-node: the server's publish future won't resolve until we
-      // poll the registry.
+      // overloaded. The source goes dormant (not in work queue) and will be
+      // woken by CudfExchangeClient::next() calling resumeFromBackpressure()
+      // when the queue drains below the low water mark.
+      //
+      // This creates natural backpressure: the server's tagSend for data
+      // will block at rendezvous until we post a matching tagRecv. For
+      // intra-node: the server's publish future won't resolve until we poll.
       int32_t queueSize = queue_->size();
-      if (backpressureActive_) {
-        if (queueSize <= kBackpressureLowWaterMark) {
-          backpressureActive_ = false;
+      if (queueSize > kBackpressureHighWaterMark) {
+        if (!backpressureActive_.exchange(true, std::memory_order_acq_rel)) {
           VLOG(1) << "[BACKPRESSURE] [ExSrc " << toString()
-                  << "] resuming, queueSize=" << queueSize
-                  << " <= lowWater=" << kBackpressureLowWaterMark
-                  << " polls=" << backpressurePollCount_;
-          backpressurePollCount_ = 0;
-          // Fall through to normal receive path below.
-        } else {
-          ++backpressurePollCount_;
-          if (backpressurePollCount_ % 1000 == 0) {
-            VLOG(1) << "[BACKPRESSURE] [ExSrc " << toString()
-                    << "] still paused, queueSize=" << queueSize
-                    << " polls=" << backpressurePollCount_;
-          }
-          communicator_->addToWorkQueue(getSelfPtr());
-          break;
+                  << "] pausing, queueSize=" << queueSize
+                  << " > highWater=" << kBackpressureHighWaterMark;
         }
-      } else if (queueSize > kBackpressureHighWaterMark) {
-        backpressureActive_ = true;
-        backpressurePollCount_ = 0;
-        VLOG(1) << "[BACKPRESSURE] [ExSrc " << toString()
-                << "] pausing, queueSize=" << queueSize
-                << " > highWater=" << kBackpressureHighWaterMark;
-        communicator_->addToWorkQueue(getSelfPtr());
+        // Go dormant — do NOT re-enqueue into work queue.
+        // CudfExchangeClient::next() will call resumeFromBackpressure().
         break;
       }
 
@@ -227,6 +212,16 @@ void CudfExchangeSource::close() {
   // Let the Communicator progress thread do the actual clean-up.
   setState(ReceiverState::Done);
   communicator_->addToWorkQueue(getSelfPtr());
+}
+
+void CudfExchangeSource::resumeFromBackpressure() {
+  bool expected = true;
+  if (backpressureActive_.compare_exchange_strong(
+          expected, false, std::memory_order_acq_rel)) {
+    VLOG(1) << "[BACKPRESSURE] [ExSrc " << toString()
+            << "] resumed by consumer, queueSize=" << queue_->size();
+    communicator_->addToWorkQueue(getSelfPtr());
+  }
 }
 
 folly::F14FastMap<std::string, int64_t> CudfExchangeSource::stats() const {
