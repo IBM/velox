@@ -130,6 +130,19 @@ void Communicator::run() {
   const bool blockingMode = CudfConfig::getInstance().ucxxBlockingPolling;
   while (running_) {
     try {
+      // Periodic heartbeat for diagnostic logging.
+      auto now = std::chrono::steady_clock::now();
+      if (now - lastHeartbeat_ >= std::chrono::seconds(5)) {
+        std::lock_guard<std::mutex> lock(elemMutex_);
+        VLOG(2) << "[COMM-HEARTBEAT] workQueue=" << workQueue_.size()
+                << " elements=" << elements_.size()
+                << " endpoints=" << endpoints_.size()
+                << " deferredCleanup=" << deferredEndpointCleanup_.size()
+                << " workItemsProcessed=" << workItemsProcessed_;
+        workItemsProcessed_ = 0;
+        lastHeartbeat_ = now;
+      }
+
       // Process deferred endpoint cleanups from callbacks.
       // UCX callbacks cannot call closeBlocking() (which progresses the
       // worker) or iterate communicators_, so they defer cleanup to
@@ -147,6 +160,7 @@ void Communicator::run() {
       // after each call to a comms element, otherwise we will deadlock.
       while (auto comms = workQueue_.pop()) {
         comms->process();
+        ++workItemsProcessed_;
         // Progress after each work item to allow UCXX to advance
         // its internal state (complete sends/receives, fire callbacks).
         // Use non-blocking progress here to avoid blocking between

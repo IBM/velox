@@ -206,15 +206,30 @@ class CudfExchangeSource
       bool atEnd);
 
   /// @brief Sets the new state of this exchange source using
-  /// sequential consistency.
+  /// sequential consistency. Logs transitions at VLOG(2).
   /// @param newState the new state of the CudfExchangeSource.
-  void setState(ReceiverState newState) {
-    state_.store(newState, std::memory_order_seq_cst);
-  }
+  void setState(ReceiverState newState);
 
   /// @brief Returns the state.
   ReceiverState getState() {
     return state_.load(std::memory_order_seq_cst);
+  }
+
+  static std::string getStateAsString(ReceiverState s) {
+    const std::string stateMap[] = {
+        "Created",
+        "WaitingForHandshakeComplete",
+        "WaitingForHandshakeResponse",
+        "ReadyToReceive",
+        "WaitingForMetadata",
+        "WaitingForData",
+        "WaitingForIntraNodeData",
+        "Done"};
+    return stateMap[static_cast<uint32_t>(s)];
+  }
+
+  std::string getStateAsString() {
+    return getStateAsString(state_.load());
   }
 
   /// @brief Remove the state associated with the source called by the
@@ -247,6 +262,7 @@ class CudfExchangeSource
   std::atomic<ReceiverState> state_;
 
   uint32_t sequenceNumber_{0};
+  uint32_t intraNodePollCount_{0};
 
   // The shared queue of packed tables that all CudfExchangeSources write to
   const std::shared_ptr<CudfExchangeQueue> queue_{nullptr};

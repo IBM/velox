@@ -36,18 +36,22 @@ std::future<void> IntraNodeTransferRegistry::publish(
     bool atEnd) {
   std::shared_ptr<IntraNodeTransferEntry> entry;
   std::future<void> future;
+  bool entryExisted;
+  size_t registrySize;
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
 
     // Check if entry already exists (source may have started waiting)
     auto it = registry_.find(key);
-    if (it != registry_.end()) {
+    entryExisted = (it != registry_.end());
+    if (entryExisted) {
       entry = it->second;
     } else {
       entry = std::make_shared<IntraNodeTransferEntry>();
       registry_[key] = entry;
     }
+    registrySize = registry_.size();
   }
 
   // Update the entry with data (under entry's own mutex)
@@ -64,9 +68,10 @@ std::future<void> IntraNodeTransferRegistry::publish(
   // Notify waiting source
   entry->dataAvailable.notify_one();
 
-  VLOG(3) << "Published intra-node transfer: " << key.taskId
+  VLOG(2) << "[INTRA-REG] publish: task=" << key.taskId
           << " dest=" << key.destination << " seq=" << key.sequenceNumber
-          << " atEnd=" << atEnd;
+          << " atEnd=" << atEnd << " entryExisted=" << entryExisted
+          << " registrySize=" << registrySize;
 
   return future;
 }
@@ -81,6 +86,9 @@ std::optional<IntraNodeTransferResult> IntraNodeTransferRegistry::poll(
     auto it = registry_.find(key);
     if (it == registry_.end()) {
       // No entry yet - server hasn't published
+      VLOG(3) << "[INTRA-REG] poll miss (no entry): task=" << key.taskId
+              << " dest=" << key.destination << " seq=" << key.sequenceNumber
+              << " registrySize=" << registry_.size();
       return std::nullopt;
     }
     entry = it->second;
@@ -94,6 +102,8 @@ std::optional<IntraNodeTransferResult> IntraNodeTransferRegistry::poll(
     std::lock_guard<std::mutex> entryLock(entry->entryMutex);
     if (!entry->ready) {
       // Entry exists but data not ready yet
+      VLOG(3) << "[INTRA-REG] poll miss (not ready): task=" << key.taskId
+              << " dest=" << key.destination << " seq=" << key.sequenceNumber;
       return std::nullopt;
     }
 
@@ -113,7 +123,7 @@ std::optional<IntraNodeTransferResult> IntraNodeTransferRegistry::poll(
     registry_.erase(key);
   }
 
-  VLOG(3) << "Retrieved intra-node transfer (poll): " << key.taskId
+  VLOG(2) << "[INTRA-REG] poll hit: task=" << key.taskId
           << " dest=" << key.destination << " seq=" << key.sequenceNumber
           << " atEnd=" << result.atEnd;
 

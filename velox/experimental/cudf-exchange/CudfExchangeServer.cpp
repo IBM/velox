@@ -23,6 +23,14 @@
 
 namespace facebook::velox::cudf_exchange {
 
+void CudfExchangeServer::setState(ServerState newState) {
+  auto oldState = state_.exchange(newState, std::memory_order_seq_cst);
+  VLOG(2) << (isIntraNodeTransfer_ ? "[INTRA]" : "[REMOTE]") << " [ExSrv "
+          << partitionKey_.toString() << " seq=" << sequenceNumber_ << "] "
+          << getStateAsString(oldState) << " -> "
+          << getStateAsString(newState);
+}
+
 // This constructor is private
 CudfExchangeServer::CudfExchangeServer(
     const std::shared_ptr<Communicator> communicator,
@@ -125,9 +133,17 @@ void CudfExchangeServer::process() {
             intraNodeRetrieveFuture_.wait_for(std::chrono::milliseconds(0));
         if (status == std::future_status::ready) {
           intraNodeRetrieveFuture_.get(); // Clear the future
+          intraNodePollCount_ = 0;
           onIntraNodeRetrieveComplete();
         } else {
           // Not ready yet, re-queue to check later
+          ++intraNodePollCount_;
+          if (intraNodePollCount_ % 100 == 0) {
+            VLOG(2) << "[INTRA] [ExSrv " << partitionKey_.toString()
+                    << " seq=" << sequenceNumber_
+                    << "] still waiting for source retrieval, polls="
+                    << intraNodePollCount_;
+          }
           communicator_->addToWorkQueue(getSelfPtr());
         }
       }
@@ -181,6 +197,13 @@ std::shared_ptr<CudfExchangeServer> CudfExchangeServer::getSelfPtr() {
 
 void CudfExchangeServer::sendData() {
   std::lock_guard<std::recursive_mutex> lock(dataMutex_);
+
+  VLOG(2) << (isIntraNodeTransfer_ ? "[INTRA]" : "[REMOTE]") << " [ExSrv "
+          << partitionKey_.toString() << " seq=" << sequenceNumber_
+          << "] sendData hasData=" << (dataPtr_ != nullptr)
+          << (dataPtr_
+                  ? " size=" + std::to_string(dataPtr_->gpu_data->size())
+                  : "");
 
   if (isIntraNodeTransfer_) {
     // INTRA-NODE TRANSFER PATH: Use registry for all communication, no UCXX

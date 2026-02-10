@@ -16,6 +16,7 @@
 #pragma once
 
 #include <ucxx/api.h>
+#include <chrono>
 #include <cstdint>
 #include <random>
 #include <string>
@@ -202,6 +203,11 @@ class Communicator {
   // UCX callbacks cannot call progress functions (like closeBlocking),
   // so they defer cleanup to the main loop via this queue.
   WorkQueue<EndpointRef> deferredEndpointCleanup_;
+
+  // Heartbeat state for diagnostic logging.
+  std::chrono::steady_clock::time_point lastHeartbeat_{
+      std::chrono::steady_clock::now()};
+  uint64_t workItemsProcessed_{0};
 };
 
 } // namespace facebook::velox::cudf_exchange

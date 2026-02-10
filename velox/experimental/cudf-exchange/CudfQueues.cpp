@@ -220,6 +220,10 @@ void CudfOutputQueue::enqueue(
 bool CudfOutputQueue::checkBlocked(ContinueFuture* future) {
   std::lock_guard<std::mutex> l(mutex_);
   if (queuedBytes_ >= maxSize_ && future) {
+    VLOG(2) << "[BACKPRESSURE] task=" << (task_ ? task_->taskId() : "n/a")
+            << " BLOCKED queuedBytes=" << queuedBytes_
+            << " maxSize=" << maxSize_
+            << " waitingProducers=" << (promises_.size() + 1);
     promises_.emplace_back("CudfOutputQueue::checkBlocked");
     *future = promises_.back().getSemiFuture();
     return true;
@@ -278,6 +282,10 @@ void CudfOutputQueue::getData(
   // outside lock: If we have data, then return it immediately.
   if (data.immediate) {
     notify(std::move(data.data), std::move(data.remainingBytes));
+  } else {
+    VLOG(2) << "[QUEUE] task=" << (task_ ? task_->taskId() : "n/a")
+            << " dest=" << destination
+            << " server waiting for data (callback installed)";
   }
   // wake up any producers that are waiting for queue to become less full.
   for (auto& promise : promises) {
@@ -469,7 +477,12 @@ void CudfOutputQueue::updateStatsWithFreedLocked(
 
   // Check whether queue is below low-water mark and return outstanding
   // promises
-  if (queuedBytes_ <= continueSize_) {
+  if (queuedBytes_ <= continueSize_ && !promises_.empty()) {
+    VLOG(2) << "[BACKPRESSURE] task="
+            << (task_ ? task_->taskId() : "n/a") << " UNBLOCKING "
+            << promises_.size() << " producers"
+            << " queuedBytes=" << queuedBytes_
+            << " continueSize=" << continueSize_;
     promises = std::move(promises_);
   }
 }

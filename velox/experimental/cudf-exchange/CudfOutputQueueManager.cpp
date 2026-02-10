@@ -93,6 +93,8 @@ void CudfOutputQueueManager::getData(
     if (it == queues.end()) {
       // create the queue structures such that the notify callback can be
       // stored. It will be later initialized once the task is being created.
+      VLOG(2) << "[QUEUE-MGR] task=" << taskId << " dest=" << destination
+              << " creating placeholder queue (server arrived before task init)";
       outputQueue = std::make_shared<CudfOutputQueue>(nullptr, destination, 0);
       queues[taskId] = outputQueue;
     } else {
@@ -117,6 +119,8 @@ void CudfOutputQueueManager::removeTask(const std::string& taskId) {
         queues.erase(taskId);
         return taskQueue;
       });
+  VLOG(2) << "[QUEUE-MGR] removeTask=" << taskId
+          << " queueExists=" << (queue != nullptr);
   if (queue != nullptr) {
     queue->terminate();
   }

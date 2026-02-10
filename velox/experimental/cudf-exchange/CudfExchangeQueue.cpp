@@ -41,6 +41,9 @@ void CudfExchangeQueue::enqueueLocked(
     std::vector<ContinuePromise>& promises) {
   if (data == nullptr) {
     ++numCompleted_;
+    VLOG(2) << "[EX-QUEUE] source completed (null enqueued)"
+            << " numCompleted=" << numCompleted_ << " numSources=" << numSources_
+            << " noMoreSources=" << noMoreSources_;
     auto completedPromises = checkCompleteLocked();
     promises.reserve(promises.size() + completedPromises.size());
     for (auto& promise : completedPromises) {
@@ -59,6 +62,7 @@ void CudfExchangeQueue::enqueueLocked(
   receivedBytes_ += dataSize;
 
   queue_.push_back(std::move(data));
+  size_t wokenConsumers = 0;
   while (!promises_.empty()) {
     VELOX_CHECK_LE(promises_.size(), numberOfConsumers_);
     const int32_t unblockedConsumers = numberOfConsumers_ - promises_.size();
@@ -70,6 +74,11 @@ void CudfExchangeQueue::enqueueLocked(
     auto it = promises_.begin();
     promises.push_back(std::move(it->second));
     promises_.erase(it);
+    ++wokenConsumers;
+  }
+  if (wokenConsumers > 0) {
+    VLOG(2) << "[EX-QUEUE] waking " << wokenConsumers << " consumers"
+            << " queueSize=" << queue_.size();
   }
 }
 
@@ -109,6 +118,11 @@ PackedTableWithStreamPtr CudfExchangeQueue::dequeueLocked(
     if (atEnd_) {
       *atEnd = true;
     } else {
+      VLOG(2) << "[EX-QUEUE] consumer=" << consumerId
+              << " blocked (empty queue, waiting for data)"
+              << " numSources=" << numSources_
+              << " numCompleted=" << numCompleted_
+              << " waitingConsumers=" << (promises_.size() + 1);
       addPromiseLocked(consumerId, future, stalePromise);
     }
     return data;

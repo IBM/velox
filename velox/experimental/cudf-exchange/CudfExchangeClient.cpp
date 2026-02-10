@@ -130,6 +130,10 @@ CudfExchangeClient::next(int consumerId, bool* atEnd, ContinueFuture* future) {
     // Maybe need to inspect the #bytes rather than the #tables?
     // Don't request more data when queue size exceeds the configured limit.
     if (data != nullptr && queue_->size() > maxQueuedColumns_) {
+      VLOG(2) << "[FLOW-CTRL] @" << taskId_ << " consumer=" << consumerId
+              << " returning data but NOT requesting more"
+              << " queueSize=" << queue_->size()
+              << " maxQueued=" << maxQueuedColumns_;
       return data;
     }
   }

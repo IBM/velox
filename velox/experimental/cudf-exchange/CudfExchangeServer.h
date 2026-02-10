@@ -94,18 +94,16 @@ class CudfExchangeServer
   void onIntraNodeRetrieveComplete();
 
   /// @brief Sets the new state of this exchange server using
-  /// sequential consistency.
+  /// sequential consistency. Logs transitions at VLOG(2).
   /// @param newState the new state of the CudfExchangeServer.
-  void setState(ServerState newState) {
-    state_.store(newState, std::memory_order_seq_cst);
-  }
+  void setState(ServerState newState);
 
   /// @brief Returns the state.
   ServerState getState() {
     return state_.load(std::memory_order_seq_cst);
   }
 
-  std::string getStateAsString() {
+  static std::string getStateAsString(ServerState s) {
     const std::string stateMap[] = {
         "Created",
         "ReadyToTransfer",
@@ -114,7 +112,11 @@ class CudfExchangeServer
         "WaitingForSendComplete",
         "WaitingForIntraNodeRetrieve",
         "Done"};
-    return stateMap[static_cast<uint32_t>(state_.load())];
+    return stateMap[static_cast<uint32_t>(s)];
+  }
+
+  std::string getStateAsString() {
+    return getStateAsString(state_.load());
   }
 
   const PartitionKey partitionKey_;
@@ -138,6 +140,7 @@ class CudfExchangeServer
   bool intraNodeAtEndPublished_{false};
 
   uint32_t sequenceNumber_{0};
+  uint32_t intraNodePollCount_{0};
 
   // The outstanding requests - there can only be one outstanding request
   // of each type at any point in time.

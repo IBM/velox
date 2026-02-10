@@ -26,6 +26,14 @@
 using namespace facebook::velox::exec;
 namespace facebook::velox::cudf_exchange {
 
+void CudfExchangeSource::setState(ReceiverState newState) {
+  auto oldState = state_.exchange(newState, std::memory_order_seq_cst);
+  VLOG(2) << (isIntraNodeTransfer_ ? "[INTRA]" : "[REMOTE]") << " [ExSrc "
+          << toString() << " seq=" << sequenceNumber_ << "] "
+          << getStateAsString(oldState) << " -> "
+          << getStateAsString(newState);
+}
+
 // This constructor is private.
 CudfExchangeSource::CudfExchangeSource(
     const std::shared_ptr<Communicator> communicator,
@@ -590,10 +598,16 @@ void CudfExchangeSource::waitForIntraNodeData() {
 
   if (!result.has_value()) {
     // Data not ready yet, re-queue to try again
+    ++intraNodePollCount_;
+    if (intraNodePollCount_ % 100 == 0) {
+      VLOG(2) << "[INTRA] [ExSrc " << toString() << " seq=" << sequenceNumber_
+              << "] still polling for data, polls=" << intraNodePollCount_;
+    }
     communicator_->addToWorkQueue(getSelfPtr());
     return;
   }
 
+  intraNodePollCount_ = 0;
   // Pass the stream along with the data so the consumer can synchronize if
   // needed
   onIntraNodeData(std::move(result->data), result->stream, result->atEnd);
@@ -683,6 +697,10 @@ bool CudfExchangeSource::setStateIf(
     // spurious failure.
     exp = expected; // reset for the next try
   }
+  VLOG(2) << (isIntraNodeTransfer_ ? "[INTRA]" : "[REMOTE]") << " [ExSrc "
+          << toString() << " seq=" << sequenceNumber_ << "] "
+          << getStateAsString(expected) << " -> "
+          << getStateAsString(desired);
   return true;
 }
 
