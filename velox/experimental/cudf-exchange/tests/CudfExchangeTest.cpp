@@ -26,6 +26,7 @@
 #include <gtest/gtest.h>
 #include <rmm/device_buffer.hpp>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -784,6 +785,75 @@ TEST_P(CudfExchangeTest, realPartitionedOutputDataIntegrityTest) {
   queueManager_->removeTask(srcTaskId);
 
   VLOG(3) << "- CudfExchangeTest::realPartitionedOutputDataIntegrityTest";
+}
+
+// Test that verifies intra-node exchange does not livelock when a producing
+// task is removed while the consumer is polling IntraNodeTransferRegistry.
+// Before the fix: test times out (livelock). After the fix: test passes.
+TEST_P(CudfExchangeTest, intraNodeTaskRemovalLivelock) {
+  // This test doesn't use parameters — run only for the first param set.
+  {
+    ExchangeTestParams p = GetParam();
+    if (p.numSrcDrivers != 1 || p.numDstDrivers != 1 || p.numPartitions != 1 ||
+        p.numChunks != 100 || p.numUpstreamTasks != 1 ||
+        p.tableType != TableType::NARROW) {
+      GTEST_SKIP() << "intraNodeTaskRemovalLivelock: runs only once";
+    }
+  }
+
+  const std::string taskPrefix = getUniqueTaskPrefix();
+  const std::string srcTaskId = taskPrefix + "srcProducerNeverSends";
+  const std::string sinkTaskId = taskPrefix + "sinkConsumer";
+  const int numPartitions = 1;
+  const int partitionId = 0;
+
+  // 1. Create and initialize source task but never enqueue any data.
+  //    This simulates a producer that gets cancelled before producing.
+  auto srcTask =
+      createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
+  queueManager_->initializeTask(srcTask, numPartitions, /*numDrivers=*/1);
+
+  // 2. Create sink task with exchange plan node.
+  core::PlanNodeId exchangeNodeId;
+  auto sinkTask = createExchangeTask(
+      sinkTaskId, CudfTestData::kTestRowType, partitionId, exchangeNodeId);
+  auto sinkDriver = std::make_shared<SinkDriverMock>(sinkTask, /*numDrivers=*/1);
+
+  // Add split pointing to source task. Since we use a single Communicator,
+  // the handshake will resolve to intra-node (same listener IP:port).
+  std::vector<exec::Split> splits;
+  splits.emplace_back(remoteSplit(srcTaskId, partitionId));
+  sinkDriver->addSplits(splits);
+
+  // 3. Start sink driver on background threads — it will begin polling
+  //    IntraNodeTransferRegistry for data that never arrives.
+  sinkDriver->run();
+
+  // 4. Wait for the CudfExchangeSource to complete handshake and start polling.
+  std::this_thread::sleep_for(std::chrono::seconds(1));
+
+  // 5. Premature task cancellation — abort the source task then remove it.
+  //    This mirrors the production flow where the task is aborted before removal.
+  //    After the fix, the consumer should detect this and stop polling.
+  srcTask->requestAbort();
+  queueManager_->removeTask(srcTaskId);
+
+  // 6. Wait for sink to complete with a timeout.
+  auto future = std::async(std::launch::async, [&]() {
+    sinkDriver->joinThreads();
+  });
+  auto status = future.wait_for(std::chrono::seconds(10));
+
+  // 7. Verify that the sink completed (no livelock).
+  if (status != std::future_status::ready) {
+    // Abort the sink task to prevent the test from hanging indefinitely.
+    sinkTask->requestAbort();
+    future.wait();
+    FAIL() << "Sink driver did not complete within 10s after removeTask()"
+           << " — intra-node livelock: source stuck polling "
+           << "IntraNodeTransferRegistry for cancelled task";
+  }
+  // If we get here, the source correctly detected the cancelled task.
 }
 
 std::shared_ptr<CudfOutputQueueManager> CudfExchangeTest::queueManager_;
