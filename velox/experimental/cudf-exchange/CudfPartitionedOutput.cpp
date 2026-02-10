@@ -259,11 +259,12 @@ void CudfPartitionedOutput::hashPartition(
       cudf::DEFAULT_HASH_SEED,
       stream);
 
-  VELOX_CHECK(partitionOffsets.size() == numPartitions_);
+  VELOX_CHECK(partitionOffsets.size() == numPartitions_ + 1);
   VELOX_CHECK(partitionOffsets[0] == 0);
 
   // Erase first element since it's always 0 and we don't need it.
   partitionOffsets.erase(partitionOffsets.begin());
+  partitionOffsets.pop_back();
 
   splitAndEnqueue(partitionedTable->view(), partitionOffsets, stream);
 }
