@@ -42,6 +42,8 @@ struct CudfConfig {
   static constexpr const char* kCudfForceReplace{"cudf.force_replace"};
   static constexpr const char* kCudfExchange{"cudf.exchange"};
   static constexpr const char* kUcxxErrorHandling{"ucxx.error_handling"};
+  static constexpr const char* kCudfIntraNodeExchange{
+      "cudf.intra_node_exchange"};
   static constexpr const char* kUcxxBlockingPolling{"ucxx.blocking_polling"};
 
   /// Singleton CudfConfig instance.
@@ -100,6 +102,10 @@ struct CudfConfig {
 
   /// Whether to enable error handling in UCXX endpoints.
   bool ucxxErrorHandling{true};
+
+  /// Whether intra-node exchange optimization is enabled.
+  /// When disabled, all transfers use UCXX even within the same node.
+  bool intraNodeExchange{false};
 
   /// Whether to use blocking polling in UCXX.
   bool ucxxBlockingPolling{true};
