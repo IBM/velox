@@ -62,6 +62,20 @@ void CudfExchangeQueue::enqueueLocked(
   receivedBytes_ += dataSize;
 
   queue_.push_back(std::move(data));
+
+  // High-water-mark alerts: log when queue size crosses thresholds.
+  auto newSize = static_cast<int64_t>(queue_.size());
+  if (newSize > peakSize_) {
+    if ((peakSize_ < 100 && newSize >= 100) ||
+        (peakSize_ < 1000 && newSize >= 1000) ||
+        (peakSize_ < 10000 && newSize >= 10000)) {
+      VLOG(1) << "[EX-QUEUE] high water mark: queueSize=" << newSize
+              << " peakBytes=" << peakBytes_
+              << " receivedTables=" << receivedTables_;
+    }
+    peakSize_ = newSize;
+  }
+
   size_t wokenConsumers = 0;
   while (!promises_.empty()) {
     VELOX_CHECK_LE(promises_.size(), numberOfConsumers_);

@@ -20,6 +20,8 @@
 #include <iostream>
 #include "velox/common/base/Exceptions.h"
 #include "velox/experimental/cudf-exchange/CommElement.h"
+#include "velox/experimental/cudf-exchange/CudfExchangeServer.h"
+#include "velox/experimental/cudf-exchange/CudfExchangeSource.h"
 #include "velox/experimental/cudf-exchange/EndpointRef.h"
 #include "velox/experimental/cudf/CudfConfig.h"
 
@@ -134,11 +136,32 @@ void Communicator::run() {
       auto now = std::chrono::steady_clock::now();
       if (now - lastHeartbeat_ >= std::chrono::seconds(5)) {
         std::lock_guard<std::mutex> lock(elemMutex_);
+
+        // GPU memory usage via CUDA runtime.
+        size_t gpuFree = 0, gpuTotal = 0;
+        cudaMemGetInfo(&gpuFree, &gpuTotal);
+        size_t gpuUsedMB = (gpuTotal - gpuFree) / (1024 * 1024);
+        size_t gpuFreeMB = gpuFree / (1024 * 1024);
+        size_t gpuTotalMB = gpuTotal / (1024 * 1024);
+
+        // Count ExSrv vs ExSrc elements.
+        int numServers = 0, numSources = 0;
+        for (const auto& elem : elements_) {
+          if (dynamic_cast<CudfExchangeServer*>(elem.get())) {
+            ++numServers;
+          } else if (dynamic_cast<CudfExchangeSource*>(elem.get())) {
+            ++numSources;
+          }
+        }
+
         VLOG(2) << "[COMM-HEARTBEAT] workQueue=" << workQueue_.size()
                 << " elements=" << elements_.size()
+                << " (servers=" << numServers << " sources=" << numSources << ")"
                 << " endpoints=" << endpoints_.size()
                 << " deferredCleanup=" << deferredEndpointCleanup_.size()
-                << " workItemsProcessed=" << workItemsProcessed_;
+                << " workItemsProcessed=" << workItemsProcessed_
+                << " GPU=" << gpuUsedMB << "/" << gpuTotalMB << "MB"
+                << " (free=" << gpuFreeMB << "MB)";
         workItemsProcessed_ = 0;
         lastHeartbeat_ = now;
       }
