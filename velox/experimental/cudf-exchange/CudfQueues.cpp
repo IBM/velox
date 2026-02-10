@@ -369,7 +369,11 @@ void CudfOutputQueue::deleteResults(int destination) {
   std::vector<ContinuePromise> promises;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK_LT(destination, queues_.size());
+    if (destination >= queues_.size()) {
+      VLOG(1) << "deleteResults: destination " << destination
+              << " out of range (size=" << queues_.size() << "), ignoring";
+      return;
+    }
     auto* queue = queues_[destination].get();
     if (queue == nullptr) {
       VLOG(1) << "Extra delete received for destination " << destination;
@@ -394,7 +398,7 @@ void CudfOutputQueue::deleteResults(int destination) {
     promise.setValue();
   }
 
-  if (isFinished) {
+  if (isFinished && task_) {
     task_->setAllOutputConsumed();
   }
 }

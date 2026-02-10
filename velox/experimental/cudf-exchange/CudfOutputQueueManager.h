@@ -18,6 +18,7 @@
 #include <cudf/contiguous_split.hpp>
 #include <velox/exec/Task.h>
 #include <functional>
+#include <unordered_set>
 #include "velox/experimental/cudf-exchange/CudfQueues.h"
 
 namespace facebook::velox::cudf_exchange {
@@ -109,6 +110,13 @@ class CudfOutputQueueManager {
       std::unordered_map<std::string, std::shared_ptr<CudfOutputQueue>>,
       std::mutex>
       queues_;
+
+  // Tasks that have been removed via removeTask(). Prevents getData() from
+  // re-creating placeholder queues for tasks that are already dead, which
+  // would cause crashes when deleteResults() is called with destinations
+  // that exceed the placeholder's undersized queues_ vector.
+  folly::Synchronized<std::unordered_set<std::string>, std::mutex>
+      removedTasks_;
 };
 
 } // namespace facebook::velox::cudf_exchange

@@ -89,9 +89,21 @@ void CudfOutputQueueManager::getData(
     int destination,
     CudfDataAvailableCallback notify) {
   std::shared_ptr<CudfOutputQueue> outputQueue;
+  bool taskRemoved = false;
   queues_.withLock([&](auto& queues) {
     auto it = queues.find(taskId);
     if (it == queues.end()) {
+      // Check if the task was already removed. If so, don't re-create a
+      // placeholder — the task is dead and any server calling getData() is a
+      // stale leftover. Re-creating would produce an undersized queue that
+      // crashes when deleteResults() is called for other destinations.
+      if (removedTasks_.withLock(
+              [&](auto& removed) { return removed.count(taskId) > 0; })) {
+        VLOG(2) << "[QUEUE-MGR] task=" << taskId << " dest=" << destination
+                << " getData ignored (task already removed)";
+        taskRemoved = true;
+        return;
+      }
       // create the queue structures such that the notify callback can be
       // stored. It will be later initialized once the task is being created.
       VLOG(2) << "[QUEUE-MGR] task=" << taskId << " dest=" << destination
@@ -103,6 +115,11 @@ void CudfOutputQueueManager::getData(
       outputQueue = it->second;
     }
   });
+  if (taskRemoved) {
+    // Fire callback immediately with nullptr to signal end-of-stream.
+    notify(nullptr, {});
+    return;
+  }
   // outside of lock. Queue must exist.
   // get the data or install the notify callback.
   outputQueue->getData(destination, notify);
@@ -120,6 +137,8 @@ void CudfOutputQueueManager::removeTask(const std::string& taskId) {
         queues.erase(taskId);
         return taskQueue;
       });
+  // Record this task as removed so getData() won't re-create a placeholder.
+  removedTasks_.withLock([&](auto& removed) { removed.insert(taskId); });
   VLOG(2) << "[QUEUE-MGR] removeTask=" << taskId
           << " queueExists=" << (queue != nullptr);
   if (queue != nullptr) {
