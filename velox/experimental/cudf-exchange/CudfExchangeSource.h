@@ -286,6 +286,13 @@ class CudfExchangeSource
   /// When true, intra-node transfer optimizations bypass UCXX transfers.
   bool isIntraNodeTransfer_{false};
 
+  // Backpressure: stop posting receives when consumer queue is overloaded.
+  // Uses hysteresis (high/low water marks) to avoid rapid oscillation.
+  static constexpr int32_t kBackpressureHighWaterMark = 32;
+  static constexpr int32_t kBackpressureLowWaterMark = 16;
+  bool backpressureActive_{false};
+  uint32_t backpressurePollCount_{0};
+
   // Some metrics/counters:
   CudfExchangeMetrics metrics_;
 

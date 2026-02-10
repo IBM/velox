@@ -109,7 +109,42 @@ void CudfExchangeSource::process() {
     case ReceiverState::WaitingForHandshakeResponse:
       // Waiting for HandshakeResponse is handled by callback.
       break;
-    case ReceiverState::ReadyToReceive:
+    case ReceiverState::ReadyToReceive: {
+      // Backpressure: don't post the next receive if the consumer queue is
+      // overloaded. This creates natural backpressure — the server's tagSend
+      // for data will block at rendezvous until we post a matching tagRecv.
+      // For intra-node: the server's publish future won't resolve until we
+      // poll the registry.
+      int32_t queueSize = queue_->size();
+      if (backpressureActive_) {
+        if (queueSize <= kBackpressureLowWaterMark) {
+          backpressureActive_ = false;
+          VLOG(1) << "[BACKPRESSURE] [ExSrc " << toString()
+                  << "] resuming, queueSize=" << queueSize
+                  << " <= lowWater=" << kBackpressureLowWaterMark
+                  << " polls=" << backpressurePollCount_;
+          backpressurePollCount_ = 0;
+          // Fall through to normal receive path below.
+        } else {
+          ++backpressurePollCount_;
+          if (backpressurePollCount_ % 1000 == 0) {
+            VLOG(1) << "[BACKPRESSURE] [ExSrc " << toString()
+                    << "] still paused, queueSize=" << queueSize
+                    << " polls=" << backpressurePollCount_;
+          }
+          communicator_->addToWorkQueue(getSelfPtr());
+          break;
+        }
+      } else if (queueSize > kBackpressureHighWaterMark) {
+        backpressureActive_ = true;
+        backpressurePollCount_ = 0;
+        VLOG(1) << "[BACKPRESSURE] [ExSrc " << toString()
+                << "] pausing, queueSize=" << queueSize
+                << " > highWater=" << kBackpressureHighWaterMark;
+        communicator_->addToWorkQueue(getSelfPtr());
+        break;
+      }
+
       if (isIntraNodeTransfer_) {
         // INTRA-NODE TRANSFER: Use registry instead of UCXX
         setStateIf(
@@ -122,7 +157,7 @@ void CudfExchangeSource::process() {
             ReceiverState::ReadyToReceive, ReceiverState::WaitingForMetadata);
         getMetadata();
       }
-      break;
+    } break;
     case ReceiverState::WaitingForMetadata:
       // Waiting for metadata is handled by an upcall from UCXX. Nothing to do
       break;
