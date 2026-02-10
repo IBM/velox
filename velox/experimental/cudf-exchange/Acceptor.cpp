@@ -18,6 +18,7 @@
 #include "velox/experimental/cudf-exchange/CudfExchangeProtocol.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeServer.h"
 #include "velox/experimental/cudf-exchange/EndpointRef.h"
+#include "velox/experimental/cudf/CudfConfig.h"
 
 namespace facebook::velox::cudf_exchange {
 
@@ -61,6 +62,7 @@ void Acceptor::cStyleAMCallback(
   // Previous approach used IP comparison (getLocalIpAddresses), which fails
   // when multiple Docker containers share the same host IP address.
   bool isIntraNodeTransfer =
+      cudf_velox::CudfConfig::getInstance().intraNodeExchange &&
       (handshakePtr->workerId == communicator->getWorkerId());
 
   std::string peerIp = epRef->getPeerIp();
