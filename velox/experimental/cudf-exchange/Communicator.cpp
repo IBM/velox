@@ -43,6 +43,14 @@ std::shared_ptr<Communicator> Communicator::initAndGet(
     instancePtr_ = std::shared_ptr<Communicator>(new Communicator());
     instancePtr_->port_ = port;
     instancePtr_->coordinatorURL_ = coordinatorURL;
+    // Generate a random unique worker ID for same-process detection.
+    // std::random_device reads from /dev/urandom on Linux (non-blocking).
+    // A 64-bit random value has negligible collision probability.
+    std::random_device rd;
+    std::mt19937_64 gen(rd());
+    std::uniform_int_distribution<uint64_t> dist;
+    instancePtr_->workerId_ = dist(gen);
+    LOG(INFO) << "Communicator workerId=" << instancePtr_->workerId_;
     if (future) {
       *future = instancePtr_->promise_.getSemiFuture();
     }

@@ -271,6 +271,7 @@ void CudfExchangeSource::sendHandshake() {
       partitionKey_.taskId.c_str(),
       sizeof(handshakeReq->taskId) - 1);
   handshakeReq->taskId[sizeof(handshakeReq->taskId) - 1] = '\0';
+  handshakeReq->workerId = communicator_->getWorkerId();
 
   VLOG(3) << toString() << " Sending handshake with initial value: "
           << partitionKey_.toString() << " to server";

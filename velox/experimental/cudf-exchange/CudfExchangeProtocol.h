@@ -68,11 +68,16 @@ inline uint64_t getHandshakeResponseTag(uint64_t taskHash) {
 /// server (CudfExchangeServer) after connection.
 ///
 /// The handshake establishes the partition key for data exchange.
-/// Intra-node detection is done server-side by checking if the peer's actual
-/// IP (from the connection) is in the local IP set.
+/// The workerId identifies the source's Communicator instance (process).
+/// If the server's workerId matches, both are in the same process, enabling
+/// intra-node transfer via IntraNodeTransferRegistry instead of UCXX.
 struct HandshakeMsg {
   char taskId[256];
   uint32_t destination;
+  /// Unique identifier for the source's Communicator instance.
+  /// Generated randomly at Communicator startup. The server compares this
+  /// against its own workerId to detect same-process (intra-node) transfers.
+  uint64_t workerId{0};
 };
 
 /// @brief Response sent from server to source after handshake.

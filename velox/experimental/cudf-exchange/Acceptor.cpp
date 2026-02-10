@@ -18,7 +18,6 @@
 #include "velox/experimental/cudf-exchange/CudfExchangeProtocol.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeServer.h"
 #include "velox/experimental/cudf-exchange/EndpointRef.h"
-#include "velox/experimental/cudf-exchange/NetUtil.h"
 
 namespace facebook::velox::cudf_exchange {
 
@@ -54,20 +53,22 @@ void Acceptor::cStyleAMCallback(
 
   const PartitionKey key = {handshakePtr->taskId, handshakePtr->destination};
 
-  // Get the peer's actual IP from the connection (not from the handshake message).
-  // This is reliable because it comes from the network layer, not client-reported data.
+  // Determine if this is an intra-process transfer by comparing the source's
+  // workerId with our Communicator's workerId. A match means both source and
+  // server are in the same Communicator singleton (same process), so
+  // IntraNodeTransferRegistry (in-process std::promise/future) can be used.
+  //
+  // Previous approach used IP comparison (getLocalIpAddresses), which fails
+  // when multiple Docker containers share the same host IP address.
+  bool isIntraNodeTransfer =
+      (handshakePtr->workerId == communicator->getWorkerId());
+
   std::string peerIp = epRef->getPeerIp();
-
-  // Cache local IPs on first use (thread-safe in C++11+).
-  static auto localIps = getLocalIpAddresses();
-
-  // Determine if this is an intra-node transfer by checking if the peer's
-  // actual IP is in our set of local IPs.
-  bool isIntraNodeTransfer = localIps.count(peerIp) > 0;
-
   LOG(INFO) << "[EXCHANGE_DEBUG] Acceptor received handshake for task=" << key.taskId
             << " dest=" << key.destination
             << " peerIp=" << peerIp
+            << " sourceWorkerId=" << handshakePtr->workerId
+            << " localWorkerId=" << communicator->getWorkerId()
             << " isIntraNodeTransfer=" << isIntraNodeTransfer;
 
   auto exchangeServer = CudfExchangeServer::create(
