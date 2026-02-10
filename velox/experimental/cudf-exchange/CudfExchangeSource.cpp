@@ -155,6 +155,12 @@ void CudfExchangeSource::cleanUp() {
     request_->cancel();
   }
 
+  // Do NOT clear completedRequests_ here. They must stay alive until this
+  // CudfExchangeSource is destroyed, because UCP's wireup replay mechanism
+  // can fire callbacks on completed requests at any time. Releasing them
+  // here would free the Request objects (and their callback lambdas),
+  // causing use-after-free if wireup later replays them.
+
   if (endpointRef_) {
     endpointRef_->removeCommElem(getSelfPtr());
     endpointRef_ = nullptr;
@@ -289,6 +295,9 @@ void CudfExchangeSource::sendHandshake() {
       communicator_->kAmCallbackOwner, communicator_->kAmCallbackId);
   // Use weak_ptr to prevent use-after-free if close() is called during callback
   std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
+  if (request_) {
+    completedRequests_.push_back(std::move(request_));
+  }
   request_ = endpointRef_->endpoint_->amSend(
       handshakeReq.get(),
       sizeof(*handshakeReq),
@@ -310,6 +319,12 @@ void CudfExchangeSource::onHandshake(
   if (closed_.load(std::memory_order_acquire)) {
     VLOG(3) << toString() << " onHandshake called after close, ignoring";
     deliverEndMarker();
+    return;
+  }
+  // Guard against replayed callbacks from UCP wireup replay.
+  if (getState() != ReceiverState::WaitingForHandshakeComplete) {
+    VLOG(2) << toString() << " onHandshake called in state "
+            << getStateAsString() << ", ignoring (possible UCXX replay)";
     return;
   }
   if (status != UCS_OK) {
@@ -346,6 +361,9 @@ void CudfExchangeSource::getMetadata() {
 
   // Use weak_ptr to prevent use-after-free if close() is called during callback
   std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
+  if (request_) {
+    completedRequests_.push_back(std::move(request_));
+  }
   request_ = endpointRef_->endpoint_->tagRecv(
       reinterpret_cast<void*>(metadataReq->data()),
       kMaxMetaBufSize,
@@ -367,6 +385,12 @@ void CudfExchangeSource::onMetadata(
   if (closed_.load(std::memory_order_acquire)) {
     VLOG(3) << toString() << " onMetadata called after close, ignoring";
     deliverEndMarker();
+    return;
+  }
+  // Guard against replayed callbacks from UCP wireup replay.
+  if (getState() != ReceiverState::WaitingForMetadata) {
+    VLOG(2) << toString() << " onMetadata called in state "
+            << getStateAsString() << ", ignoring (possible UCXX replay)";
     return;
   }
   VLOG(3) << toString() << " + onMetadata " << ucs_status_string(status);
@@ -449,6 +473,9 @@ void CudfExchangeSource::onMetadata(
     // Use weak_ptr to prevent use-after-free if close() is called during
     // callback
     std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
+    if (request_) {
+      completedRequests_.push_back(std::move(request_));
+    }
     request_ = endpointRef_->endpoint_->tagRecv(
         ptr->dataBuf->data(),
         ptr->metadata.dataSizeBytes,
@@ -472,6 +499,12 @@ void CudfExchangeSource::onData(
   if (closed_.load(std::memory_order_acquire)) {
     VLOG(3) << toString() << " onData called after close, ignoring";
     deliverEndMarker();
+    return;
+  }
+  // Guard against replayed callbacks from UCP wireup replay.
+  if (getState() != ReceiverState::WaitingForData) {
+    VLOG(2) << toString() << " onData called in state " << getStateAsString()
+            << ", ignoring (possible UCXX replay)";
     return;
   }
   VLOG(3) << toString() << " + onData " << ucs_status_string(status);
@@ -528,6 +561,9 @@ void CudfExchangeSource::receiveHandshakeResponse() {
 
   // Use weak_ptr to prevent use-after-free if close() is called during callback
   std::weak_ptr<CudfExchangeSource> weak = weak_from_this();
+  if (request_) {
+    completedRequests_.push_back(std::move(request_));
+  }
   request_ = endpointRef_->endpoint_->tagRecv(
       responseBuffer.get(),
       sizeof(*responseBuffer),
@@ -550,6 +586,12 @@ void CudfExchangeSource::onHandshakeResponse(
     VLOG(3) << toString()
             << " onHandshakeResponse called after close, ignoring";
     deliverEndMarker();
+    return;
+  }
+  // Guard against replayed callbacks from UCP wireup replay.
+  if (getState() != ReceiverState::WaitingForHandshakeResponse) {
+    VLOG(2) << toString() << " onHandshakeResponse called in state "
+            << getStateAsString() << ", ignoring (possible UCXX replay)";
     return;
   }
 

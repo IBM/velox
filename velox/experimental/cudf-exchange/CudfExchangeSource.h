@@ -294,6 +294,14 @@ class CudfExchangeSource
   // NOTE: The request owns/holds a reference to the upcall function
   // and must therefore exist until the upcall is done.
   std::shared_ptr<ucxx::Request> request_{nullptr};
+
+  // Completed UCXX requests are kept alive here to prevent use-after-free.
+  // UCP's ucp_wireup_replay_pending_requests can fire callbacks on already-
+  // completed requests; if the ucxx::Request has been freed, the callback
+  // lambda is in freed memory and crashes. Retaining them here ensures the
+  // Request (and its callback lambda) stays valid for the lifetime of this
+  // source.
+  std::vector<std::shared_ptr<ucxx::Request>> completedRequests_;
 };
 
 } // namespace facebook::velox::cudf_exchange
