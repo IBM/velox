@@ -39,19 +39,36 @@ std::future<void> IntraNodeTransferRegistry::publish(
   bool entryExisted;
   size_t registrySize;
 
+  bool cancelled = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    // Check if entry already exists (source may have started waiting)
-    auto it = registry_.find(key);
-    entryExisted = (it != registry_.end());
-    if (entryExisted) {
-      entry = it->second;
+    // If the task was already cancelled (removeTask was called), don't create
+    // a registry entry. Return an already-fulfilled future so the server
+    // doesn't block waiting for a source that will never come.
+    if (cancelledTasks_.count(key.taskId)) {
+      cancelled = true;
     } else {
-      entry = std::make_shared<IntraNodeTransferEntry>();
-      registry_[key] = entry;
+      // Check if entry already exists (source may have started waiting)
+      auto it = registry_.find(key);
+      entryExisted = (it != registry_.end());
+      if (entryExisted) {
+        entry = it->second;
+      } else {
+        entry = std::make_shared<IntraNodeTransferEntry>();
+        registry_[key] = entry;
+      }
+      registrySize = registry_.size();
     }
-    registrySize = registry_.size();
+  }
+
+  if (cancelled) {
+    VLOG(2) << "[INTRA-REG] publish skipped (task cancelled): task="
+            << key.taskId << " dest=" << key.destination
+            << " seq=" << key.sequenceNumber;
+    std::promise<void> p;
+    p.set_value();
+    return p.get_future();
   }
 
   // Update the entry with data (under entry's own mutex)
@@ -82,6 +99,13 @@ std::optional<IntraNodeTransferResult> IntraNodeTransferRegistry::poll(
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    // Check if this task has been cancelled (producer removed).
+    if (cancelledTasks_.count(key.taskId)) {
+      VLOG(2) << "[INTRA-REG] poll cancelled: task=" << key.taskId
+              << " dest=" << key.destination << " seq=" << key.sequenceNumber;
+      return IntraNodeTransferResult{nullptr, rmm::cuda_stream_default, true};
+    }
 
     auto it = registry_.find(key);
     if (it == registry_.end()) {
@@ -213,6 +237,43 @@ std::shared_ptr<cudf::packed_columns> IntraNodeTransferRegistry::retrieve(
           << " dest=" << key.destination << " seq=" << key.sequenceNumber;
 
   return data;
+}
+
+void IntraNodeTransferRegistry::cancelTask(const std::string& taskId) {
+  std::vector<std::shared_ptr<IntraNodeTransferEntry>> entriesToFulfill;
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    cancelledTasks_.insert(taskId);
+
+    // Clean up any existing registry entries for this task so servers
+    // waiting on the retrieved-promise don't hang.
+    for (auto it = registry_.begin(); it != registry_.end();) {
+      if (it->first.taskId == taskId) {
+        entriesToFulfill.push_back(it->second);
+        it = registry_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  // Fulfill promises outside the lock to avoid potential deadlocks.
+  for (auto& entry : entriesToFulfill) {
+    std::lock_guard<std::mutex> entryLock(entry->entryMutex);
+    if (!entry->ready) {
+      entry->ready = true;
+      entry->atEnd = true;
+    }
+    try {
+      entry->retrievedPromise.set_value();
+    } catch (const std::future_error&) {
+      // Promise already satisfied — safe to ignore.
+    }
+  }
+
+  VLOG(2) << "[INTRA-REG] cancelTask: task=" << taskId
+          << " entriesCleaned=" << entriesToFulfill.size();
 }
 
 } // namespace facebook::velox::cudf_exchange

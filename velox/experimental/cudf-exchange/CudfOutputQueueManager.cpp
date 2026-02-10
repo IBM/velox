@@ -20,6 +20,7 @@
 #include <cudf/table/table.hpp>
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
+#include "velox/experimental/cudf-exchange/IntraNodeTransferRegistry.h"
 
 namespace facebook::velox::cudf_exchange {
 
@@ -124,6 +125,9 @@ void CudfOutputQueueManager::removeTask(const std::string& taskId) {
   if (queue != nullptr) {
     queue->terminate();
   }
+  // Notify the intra-node registry so that any sources polling for this
+  // task get an atEnd result instead of spinning forever.
+  IntraNodeTransferRegistry::getInstance()->cancelTask(taskId);
 }
 
 std::shared_ptr<CudfOutputQueue> CudfOutputQueueManager::getQueueIfExists(

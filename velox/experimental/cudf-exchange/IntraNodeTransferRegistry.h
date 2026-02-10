@@ -24,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_set>
 
 namespace facebook::velox::cudf_exchange {
 
@@ -124,11 +125,18 @@ class IntraNodeTransferRegistry {
   std::shared_ptr<cudf::packed_columns> retrieve(
       const IntraNodeTransferKey& key);
 
+  /// @brief Cancel all pending transfers for a task.
+  /// Called when a producing task is removed. Subsequent poll() calls for
+  /// this taskId will return an atEnd result instead of nullopt.
+  /// @param taskId The task to cancel
+  void cancelTask(const std::string& taskId);
+
  private:
   IntraNodeTransferRegistry() = default;
 
   std::map<IntraNodeTransferKey, std::shared_ptr<IntraNodeTransferEntry>>
       registry_;
+  std::unordered_set<std::string> cancelledTasks_;
   std::mutex mutex_;
 };
 
