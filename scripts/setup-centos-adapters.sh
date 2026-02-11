@@ -123,7 +123,8 @@ function install_cuda_runtime {
   dnf install -y \
     cuda-cudart-"$dashed" \
     cuda-compat-"$dashed" \
-    libcufile-"$dashed"
+    libcufile-"$dashed" \
+    cuda-nvrtc-"$dashed"
 }
 
 function install_adapters_deps_from_dnf {
