@@ -124,7 +124,8 @@ function install_cuda_runtime {
     cuda-cudart-"$dashed" \
     cuda-compat-"$dashed" \
     libcufile-"$dashed" \
-    cuda-nvrtc-"$dashed"
+    cuda-nvrtc-"$dashed" \
+    libnvjitlink-"$dashed"
 }
 
 function install_adapters_deps_from_dnf {
