@@ -52,6 +52,9 @@ void CudfOutputQueueManager::initializeTask(
       }
     }
   });
+  // Clear any stale "removed" state so that getData() calls after this
+  // initializeTask() create proper placeholder queues if needed.
+  removedTasks_.withLock([&](auto& removed) { removed.erase(taskId); });
 }
 
 void CudfOutputQueueManager::enqueue(
@@ -137,8 +140,14 @@ void CudfOutputQueueManager::removeTask(const std::string& taskId) {
         queues.erase(taskId);
         return taskQueue;
       });
-  // Record this task as removed so getData() won't re-create a placeholder.
-  removedTasks_.withLock([&](auto& removed) { removed.insert(taskId); });
+  if (queue != nullptr) {
+    // Record this task as removed so getData() won't re-create a placeholder.
+    removedTasks_.withLock([&](auto& removed) { removed.insert(taskId); });
+  } else {
+    // No queue exists — this is a no-op cleanup call. Clear any stale
+    // "removed" state so the task ID can be reused.
+    removedTasks_.withLock([&](auto& removed) { removed.erase(taskId); });
+  }
   VLOG(2) << "[QUEUE-MGR] removeTask=" << taskId
           << " queueExists=" << (queue != nullptr);
   if (queue != nullptr) {

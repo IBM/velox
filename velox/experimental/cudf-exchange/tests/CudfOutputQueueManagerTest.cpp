@@ -338,6 +338,10 @@ TEST_F(CudfOutputQueueManagerTest, lateTaskCreation) {
   bool earlyTermination = false;
   int destination = 0;
 
+  // Clear stale state from prior tests (removeTask on a non-existing queue
+  // clears the removedTasks_ set, allowing getData to create a placeholder).
+  queueManager_->removeTask(taskId);
+
   // Fetch data from a non-existing task.
   struct Response {
     std::unique_ptr<cudf::packed_columns> data;

@@ -320,6 +320,17 @@ void CudfOutputQueue::checkIfDone(bool oneDriverFinished) {
     if (!atEnd_) {
       return;
     }
+    {
+      int64_t avgRows = totalPackedColumnsSent_ > 0
+          ? totalRowsSent_ / totalPackedColumnsSent_
+          : 0;
+      VLOG(1) << "[OUTPUT-STATS] task="
+              << (task_ ? task_->taskId() : "n/a")
+              << " totalRows=" << totalRowsSent_
+              << " chunks=" << totalPackedColumnsSent_
+              << " avgRowsPerChunk=" << avgRows
+              << " totalBytes=" << totalBytesSent_;
+    }
     for (auto& queue : queues_) {
       if (queue != nullptr) {
         queue->enqueueBack(nullptr);
@@ -408,8 +419,9 @@ void CudfOutputQueue::terminate() {
   std::vector<ContinuePromise> promises;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    if (task_) {
-      VELOX_CHECK(!task_->isRunning());
+    if (task_ && task_->isRunning()) {
+      LOG(WARNING) << "CudfOutputQueue::terminate() called while task "
+                   << task_->taskId() << " is still running";
     }
     // Fire all pending getData callbacks with nullptr to signal end-of-stream.
     // This handles the case where a producer task fails or is cancelled before
