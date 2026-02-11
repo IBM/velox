@@ -98,6 +98,7 @@ void SinkDriverMock::receiveAllData(HybridExchange* hybridExchange) {
                 res);
         numBytes_.fetch_add(cudfRes->estimateFlatSize());
         numRows_ += cudfRes->getTableView().num_rows();
+        numChunksReceived_.fetch_add(1);
         // If we have Reference data check the received data is the same
         if (referenceData_)
           updateDataValidity(cudfRes->getTableView());

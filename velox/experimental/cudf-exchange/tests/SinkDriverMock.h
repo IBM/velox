@@ -70,6 +70,11 @@ class SinkDriverMock {
     return numBytes_.load();
   }
 
+  /// @brief Returns the number of chunks (non-null getOutput calls) received.
+  uint64_t numChunksReceived() const {
+    return numChunksReceived_.load();
+  }
+
   bool dataIsValid() {
     return dataValidFlag_;
   }
@@ -92,6 +97,7 @@ class SinkDriverMock {
   uint32_t numDrivers_;
   std::atomic<uint64_t> numRows_;
   std::atomic<uint64_t> numBytes_{0};
+  std::atomic<uint64_t> numChunksReceived_{0};
 
   const std::shared_ptr<BaseTableGenerator> referenceData_;
   std::vector<std::thread> threads_;

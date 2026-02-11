@@ -31,6 +31,7 @@
 #include <sstream>
 #include <vector>
 #include "CudfTestHelpers.h"
+#include "velox/core/QueryConfig.h"
 #include "folly/experimental/EventCount.h"
 #include "velox/common/memory/MemoryPool.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
@@ -854,6 +855,298 @@ TEST_P(CudfExchangeTest, intraNodeTaskRemovalLivelock) {
            << "IntraNodeTransferRegistry for cancelled task";
   }
   // If we get here, the source correctly detected the cancelled task.
+}
+
+// Test that CudfPartitionedOutput's batch accumulation correctly merges many
+// small input chunks into fewer, larger output chunks while preserving all rows
+// and data integrity.
+TEST_P(CudfExchangeTest, batchAccumulationTest) {
+  // This test doesn't use parameters — run only for the first param set.
+  {
+    ExchangeTestParams p = GetParam();
+    if (p.numSrcDrivers != 1 || p.numDstDrivers != 1 || p.numPartitions != 1 ||
+        p.numChunks != 100 || p.numUpstreamTasks != 1 ||
+        p.tableType != TableType::NARROW) {
+      GTEST_SKIP() << "batchAccumulationTest: runs only once";
+    }
+  }
+
+  const int kTargetRows = CudfPartitionedOutput::kDefaultTargetRowsPerChunk;
+
+  // --- Scenario 1: Small chunks that SHOULD be accumulated ---
+  // 500 chunks × 100 rows = 50,000 total rows.
+  // With kTargetRowsPerChunk = 10,000 and 100 rows/chunk, we need 100 chunks
+  // to reach the threshold → expect 5 flushes (500/100 = 5), 0 remainder.
+  {
+    const int numChunks = 500;
+    const int numRowsPerChunk = 100;
+    const int numPartitions = 1;
+    const int numDrivers = 1;
+    const std::string taskPrefix = getUniqueTaskPrefix();
+    const std::string srcTaskId = taskPrefix + "sourceTask0";
+
+    auto rowType = CudfTestData::kTestRowType;
+
+    // Create reference data for integrity verification.
+    auto dataToSend = std::make_shared<CudfTestData>();
+    dataToSend->initialize(numRowsPerChunk);
+
+    auto srcTask = createPartitionedOutputTask(
+        srcTaskId, pool_, rowType, numPartitions);
+    queueManager_->initializeTask(srcTask, numPartitions, numDrivers);
+
+    auto sourceDriver = std::make_shared<SourceDriverMock>(
+        srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
+
+    const std::string sinkTaskId = taskPrefix + "sinkTask0";
+    core::PlanNodeId exchangeNodeId;
+    auto sinkTask =
+        createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
+    auto sinkDriver =
+        std::make_shared<SinkDriverMock>(sinkTask, numDrivers, dataToSend);
+
+    std::vector<exec::Split> splits;
+    splits.emplace_back(remoteSplit(srcTaskId, 0));
+    sinkDriver->addSplits(splits);
+
+    sourceDriver->run();
+    sinkDriver->run();
+    sourceDriver->joinThreads();
+    sinkDriver->joinThreads();
+
+    size_t expectedTotalRows =
+        static_cast<size_t>(numChunks) * numRowsPerChunk;
+
+    // Verify all rows arrived.
+    EXPECT_EQ(sinkDriver->numRows(), expectedTotalRows)
+        << "Accumulation must not lose rows";
+
+    // Verify data integrity.
+    EXPECT_TRUE(sinkDriver->dataIsValid())
+        << "Accumulated data must match reference";
+
+    // Verify chunk reduction. Compute expected output chunks:
+    // chunksPerFlush = ceil(kTargetRows / numRowsPerChunk)
+    // outputChunks = ceil(numChunks / chunksPerFlush)
+    size_t chunksPerFlush =
+        (kTargetRows + numRowsPerChunk - 1) / numRowsPerChunk;
+    size_t expectedOutputChunks =
+        (numChunks + chunksPerFlush - 1) / chunksPerFlush;
+
+    VLOG(0) << "batchAccumulationTest scenario 1: sent " << numChunks
+            << " chunks of " << numRowsPerChunk << " rows, received "
+            << sinkDriver->numChunksReceived() << " chunks (expected "
+            << expectedOutputChunks << ")";
+
+    EXPECT_EQ(sinkDriver->numChunksReceived(), expectedOutputChunks)
+        << "Small chunks should be accumulated into fewer output chunks";
+
+    // Sanity: output chunks must be strictly fewer than input chunks.
+    EXPECT_LT(sinkDriver->numChunksReceived(), static_cast<uint64_t>(numChunks))
+        << "Accumulation should reduce chunk count";
+
+    queueManager_->removeTask(srcTaskId);
+  }
+
+  // --- Scenario 2: Small chunks with a remainder (not evenly divisible) ---
+  // 150 chunks × 100 rows = 15,000 total rows.
+  // 100 chunks → first flush (10,000 rows), 50 remaining → partial flush.
+  // Expected: 2 output chunks.
+  {
+    const int numChunks = 150;
+    const int numRowsPerChunk = 100;
+    const int numPartitions = 1;
+    const int numDrivers = 1;
+    const std::string taskPrefix = getUniqueTaskPrefix();
+    const std::string srcTaskId = taskPrefix + "sourceTask0";
+
+    auto rowType = CudfTestData::kTestRowType;
+
+    auto dataToSend = std::make_shared<CudfTestData>();
+    dataToSend->initialize(numRowsPerChunk);
+
+    auto srcTask = createPartitionedOutputTask(
+        srcTaskId, pool_, rowType, numPartitions);
+    queueManager_->initializeTask(srcTask, numPartitions, numDrivers);
+
+    auto sourceDriver = std::make_shared<SourceDriverMock>(
+        srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
+
+    const std::string sinkTaskId = taskPrefix + "sinkTask0";
+    core::PlanNodeId exchangeNodeId;
+    auto sinkTask =
+        createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
+    auto sinkDriver =
+        std::make_shared<SinkDriverMock>(sinkTask, numDrivers, dataToSend);
+
+    std::vector<exec::Split> splits;
+    splits.emplace_back(remoteSplit(srcTaskId, 0));
+    sinkDriver->addSplits(splits);
+
+    sourceDriver->run();
+    sinkDriver->run();
+    sourceDriver->joinThreads();
+    sinkDriver->joinThreads();
+
+    size_t expectedTotalRows =
+        static_cast<size_t>(numChunks) * numRowsPerChunk;
+
+    EXPECT_EQ(sinkDriver->numRows(), expectedTotalRows)
+        << "Remainder scenario must not lose rows";
+
+    EXPECT_TRUE(sinkDriver->dataIsValid())
+        << "Remainder scenario data must match reference";
+
+    size_t chunksPerFlush =
+        (kTargetRows + numRowsPerChunk - 1) / numRowsPerChunk;
+    size_t expectedOutputChunks =
+        (numChunks + chunksPerFlush - 1) / chunksPerFlush;
+
+    VLOG(0) << "batchAccumulationTest scenario 2: sent " << numChunks
+            << " chunks of " << numRowsPerChunk << " rows, received "
+            << sinkDriver->numChunksReceived() << " chunks (expected "
+            << expectedOutputChunks << ")";
+
+    EXPECT_EQ(sinkDriver->numChunksReceived(), expectedOutputChunks)
+        << "Remainder chunks should be flushed on noMoreInput";
+
+    queueManager_->removeTask(srcTaskId);
+  }
+
+  // --- Scenario 3: Large chunks (>= threshold) should NOT be accumulated ---
+  // 5 chunks × 20,000 rows = 100,000 total rows.
+  // Each chunk exceeds kTargetRowsPerChunk, so each addInput triggers an
+  // immediate flush via the single-input fast path. Expected: 5 output chunks.
+  {
+    const int numChunks = 5;
+    const int numRowsPerChunk = 20000;
+    const int numPartitions = 1;
+    const int numDrivers = 1;
+    const std::string taskPrefix = getUniqueTaskPrefix();
+    const std::string srcTaskId = taskPrefix + "sourceTask0";
+
+    auto rowType = CudfTestData::kTestRowType;
+
+    auto dataToSend = std::make_shared<CudfTestData>();
+    dataToSend->initialize(numRowsPerChunk);
+
+    auto srcTask = createPartitionedOutputTask(
+        srcTaskId, pool_, rowType, numPartitions);
+    queueManager_->initializeTask(srcTask, numPartitions, numDrivers);
+
+    auto sourceDriver = std::make_shared<SourceDriverMock>(
+        srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
+
+    const std::string sinkTaskId = taskPrefix + "sinkTask0";
+    core::PlanNodeId exchangeNodeId;
+    auto sinkTask =
+        createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
+    auto sinkDriver =
+        std::make_shared<SinkDriverMock>(sinkTask, numDrivers, dataToSend);
+
+    std::vector<exec::Split> splits;
+    splits.emplace_back(remoteSplit(srcTaskId, 0));
+    sinkDriver->addSplits(splits);
+
+    sourceDriver->run();
+    sinkDriver->run();
+    sourceDriver->joinThreads();
+    sinkDriver->joinThreads();
+
+    size_t expectedTotalRows =
+        static_cast<size_t>(numChunks) * numRowsPerChunk;
+
+    EXPECT_EQ(sinkDriver->numRows(), expectedTotalRows)
+        << "Large-chunk scenario must not lose rows";
+
+    EXPECT_TRUE(sinkDriver->dataIsValid())
+        << "Large-chunk scenario data must match reference";
+
+    VLOG(0) << "batchAccumulationTest scenario 3: sent " << numChunks
+            << " chunks of " << numRowsPerChunk << " rows, received "
+            << sinkDriver->numChunksReceived() << " chunks (expected "
+            << numChunks << ")";
+
+    // Large chunks should pass through without accumulation — each addInput
+    // immediately flushes because pendingRows >= kTargetRowsPerChunk.
+    EXPECT_EQ(
+        sinkDriver->numChunksReceived(), static_cast<uint64_t>(numChunks))
+        << "Large chunks should not be accumulated";
+
+    queueManager_->removeTask(srcTaskId);
+  }
+
+  // --- Scenario 4: Custom threshold via QueryConfig ---
+  // 50 chunks × 100 rows = 5,000 total rows with a custom threshold of 500.
+  // chunksPerFlush = ceil(500/100) = 5
+  // outputChunks = ceil(50/5) = 10
+  {
+    const int numChunks = 50;
+    const int numRowsPerChunk = 100;
+    const int64_t customThreshold = 500;
+    const int numPartitions = 1;
+    const int numDrivers = 1;
+    const std::string taskPrefix = getUniqueTaskPrefix();
+    const std::string srcTaskId = taskPrefix + "sourceTask0";
+
+    auto rowType = CudfTestData::kTestRowType;
+
+    auto dataToSend = std::make_shared<CudfTestData>();
+    dataToSend->initialize(numRowsPerChunk);
+
+    // Pass custom threshold via QueryConfig.
+    std::unordered_map<std::string, std::string> extraConfig{
+        {core::QueryConfig::kCudfPartitionedOutputBatchRows,
+         std::to_string(customThreshold)}};
+
+    auto srcTask = createPartitionedOutputTask(
+        srcTaskId, pool_, rowType, numPartitions, {}, FOUR_GBYTES, extraConfig);
+    queueManager_->initializeTask(srcTask, numPartitions, numDrivers);
+
+    auto sourceDriver = std::make_shared<SourceDriverMock>(
+        srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
+
+    const std::string sinkTaskId = taskPrefix + "sinkTask0";
+    core::PlanNodeId exchangeNodeId;
+    auto sinkTask =
+        createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
+    auto sinkDriver =
+        std::make_shared<SinkDriverMock>(sinkTask, numDrivers, dataToSend);
+
+    std::vector<exec::Split> splits;
+    splits.emplace_back(remoteSplit(srcTaskId, 0));
+    sinkDriver->addSplits(splits);
+
+    sourceDriver->run();
+    sinkDriver->run();
+    sourceDriver->joinThreads();
+    sinkDriver->joinThreads();
+
+    size_t expectedTotalRows =
+        static_cast<size_t>(numChunks) * numRowsPerChunk;
+
+    EXPECT_EQ(sinkDriver->numRows(), expectedTotalRows)
+        << "Custom threshold scenario must not lose rows";
+
+    EXPECT_TRUE(sinkDriver->dataIsValid())
+        << "Custom threshold scenario data must match reference";
+
+    size_t chunksPerFlush =
+        (customThreshold + numRowsPerChunk - 1) / numRowsPerChunk;
+    size_t expectedOutputChunks =
+        (numChunks + chunksPerFlush - 1) / chunksPerFlush;
+
+    VLOG(0) << "batchAccumulationTest scenario 4: sent " << numChunks
+            << " chunks of " << numRowsPerChunk
+            << " rows with custom threshold=" << customThreshold
+            << ", received " << sinkDriver->numChunksReceived()
+            << " chunks (expected " << expectedOutputChunks << ")";
+
+    EXPECT_EQ(sinkDriver->numChunksReceived(), expectedOutputChunks)
+        << "Custom threshold should control accumulation granularity";
+
+    queueManager_->removeTask(srcTaskId);
+  }
 }
 
 std::shared_ptr<CudfOutputQueueManager> CudfExchangeTest::queueManager_;

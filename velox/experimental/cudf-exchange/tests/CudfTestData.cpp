@@ -321,14 +321,11 @@ bool CudfTestData::verifyTable(
   auto receivedDoubles = getColVector<float>(table.column(1), numRows, stream);
   auto receivedStrings = getStringCol(table.column(2), numRows, stream);
 
-  // Compare with expected data
+  // Compare with expected data. Use modular indexing because batch
+  // accumulation in CudfPartitionedOutput may concatenate multiple identical
+  // chunks into one larger table, causing srcIdx to exceed the reference size.
   for (size_t i = 0; i < numRows; ++i) {
-    size_t srcIdx = startRow + i;
-    if (srcIdx >= integers_->size()) {
-      VLOG(0) << "CudfTestData::verifyTable: srcIdx " << srcIdx
-              << " out of range " << integers_->size();
-      return false;
-    }
+    size_t srcIdx = (startRow + i) % integers_->size();
 
     if (receivedInts[i] != (*integers_)[srcIdx]) {
       VLOG(0) << "CudfTestData::verifyTable: int mismatch at row " << i
@@ -441,13 +438,11 @@ bool WideTestTable::verifyNumericColumns(
   auto rxFloat64 = getColVector<double>(table.column(9), numRows, stream);
   auto rxBool = getColVector<int8_t>(table.column(10), numRows, stream);
 
+  // Use modular indexing because batch accumulation in CudfPartitionedOutput
+  // may concatenate multiple identical chunks into one larger table, causing
+  // srcIdx to exceed the reference size.
   for (size_t i = 0; i < numRows; ++i) {
-    size_t srcIdx = startRow + i;
-    if (srcIdx >= numRows_) {
-      VLOG(0) << "verifyNumericColumns: srcIdx " << srcIdx
-              << " out of range " << numRows_;
-      return false;
-    }
+    size_t srcIdx = (startRow + i) % numRows_;
 
     if (rxInt8[i] != int8Data_[srcIdx] || rxInt16[i] != int16Data_[srcIdx] ||
         rxInt32[i] != int32Data_[srcIdx] || rxInt64[i] != int64Data_[srcIdx] ||
@@ -556,7 +551,7 @@ bool WideComplexTestTable::verifyTable(
       getColVector<double>(structView.child(1), numRows, stream);
 
   for (size_t i = 0; i < numRows; ++i) {
-    size_t srcIdx = startRow + i;
+    size_t srcIdx = (startRow + i) % numRows_;
     if (rxStrings[i] != stringData_[srcIdx] ||
         rxStructField1[i] != structField1Data_[srcIdx] ||
         rxStructField2[i] != structField2Data_[srcIdx]) {
