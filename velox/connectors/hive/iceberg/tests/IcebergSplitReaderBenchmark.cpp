@@ -15,9 +15,11 @@
  */
 
 #include "velox/connectors/hive/iceberg/tests/IcebergSplitReaderBenchmark.h"
+#include <folly/executors/IOThreadPoolExecutor.h>
 #include <filesystem>
 
 #include "velox/connectors/hive/HiveConfig.h"
+#include "velox/vector/tests/utils/VectorMaker.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::dwio;
@@ -101,6 +103,8 @@ IcebergSplitReaderBenchmark::makeIcebergSplit(
     const std::string& dataFilePath,
     const std::vector<IcebergDeleteFile>& deleteFiles) {
   std::unordered_map<std::string, std::optional<std::string>> partitionKeys;
+  std::unordered_map<std::string, std::string> customSplitInfo;
+  customSplitInfo["table_format"] = "hive-iceberg";
 
   auto readFile = std::make_shared<LocalReadFile>(dataFilePath);
   const int64_t fileSize = readFile->size();
@@ -113,7 +117,7 @@ IcebergSplitReaderBenchmark::makeIcebergSplit(
       fileSize,
       partitionKeys,
       std::nullopt,
-      std::unordered_map<std::string, std::string>{},
+      customSplitInfo,
       nullptr,
       /*cacheable=*/true,
       deleteFiles);
@@ -330,6 +334,10 @@ void IcebergSplitReaderBenchmark::readSingleColumn(
 
   suspender.dismiss();
 
+  auto ioExecutor = std::make_unique<folly::IOThreadPoolExecutor>(3);
+  std::shared_ptr<exec::ExprSet> remainingFilterExprSet{nullptr};
+  std::atomic<uint64_t> totalRemainingFilterMs;
+
   uint64_t resultSize = 0;
   for (const auto& split : splits) {
     scanSpec->resetCachedValues(true);
@@ -346,9 +354,12 @@ void IcebergSplitReaderBenchmark::readSingleColumn(
             metadataIoStatistics,
             ioStats,
             &fileHandleFactory,
-            nullptr,
+            ioExecutor.get(),
             scanSpec,
-            nullptr);
+            nullptr,
+            nullptr, // infoColumns
+            std::vector<column_index_t>{}, // bucketChannels
+            nullptr); // subfieldFiltersForValidation
 
     std::shared_ptr<random::RandomSkipTracker> randomSkip;
     icebergSplitReader->configureReaderOptions(randomSkip);
