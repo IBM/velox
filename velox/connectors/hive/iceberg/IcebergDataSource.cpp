@@ -40,10 +40,10 @@ IcebergDataSource::IcebergDataSource(
       columnHandles_(std::make_shared<ColumnHandleMap>(assignments)) {}
 
 std::unique_ptr<FileSplitReader> IcebergDataSource::createSplitReader() {
-  prepareSplit();
+  auto bucketChannels = prepareSplit();
   auto icebergSplit = checkedPointerCast<const HiveIcebergSplit>(split_);
 
-  auto reader = std::make_unique<IcebergSplitReader>(
+  return std::make_unique<IcebergSplitReader>(
       icebergSplit,
       tableHandle_,
       &partitionKeys_,
@@ -56,9 +56,10 @@ std::unique_ptr<FileSplitReader> IcebergDataSource::createSplitReader() {
       fileHandleFactory_,
       ioExecutor_,
       scanSpec_,
-      columnHandles_);
-
-  return reader;
+      columnHandles_,
+      &infoColumns_,
+      std::move(bucketChannels),
+      &filters_);
 }
 
 } // namespace facebook::velox::connector::hive::iceberg
