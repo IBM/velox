@@ -61,7 +61,10 @@ std::unique_ptr<FileSplitReader> HiveSplitReader::create(
         fileHandleFactory,
         ioExecutor,
         scanSpec,
-        std::make_shared<ColumnHandleMap>());
+        std::make_shared<ColumnHandleMap>(),
+        infoColumns,
+        std::move(bucketChannels),
+        subfieldFiltersForValidation);
   } else {
     return std::make_unique<HiveSplitReader>(
         hiveSplit,
