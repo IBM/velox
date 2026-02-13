@@ -21,6 +21,7 @@
 #include "velox/connectors/hive/HiveDataSource.h"
 #include "velox/connectors/hive/HiveIndexSource.h"
 #include "velox/connectors/hive/HivePartitionFunction.h"
+#include "velox/connectors/hive/iceberg/IcebergDataSink.h"
 
 #include <boost/lexical_cast.hpp>
 #include <memory>
@@ -57,7 +58,7 @@ HiveConnector::HiveConnector(
 std::unique_ptr<DataSource> HiveConnector::createDataSource(
     const RowTypePtr& outputType,
     const ConnectorTableHandlePtr& tableHandle,
-    const ColumnHandleMap& columnHandles,
+    const std::unordered_map<std::string, ColumnHandlePtr>& columnHandles,
     ConnectorQueryCtx* connectorQueryCtx) {
   return std::make_unique<HiveDataSource>(
       outputType,
@@ -74,6 +75,16 @@ std::unique_ptr<DataSink> HiveConnector::createDataSink(
     ConnectorInsertTableHandlePtr connectorInsertTableHandle,
     ConnectorQueryCtx* connectorQueryCtx,
     CommitStrategy commitStrategy) {
+  if (auto icebergInsertHandle =
+          std::dynamic_pointer_cast<const iceberg::IcebergInsertTableHandle>(
+              connectorInsertTableHandle)) {
+    return std::make_unique<iceberg::IcebergDataSink>(
+        inputType,
+        icebergInsertHandle,
+        connectorQueryCtx,
+        commitStrategy,
+        hiveConfig_);
+  }
   auto hiveInsertHandle =
       std::dynamic_pointer_cast<const HiveInsertTableHandle>(
           connectorInsertTableHandle);
