@@ -31,7 +31,7 @@ namespace facebook::velox::connector::hive::iceberg {
 IcebergSplitReader::IcebergSplitReader(
     const std::shared_ptr<const hive::HiveConnectorSplit>& hiveSplit,
     const HiveTableHandlePtr& hiveTableHandle,
-    const HiveColumnHandleMap* partitionKeys,
+    const std::unordered_map<std::string, HiveColumnHandlePtr>* partitionKeys,
     const ConnectorQueryCtx* connectorQueryCtx,
     const std::shared_ptr<const HiveConfig>& hiveConfig,
     const RowTypePtr& readerOutputType,
@@ -73,7 +73,8 @@ void IcebergSplitReader::prepareSplit(
 
   createRowReader(std::move(metadataFilter), std::move(rowType), std::nullopt);
 
-  auto icebergSplit = checkedPointerCast<const HiveIcebergSplit>(hiveSplit_);
+  std::shared_ptr<const HiveIcebergSplit> icebergSplit =
+      std::dynamic_pointer_cast<const HiveIcebergSplit>(hiveSplit_);
   baseReadOffset_ = 0;
   splitOffset_ = baseRowReader_->nextRowNumber();
   positionalDeleteFileReaders_.clear();
