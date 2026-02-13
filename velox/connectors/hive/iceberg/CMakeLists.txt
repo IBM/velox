@@ -16,19 +16,20 @@ set(
   DeletionVectorReader.cpp
   DeletionVectorWriter.cpp
   EqualityDeleteFileReader.cpp
-  IcebergColumnHandle.cpp
-  IcebergConfig.cpp
   IcebergConnector.cpp
+  DataFileStatsCollector.cpp
+  IcebergColumnHandle.cpp
   IcebergDataSink.cpp
   IcebergDataSource.cpp
-  IcebergPartitionName.cpp
+  IcebergPartitionIdGenerator.cpp
   IcebergSplit.cpp
   IcebergSplitReader.cpp
+  Murmur3.cpp
   PartitionSpec.cpp
   PositionalDeleteFileReader.cpp
-  TransformEvaluator.cpp
-  TransformExprBuilder.cpp
   WriterOptionsAdapter.cpp
+  TransformFactory.cpp
+  Transforms.cpp
 )
 
 velox_add_library(
@@ -39,19 +40,15 @@ velox_add_library(
   DeletionVectorWriter.h
   EqualityDeleteFileReader.h
   IcebergColumnHandle.h
-  IcebergConfig.h
   IcebergConnector.h
   IcebergDataSink.h
   IcebergDataSource.h
   IcebergDeleteFile.h
   IcebergMetadataColumns.h
-  IcebergPartitionName.h
   IcebergSplit.h
   IcebergSplitReader.h
   PartitionSpec.h
   PositionalDeleteFileReader.h
-  TransformEvaluator.h
-  TransformExprBuilder.h
   WriterOptionsAdapter.h
 )
 
