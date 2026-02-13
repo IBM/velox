@@ -29,11 +29,14 @@ class PartitionIdGenerator {
   /// @param maxPartitions The max number of distinct partitions.
   /// @param pool Memory pool. Used to allocate memory for storing unique
   /// partition key values.
+  /// @param partitionPathAsLowerCase Used to control whether the partition path
+  /// need to convert to lower case.
   PartitionIdGenerator(
       const RowTypePtr& inputType,
       std::vector<column_index_t> partitionChannels,
       uint32_t maxPartitions,
-      memory::MemoryPool* pool);
+      memory::MemoryPool* pool,
+      bool partitionPathAsLowerCase);
 
   /// Generate sequential partition IDs for input vector.
   /// @param input Input RowVector.
@@ -45,16 +48,11 @@ class PartitionIdGenerator {
     return partitionIds_.size();
   }
 
-  /// Returns the RowVector containing transformed partition keys.
-  /// Each row in this vector corresponds to a partition ID (row index =
-  /// partition ID).
-  /// Should be called after calling run() method.
-  ///
-  /// @return RowVector with one column per partition column, columns in same
-  /// order as partitionChannels_.
-  const RowVectorPtr& partitionValues() const {
-    return partitionValues_;
-  }
+  /// Return partition name for the given partition id in the typical Hive
+  /// style. It is derived from the partitionValues_ at index partitionId.
+  /// Partition keys appear in the order of partition columns in the table
+  /// schema.
+  std::string partitionName(uint64_t partitionId) const;
 
  private:
   static constexpr const int32_t kHasherReservePct = 20;
@@ -82,6 +80,8 @@ class PartitionIdGenerator {
   const std::vector<column_index_t> partitionChannels_;
 
   const uint32_t maxPartitions_;
+
+  const bool partitionPathAsLowerCase_;
 
   std::vector<std::unique_ptr<exec::VectorHasher>> hashers_;
   bool hasMultiplierSet_ = false;
