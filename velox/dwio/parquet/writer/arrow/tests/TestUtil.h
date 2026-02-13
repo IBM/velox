@@ -38,14 +38,14 @@
 #include "velox/dwio/parquet/writer/arrow/tests/ColumnReader.h"
 
 // https://github.com/google/googletest/pull/2904 might not be available
-// In our version of gtest/gmock.
-#define EXPECT_THROW_THAT(callable, exType, property)   \
-  EXPECT_THROW(                                         \
-      try { (callable)(); } catch (const exType& err) { \
-        EXPECT_THAT(err, (property));                   \
-        throw;                                          \
-      },                                                \
-      exType)
+// in our version of gtest/gmock
+#define EXPECT_THROW_THAT(callable, ex_type, property)   \
+  EXPECT_THROW(                                          \
+      try { (callable)(); } catch (const ex_type& err) { \
+        EXPECT_THAT(err, (property));                    \
+        throw;                                           \
+      },                                                 \
+      ex_type)
 
 namespace facebook::velox::parquet::arrow {
 
@@ -72,13 +72,13 @@ class ParquetTestException : public ParquetException {
   using ParquetException::ParquetException;
 };
 
-const char* getDataDir();
-std::string getBadDataDir();
+const char* get_data_dir();
+std::string get_bad_data_dir();
 
-std::string getDataFile(const std::string& filename, bool isGood = true);
+std::string get_data_file(const std::string& filename, bool is_good = true);
 
 template <typename T>
-static inline void assertVectorEqual(
+static inline void assert_vector_equal(
     const std::vector<T>& left,
     const std::vector<T>& right) {
   ASSERT_EQ(left.size(), right.size());
@@ -89,7 +89,7 @@ static inline void assertVectorEqual(
 }
 
 template <typename T>
-static inline bool vectorEqual(
+static inline bool vector_equal(
     const std::vector<T>& left,
     const std::vector<T>& right) {
   if (left.size() != right.size()) {
@@ -120,96 +120,96 @@ static std::vector<T> slice(const std::vector<T>& values, int start, int end) {
   return out;
 }
 
-void randomBytes(int n, uint32_t seed, std::vector<uint8_t>* out);
-void randomBools(int n, double p, uint32_t seed, bool* out);
+void random_bytes(int n, uint32_t seed, std::vector<uint8_t>* out);
+void random_bools(int n, double p, uint32_t seed, bool* out);
 
 template <typename T>
 inline void
-randomNumbers(int n, uint32_t seed, T minValue, T maxValue, T* out) {
+random_numbers(int n, uint32_t seed, T min_value, T max_value, T* out) {
   std::default_random_engine gen(seed);
-  std::uniform_int_distribution<T> d(minValue, maxValue);
+  std::uniform_int_distribution<T> d(min_value, max_value);
   for (int i = 0; i < n; ++i) {
     out[i] = d(gen);
   }
 }
 
 template <>
-inline void randomNumbers(
+inline void random_numbers(
     int n,
     uint32_t seed,
-    float minValue,
-    float maxValue,
+    float min_value,
+    float max_value,
     float* out) {
   std::default_random_engine gen(seed);
-  std::uniform_real_distribution<float> d(minValue, maxValue);
+  std::uniform_real_distribution<float> d(min_value, max_value);
   for (int i = 0; i < n; ++i) {
     out[i] = d(gen);
   }
 }
 
 template <>
-inline void randomNumbers(
+inline void random_numbers(
     int n,
     uint32_t seed,
-    double minValue,
-    double maxValue,
+    double min_value,
+    double max_value,
     double* out) {
   std::default_random_engine gen(seed);
-  std::uniform_real_distribution<double> d(minValue, maxValue);
+  std::uniform_real_distribution<double> d(min_value, max_value);
   for (int i = 0; i < n; ++i) {
     out[i] = d(gen);
   }
 }
 
-void randomInt96Numbers(
+void random_Int96_numbers(
     int n,
     uint32_t seed,
-    int32_t minValue,
-    int32_t maxValue,
+    int32_t min_value,
+    int32_t max_value,
     Int96* out);
 
-void randomFixedByteArray(
+void random_fixed_byte_array(
     int n,
     uint32_t seed,
     uint8_t* buf,
     int len,
     FLBA* out);
 
-void randomByteArray(
+void random_byte_array(
     int n,
     uint32_t seed,
     uint8_t* buf,
     ByteArray* out,
-    int minSize,
-    int maxSize);
+    int min_size,
+    int max_size);
 
-void randomByteArray(
+void random_byte_array(
     int n,
     uint32_t seed,
     uint8_t* buf,
     ByteArray* out,
-    int maxSize);
+    int max_size);
 
 template <typename Type, typename Sequence>
-std::shared_ptr<Buffer> encodeValues(
+std::shared_ptr<Buffer> EncodeValues(
     Encoding::type encoding,
-    bool useDictionary,
+    bool use_dictionary,
     const Sequence& values,
     int length,
     const ColumnDescriptor* descr) {
-  auto encoder = makeTypedEncoder<Type>(encoding, useDictionary, descr);
-  encoder->put(values, length);
-  return encoder->flushValues();
+  auto encoder = MakeTypedEncoder<Type>(encoding, use_dictionary, descr);
+  encoder->Put(values, length);
+  return encoder->FlushValues();
 }
 
 template <typename T>
-static void initValues(
-    int numValues,
+static void InitValues(
+    int num_values,
     uint32_t seed,
     std::vector<T>& values,
     std::vector<uint8_t>& buffer) {
-  randomNumbers(
-      numValues,
+  random_numbers(
+      num_values,
       seed,
       std::numeric_limits<T>::min(),
       std::numeric_limits<T>::max(),
@@ -217,283 +217,284 @@ static void initValues(
 }
 
 template <typename T>
-static void initValues(
-    int numValues,
+static void InitValues(
+    int num_values,
     std::vector<T>& values,
     std::vector<uint8_t>& buffer) {
-  initValues(numValues, 0, values, buffer);
+  InitValues(num_values, 0, values, buffer);
 }
 
 template <typename T>
-static void initDictValues(
-    int numValues,
-    int numDicts,
+static void InitDictValues(
+    int num_values,
+    int num_dicts,
     std::vector<T>& values,
     std::vector<uint8_t>& buffer) {
-  int repeatFactor = numValues / numDicts;
-  initValues<T>(numDicts, values, buffer);
-  // Add some repeated values.
-  for (int j = 1; j < repeatFactor; ++j) {
-    for (int i = 0; i < numDicts; ++i) {
-      std::memcpy(&values[numDicts * j + i], &values[i], sizeof(T));
+  int repeat_factor = num_values / num_dicts;
+  InitValues<T>(num_dicts, values, buffer);
+  // add some repeated values
+  for (int j = 1; j < repeat_factor; ++j) {
+    for (int i = 0; i < num_dicts; ++i) {
+      std::memcpy(&values[num_dicts * j + i], &values[i], sizeof(T));
     }
   }
-  // Computed only dict_per_page * repeat_factor - 1 values < num_values.
-  // Compute remaining.
-  for (int i = numDicts * repeatFactor; i < numValues; ++i) {
-    std::memcpy(&values[i], &values[i - numDicts * repeatFactor], sizeof(T));
+  // computed only dict_per_page * repeat_factor - 1 values < num_values
+  // compute remaining
+  for (int i = num_dicts * repeat_factor; i < num_values; ++i) {
+    std::memcpy(&values[i], &values[i - num_dicts * repeat_factor], sizeof(T));
   }
 }
 
 template <>
-inline void initDictValues<bool>(
-    int numValues,
-    int numDicts,
+inline void InitDictValues<bool>(
+    int num_values,
+    int num_dicts,
     std::vector<bool>& values,
     std::vector<uint8_t>& buffer) {
-  // No op for bool.
+  // No op for bool
 }
 
 class MockPageReader : public PageReader {
  public:
   explicit MockPageReader(const std::vector<std::shared_ptr<Page>>& pages)
-      : pages_(pages), pageIndex_(0) {}
+      : pages_(pages), page_index_(0) {}
 
-  std::shared_ptr<Page> nextPage() override {
-    if (pageIndex_ == static_cast<int>(pages_.size())) {
-      // EOS to consumer.
+  std::shared_ptr<Page> NextPage() override {
+    if (page_index_ == static_cast<int>(pages_.size())) {
+      // EOS to consumer
       return std::shared_ptr<Page>(nullptr);
     }
-    return pages_[pageIndex_++];
+    return pages_[page_index_++];
   }
 
-  // No-op.
-  void setMaxPageHeaderSize(uint32_t size) override {}
+  // No-op
+  void set_max_page_header_size(uint32_t size) override {}
 
  private:
   std::vector<std::shared_ptr<Page>> pages_;
-  int pageIndex_;
+  int page_index_;
 };
 
-// TODO(wesm): this is only used for testing for now. Refactor to form part of.
-// Primary file write path.
+// TODO(wesm): this is only used for testing for now. Refactor to form part of
+// primary file write path
 template <typename Type>
 class DataPageBuilder {
  public:
-  using CType = typename Type::CType;
+  using c_type = typename Type::c_type;
 
-  // This class writes data and metadata to the passed inputs.
+  // This class writes data and metadata to the passed inputs
   explicit DataPageBuilder(ArrowOutputStream* sink)
       : sink_(sink),
-        numValues_(0),
-        encoding_(Encoding::kPlain),
-        definitionLevelEncoding_(Encoding::kRle),
-        repetitionLevelEncoding_(Encoding::kRle),
-        haveDefLevels_(false),
-        haveRepLevels_(false),
-        haveValues_(false) {}
+        num_values_(0),
+        encoding_(Encoding::PLAIN),
+        definition_level_encoding_(Encoding::RLE),
+        repetition_level_encoding_(Encoding::RLE),
+        have_def_levels_(false),
+        have_rep_levels_(false),
+        have_values_(false) {}
 
-  void appendDefLevels(
+  void AppendDefLevels(
       const std::vector<int16_t>& levels,
-      int16_t maxLevel,
-      Encoding::type encoding = Encoding::kRle) {
-    appendLevels(levels, maxLevel, encoding);
+      int16_t max_level,
+      Encoding::type encoding = Encoding::RLE) {
+    AppendLevels(levels, max_level, encoding);
 
-    numValues_ = std::max(static_cast<int32_t>(levels.size()), numValues_);
-    definitionLevelEncoding_ = encoding;
-    haveDefLevels_ = true;
+    num_values_ = std::max(static_cast<int32_t>(levels.size()), num_values_);
+    definition_level_encoding_ = encoding;
+    have_def_levels_ = true;
   }
 
-  void appendRepLevels(
+  void AppendRepLevels(
       const std::vector<int16_t>& levels,
-      int16_t maxLevel,
-      Encoding::type encoding = Encoding::kRle) {
-    appendLevels(levels, maxLevel, encoding);
+      int16_t max_level,
+      Encoding::type encoding = Encoding::RLE) {
+    AppendLevels(levels, max_level, encoding);
 
-    numValues_ = std::max(static_cast<int32_t>(levels.size()), numValues_);
-    repetitionLevelEncoding_ = encoding;
-    haveRepLevels_ = true;
+    num_values_ = std::max(static_cast<int32_t>(levels.size()), num_values_);
+    repetition_level_encoding_ = encoding;
+    have_rep_levels_ = true;
   }
 
-  void appendValues(
+  void AppendValues(
       const ColumnDescriptor* d,
-      const std::vector<CType>& values,
-      Encoding::type encoding = Encoding::kPlain) {
-    std::shared_ptr<Buffer> valuesSink = encodeValues<Type>(
+      const std::vector<c_type>& values,
+      Encoding::type encoding = Encoding::PLAIN) {
+    std::shared_ptr<Buffer> values_sink = EncodeValues<Type>(
         encoding, false, values.data(), static_cast<int>(values.size()), d);
-    PARQUET_THROW_NOT_OK(sink_->Write(valuesSink->data(), valuesSink->size()));
+    PARQUET_THROW_NOT_OK(
+        sink_->Write(values_sink->data(), values_sink->size()));
 
-    numValues_ = std::max(static_cast<int32_t>(values.size()), numValues_);
+    num_values_ = std::max(static_cast<int32_t>(values.size()), num_values_);
     encoding_ = encoding;
-    haveValues_ = true;
+    have_values_ = true;
   }
 
-  int32_t numValues() const {
-    return numValues_;
+  int32_t num_values() const {
+    return num_values_;
   }
 
   Encoding::type encoding() const {
     return encoding_;
   }
 
-  Encoding::type repLevelEncoding() const {
-    return repetitionLevelEncoding_;
+  Encoding::type rep_level_encoding() const {
+    return repetition_level_encoding_;
   }
 
-  Encoding::type defLevelEncoding() const {
-    return definitionLevelEncoding_;
+  Encoding::type def_level_encoding() const {
+    return definition_level_encoding_;
   }
 
  private:
   ArrowOutputStream* sink_;
 
-  int32_t numValues_;
+  int32_t num_values_;
   Encoding::type encoding_;
-  Encoding::type definitionLevelEncoding_;
-  Encoding::type repetitionLevelEncoding_;
+  Encoding::type definition_level_encoding_;
+  Encoding::type repetition_level_encoding_;
 
-  bool haveDefLevels_;
-  bool haveRepLevels_;
-  bool haveValues_;
+  bool have_def_levels_;
+  bool have_rep_levels_;
+  bool have_values_;
 
-  // Used internally for both repetition and definition levels.
-  void appendLevels(
+  // Used internally for both repetition and definition levels
+  void AppendLevels(
       const std::vector<int16_t>& levels,
-      int16_t maxLevel,
+      int16_t max_level,
       Encoding::type encoding) {
-    if (encoding != Encoding::kRle) {
+    if (encoding != Encoding::RLE) {
       ParquetException::NYI("only rle encoding currently implemented");
     }
 
-    std::vector<uint8_t> encodeBuffer(
-        LevelEncoder::maxBufferSize(
-            Encoding::kRle, maxLevel, static_cast<int>(levels.size())));
+    std::vector<uint8_t> encode_buffer(
+        LevelEncoder::MaxBufferSize(
+            Encoding::RLE, max_level, static_cast<int>(levels.size())));
 
-    // We encode into separate memory from the output stream because the.
-    // RLE-encoded bytes have to be preceded in the stream by their absolute.
-    // Size.
+    // We encode into separate memory from the output stream because the
+    // RLE-encoded bytes have to be preceded in the stream by their absolute
+    // size.
     LevelEncoder encoder;
-    encoder.init(
+    encoder.Init(
         encoding,
-        maxLevel,
+        max_level,
         static_cast<int>(levels.size()),
-        encodeBuffer.data(),
-        static_cast<int>(encodeBuffer.size()));
+        encode_buffer.data(),
+        static_cast<int>(encode_buffer.size()));
 
-    encoder.encode(static_cast<int>(levels.size()), levels.data());
+    encoder.Encode(static_cast<int>(levels.size()), levels.data());
 
-    int32_t rleBytes = encoder.len();
+    int32_t rle_bytes = encoder.len();
     PARQUET_THROW_NOT_OK(sink_->Write(
-        reinterpret_cast<const uint8_t*>(&rleBytes), sizeof(int32_t)));
-    PARQUET_THROW_NOT_OK(sink_->Write(encodeBuffer.data(), rleBytes));
+        reinterpret_cast<const uint8_t*>(&rle_bytes), sizeof(int32_t)));
+    PARQUET_THROW_NOT_OK(sink_->Write(encode_buffer.data(), rle_bytes));
   }
 };
 
 template <>
-inline void DataPageBuilder<BooleanType>::appendValues(
+inline void DataPageBuilder<BooleanType>::AppendValues(
     const ColumnDescriptor* d,
     const std::vector<bool>& values,
     Encoding::type encoding) {
-  if (encoding != Encoding::kPlain) {
+  if (encoding != Encoding::PLAIN) {
     ParquetException::NYI("only plain encoding currently implemented");
   }
 
-  auto encoder = makeTypedEncoder<BooleanType>(Encoding::kPlain, false, d);
+  auto encoder = MakeTypedEncoder<BooleanType>(Encoding::PLAIN, false, d);
   dynamic_cast<BooleanEncoder*>(encoder.get())
-      ->put(values, static_cast<int>(values.size()));
-  std::shared_ptr<Buffer> buffer = encoder->flushValues();
+      ->Put(values, static_cast<int>(values.size()));
+  std::shared_ptr<Buffer> buffer = encoder->FlushValues();
   PARQUET_THROW_NOT_OK(sink_->Write(buffer->data(), buffer->size()));
 
-  numValues_ = std::max(static_cast<int32_t>(values.size()), numValues_);
+  num_values_ = std::max(static_cast<int32_t>(values.size()), num_values_);
   encoding_ = encoding;
-  haveValues_ = true;
+  have_values_ = true;
 }
 
 template <typename Type>
-static std::shared_ptr<DataPageV1> makeDataPage(
+static std::shared_ptr<DataPageV1> MakeDataPage(
     const ColumnDescriptor* d,
-    const std::vector<typename Type::CType>& values,
-    int numVals,
+    const std::vector<typename Type::c_type>& values,
+    int num_vals,
     Encoding::type encoding,
     const uint8_t* indices,
-    int indicesSize,
-    const std::vector<int16_t>& defLevels,
-    int16_t maxDefLevel,
-    const std::vector<int16_t>& repLevels,
-    int16_t maxRepLevel) {
-  int numValues = 0;
+    int indices_size,
+    const std::vector<int16_t>& def_levels,
+    int16_t max_def_level,
+    const std::vector<int16_t>& rep_levels,
+    int16_t max_rep_level) {
+  int num_values = 0;
 
-  auto pageStream = createOutputStream();
-  test::DataPageBuilder<Type> pageBuilder(pageStream.get());
+  auto page_stream = CreateOutputStream();
+  test::DataPageBuilder<Type> page_builder(page_stream.get());
 
-  if (!repLevels.empty()) {
-    pageBuilder.appendRepLevels(repLevels, maxRepLevel);
+  if (!rep_levels.empty()) {
+    page_builder.AppendRepLevels(rep_levels, max_rep_level);
   }
-  if (!defLevels.empty()) {
-    pageBuilder.appendDefLevels(defLevels, maxDefLevel);
+  if (!def_levels.empty()) {
+    page_builder.AppendDefLevels(def_levels, max_def_level);
   }
 
-  if (encoding == Encoding::kPlain) {
-    pageBuilder.appendValues(d, values, encoding);
-    numValues = std::max(pageBuilder.numValues(), numVals);
+  if (encoding == Encoding::PLAIN) {
+    page_builder.AppendValues(d, values, encoding);
+    num_values = std::max(page_builder.num_values(), num_vals);
   } else { // DICTIONARY PAGES
-    PARQUET_THROW_NOT_OK(pageStream->Write(indices, indicesSize));
-    numValues = std::max(pageBuilder.numValues(), numVals);
+    PARQUET_THROW_NOT_OK(page_stream->Write(indices, indices_size));
+    num_values = std::max(page_builder.num_values(), num_vals);
   }
 
-  PARQUET_ASSIGN_OR_THROW(auto buffer, pageStream->Finish());
+  PARQUET_ASSIGN_OR_THROW(auto buffer, page_stream->Finish());
 
   return std::make_shared<DataPageV1>(
       buffer,
-      numValues,
+      num_values,
       encoding,
-      pageBuilder.defLevelEncoding(),
-      pageBuilder.repLevelEncoding(),
+      page_builder.def_level_encoding(),
+      page_builder.rep_level_encoding(),
       buffer->size());
 }
 
 template <typename TYPE>
 class DictionaryPageBuilder {
  public:
-  typedef typename TYPE::CType TC;
-  static constexpr int TN = TYPE::typeNum;
+  typedef typename TYPE::c_type TC;
+  static constexpr int TN = TYPE::type_num;
   using SpecializedEncoder = typename EncodingTraits<TYPE>::Encoder;
 
-  // This class writes data and metadata to the passed inputs.
+  // This class writes data and metadata to the passed inputs
   explicit DictionaryPageBuilder(const ColumnDescriptor* d)
-      : numDictValues_(0), haveValues_(false) {
-    auto encoder = makeTypedEncoder<TYPE>(Encoding::kPlain, true, d);
-    dictTraits_ = dynamic_cast<DictEncoder<TYPE>*>(encoder.get());
+      : num_dict_values_(0), have_values_(false) {
+    auto encoder = MakeTypedEncoder<TYPE>(Encoding::PLAIN, true, d);
+    dict_traits_ = dynamic_cast<DictEncoder<TYPE>*>(encoder.get());
     encoder_.reset(dynamic_cast<SpecializedEncoder*>(encoder.release()));
   }
 
   ~DictionaryPageBuilder() {}
 
-  std::shared_ptr<Buffer> appendValues(const std::vector<TC>& values) {
-    int numValues = static_cast<int>(values.size());
-    // Dictionary encoding.
-    encoder_->put(values.data(), numValues);
-    numDictValues_ = dictTraits_->numEntries();
-    haveValues_ = true;
-    return encoder_->flushValues();
+  std::shared_ptr<Buffer> AppendValues(const std::vector<TC>& values) {
+    int num_values = static_cast<int>(values.size());
+    // Dictionary encoding
+    encoder_->Put(values.data(), num_values);
+    num_dict_values_ = dict_traits_->num_entries();
+    have_values_ = true;
+    return encoder_->FlushValues();
   }
 
-  std::shared_ptr<Buffer> writeDict() {
-    std::shared_ptr<Buffer> dictBuffer = allocateBuffer(
-        ::arrow::default_memory_pool(), dictTraits_->dictEncodedSize());
-    dictTraits_->writeDict(dictBuffer->mutable_data());
-    return dictBuffer;
+  std::shared_ptr<Buffer> WriteDict() {
+    std::shared_ptr<Buffer> dict_buffer = AllocateBuffer(
+        ::arrow::default_memory_pool(), dict_traits_->dict_encoded_size());
+    dict_traits_->WriteDict(dict_buffer->mutable_data());
+    return dict_buffer;
   }
 
-  int32_t numValues() const {
-    return numDictValues_;
+  int32_t num_values() const {
+    return num_dict_values_;
   }
 
  private:
-  DictEncoder<TYPE>* dictTraits_;
+  DictEncoder<TYPE>* dict_traits_;
   std::unique_ptr<SpecializedEncoder> encoder_;
-  int32_t numDictValues_;
-  bool haveValues_;
+  int32_t num_dict_values_;
+  bool have_values_;
 };
 
 template <>
@@ -504,14 +505,14 @@ inline DictionaryPageBuilder<BooleanType>::DictionaryPageBuilder(
 }
 
 template <>
-inline std::shared_ptr<Buffer> DictionaryPageBuilder<BooleanType>::writeDict() {
+inline std::shared_ptr<Buffer> DictionaryPageBuilder<BooleanType>::WriteDict() {
   ParquetException::NYI(
       "only plain encoding currently implemented for boolean");
   return nullptr;
 }
 
 template <>
-inline std::shared_ptr<Buffer> DictionaryPageBuilder<BooleanType>::appendValues(
+inline std::shared_ptr<Buffer> DictionaryPageBuilder<BooleanType>::AppendValues(
     const std::vector<TC>& values) {
   ParquetException::NYI(
       "only plain encoding currently implemented for boolean");
@@ -519,212 +520,213 @@ inline std::shared_ptr<Buffer> DictionaryPageBuilder<BooleanType>::appendValues(
 }
 
 template <typename Type>
-inline static std::shared_ptr<DictionaryPage> makeDictPage(
+inline static std::shared_ptr<DictionaryPage> MakeDictPage(
     const ColumnDescriptor* d,
-    const std::vector<typename Type::CType>& values,
-    const std::vector<int>& valuesPerPage,
+    const std::vector<typename Type::c_type>& values,
+    const std::vector<int>& values_per_page,
     Encoding::type encoding,
-    std::vector<std::shared_ptr<Buffer>>& rleIndices) {
-  test::DictionaryPageBuilder<Type> pageBuilder(d);
-  int numPages = static_cast<int>(valuesPerPage.size());
-  int valueStart = 0;
+    std::vector<std::shared_ptr<Buffer>>& rle_indices) {
+  test::DictionaryPageBuilder<Type> page_builder(d);
+  int num_pages = static_cast<int>(values_per_page.size());
+  int value_start = 0;
 
-  for (int i = 0; i < numPages; i++) {
-    rleIndices.push_back(pageBuilder.appendValues(
-        slice(values, valueStart, valueStart + valuesPerPage[i])));
-    valueStart += valuesPerPage[i];
+  for (int i = 0; i < num_pages; i++) {
+    rle_indices.push_back(page_builder.AppendValues(
+        slice(values, value_start, value_start + values_per_page[i])));
+    value_start += values_per_page[i];
   }
 
-  auto buffer = pageBuilder.writeDict();
+  auto buffer = page_builder.WriteDict();
 
   return std::make_shared<DictionaryPage>(
-      buffer, pageBuilder.numValues(), Encoding::kPlain);
+      buffer, page_builder.num_values(), Encoding::PLAIN);
 }
 
-// Given def/rep levels and values create multiple dict pages.
+// Given def/rep levels and values create multiple dict pages
 template <typename Type>
-inline static void paginateDict(
+inline static void PaginateDict(
     const ColumnDescriptor* d,
-    const std::vector<typename Type::CType>& values,
-    const std::vector<int16_t>& defLevels,
-    int16_t maxDefLevel,
-    const std::vector<int16_t>& repLevels,
-    int16_t maxRepLevel,
-    int numLevelsPerPage,
-    const std::vector<int>& valuesPerPage,
+    const std::vector<typename Type::c_type>& values,
+    const std::vector<int16_t>& def_levels,
+    int16_t max_def_level,
+    const std::vector<int16_t>& rep_levels,
+    int16_t max_rep_level,
+    int num_levels_per_page,
+    const std::vector<int>& values_per_page,
     std::vector<std::shared_ptr<Page>>& pages,
-    Encoding::type encoding = Encoding::kRleDictionary) {
-  int numPages = static_cast<int>(valuesPerPage.size());
-  std::vector<std::shared_ptr<Buffer>> rleIndices;
-  std::shared_ptr<DictionaryPage> dictPage =
-      makeDictPage<Type>(d, values, valuesPerPage, encoding, rleIndices);
-  pages.push_back(dictPage);
-  int defLevelStart = 0;
-  int defLevelEnd = 0;
-  int repLevelStart = 0;
-  int repLevelEnd = 0;
-  for (int i = 0; i < numPages; i++) {
-    if (maxDefLevel > 0) {
-      defLevelStart = i * numLevelsPerPage;
-      defLevelEnd = (i + 1) * numLevelsPerPage;
+    Encoding::type encoding = Encoding::RLE_DICTIONARY) {
+  int num_pages = static_cast<int>(values_per_page.size());
+  std::vector<std::shared_ptr<Buffer>> rle_indices;
+  std::shared_ptr<DictionaryPage> dict_page =
+      MakeDictPage<Type>(d, values, values_per_page, encoding, rle_indices);
+  pages.push_back(dict_page);
+  int def_level_start = 0;
+  int def_level_end = 0;
+  int rep_level_start = 0;
+  int rep_level_end = 0;
+  for (int i = 0; i < num_pages; i++) {
+    if (max_def_level > 0) {
+      def_level_start = i * num_levels_per_page;
+      def_level_end = (i + 1) * num_levels_per_page;
     }
-    if (maxRepLevel > 0) {
-      repLevelStart = i * numLevelsPerPage;
-      repLevelEnd = (i + 1) * numLevelsPerPage;
+    if (max_rep_level > 0) {
+      rep_level_start = i * num_levels_per_page;
+      rep_level_end = (i + 1) * num_levels_per_page;
     }
-    std::shared_ptr<DataPageV1> dataPage = makeDataPage<Int32Type>(
+    std::shared_ptr<DataPageV1> data_page = MakeDataPage<Int32Type>(
         d,
         {},
-        valuesPerPage[i],
+        values_per_page[i],
         encoding,
-        rleIndices[i]->data(),
-        static_cast<int>(rleIndices[i]->size()),
-        slice(defLevels, defLevelStart, defLevelEnd),
-        maxDefLevel,
-        slice(repLevels, repLevelStart, repLevelEnd),
-        maxRepLevel);
-    pages.push_back(dataPage);
+        rle_indices[i]->data(),
+        static_cast<int>(rle_indices[i]->size()),
+        slice(def_levels, def_level_start, def_level_end),
+        max_def_level,
+        slice(rep_levels, rep_level_start, rep_level_end),
+        max_rep_level);
+    pages.push_back(data_page);
   }
 }
 
-// Given def/rep levels and values create multiple plain pages.
+// Given def/rep levels and values create multiple plain pages
 template <typename Type>
-static inline void paginatePlain(
+static inline void PaginatePlain(
     const ColumnDescriptor* d,
-    const std::vector<typename Type::CType>& values,
-    const std::vector<int16_t>& defLevels,
-    int16_t maxDefLevel,
-    const std::vector<int16_t>& repLevels,
-    int16_t maxRepLevel,
-    int numLevelsPerPage,
-    const std::vector<int>& valuesPerPage,
+    const std::vector<typename Type::c_type>& values,
+    const std::vector<int16_t>& def_levels,
+    int16_t max_def_level,
+    const std::vector<int16_t>& rep_levels,
+    int16_t max_rep_level,
+    int num_levels_per_page,
+    const std::vector<int>& values_per_page,
     std::vector<std::shared_ptr<Page>>& pages,
-    Encoding::type encoding = Encoding::kPlain) {
-  int numPages = static_cast<int>(valuesPerPage.size());
-  int defLevelStart = 0;
-  int defLevelEnd = 0;
-  int repLevelStart = 0;
-  int repLevelEnd = 0;
-  int valueStart = 0;
-  for (int i = 0; i < numPages; i++) {
-    if (maxDefLevel > 0) {
-      defLevelStart = i * numLevelsPerPage;
-      defLevelEnd = (i + 1) * numLevelsPerPage;
+    Encoding::type encoding = Encoding::PLAIN) {
+  int num_pages = static_cast<int>(values_per_page.size());
+  int def_level_start = 0;
+  int def_level_end = 0;
+  int rep_level_start = 0;
+  int rep_level_end = 0;
+  int value_start = 0;
+  for (int i = 0; i < num_pages; i++) {
+    if (max_def_level > 0) {
+      def_level_start = i * num_levels_per_page;
+      def_level_end = (i + 1) * num_levels_per_page;
     }
-    if (maxRepLevel > 0) {
-      repLevelStart = i * numLevelsPerPage;
-      repLevelEnd = (i + 1) * numLevelsPerPage;
+    if (max_rep_level > 0) {
+      rep_level_start = i * num_levels_per_page;
+      rep_level_end = (i + 1) * num_levels_per_page;
     }
-    std::shared_ptr<DataPage> page = makeDataPage<Type>(
+    std::shared_ptr<DataPage> page = MakeDataPage<Type>(
         d,
-        slice(values, valueStart, valueStart + valuesPerPage[i]),
-        valuesPerPage[i],
+        slice(values, value_start, value_start + values_per_page[i]),
+        values_per_page[i],
         encoding,
         nullptr,
         0,
-        slice(defLevels, defLevelStart, defLevelEnd),
-        maxDefLevel,
-        slice(repLevels, repLevelStart, repLevelEnd),
-        maxRepLevel);
+        slice(def_levels, def_level_start, def_level_end),
+        max_def_level,
+        slice(rep_levels, rep_level_start, rep_level_end),
+        max_rep_level);
     pages.push_back(page);
-    valueStart += valuesPerPage[i];
+    value_start += values_per_page[i];
   }
 }
 
-// Generates pages from randomly generated data.
+// Generates pages from randomly generated data
 template <typename Type>
-static inline int makePages(
+static inline int MakePages(
     const ColumnDescriptor* d,
-    int numPages,
-    int levelsPerPage,
-    std::vector<int16_t>& defLevels,
-    std::vector<int16_t>& repLevels,
-    std::vector<typename Type::CType>& values,
+    int num_pages,
+    int levels_per_page,
+    std::vector<int16_t>& def_levels,
+    std::vector<int16_t>& rep_levels,
+    std::vector<typename Type::c_type>& values,
     std::vector<uint8_t>& buffer,
     std::vector<std::shared_ptr<Page>>& pages,
-    Encoding::type encoding = Encoding::kPlain,
+    Encoding::type encoding = Encoding::PLAIN,
     uint32_t seed = 0) {
-  int numLevels = levelsPerPage * numPages;
-  int numValues = 0;
+  int num_levels = levels_per_page * num_pages;
+  int num_values = 0;
   int16_t zero = 0;
-  int16_t maxDefLevel = d->maxDefinitionLevel();
-  int16_t maxRepLevel = d->maxRepetitionLevel();
-  std::vector<int> valuesPerPage(numPages, levelsPerPage);
-  // Create definition levels.
-  if (maxDefLevel > 0 && numLevels != 0) {
-    defLevels.resize(numLevels);
-    randomNumbers(numLevels, seed, zero, maxDefLevel, defLevels.data());
-    for (int p = 0; p < numPages; p++) {
-      int numValuesPerPage = 0;
-      for (int i = 0; i < levelsPerPage; i++) {
-        if (defLevels[i + p * levelsPerPage] == maxDefLevel) {
-          numValuesPerPage++;
-          numValues++;
+  int16_t max_def_level = d->max_definition_level();
+  int16_t max_rep_level = d->max_repetition_level();
+  std::vector<int> values_per_page(num_pages, levels_per_page);
+  // Create definition levels
+  if (max_def_level > 0 && num_levels != 0) {
+    def_levels.resize(num_levels);
+    random_numbers(num_levels, seed, zero, max_def_level, def_levels.data());
+    for (int p = 0; p < num_pages; p++) {
+      int num_values_per_page = 0;
+      for (int i = 0; i < levels_per_page; i++) {
+        if (def_levels[i + p * levels_per_page] == max_def_level) {
+          num_values_per_page++;
+          num_values++;
         }
       }
-      valuesPerPage[p] = numValuesPerPage;
+      values_per_page[p] = num_values_per_page;
     }
   } else {
-    numValues = numLevels;
+    num_values = num_levels;
   }
-  // Create repitition levels.
-  if (maxRepLevel > 0 && numLevels != 0) {
-    repLevels.resize(numLevels);
+  // Create repitition levels
+  if (max_rep_level > 0 && num_levels != 0) {
+    rep_levels.resize(num_levels);
     // Using a different seed so that def_levels and rep_levels are different.
-    randomNumbers(numLevels, seed + 789, zero, maxRepLevel, repLevels.data());
-    // The generated levels are random. Force the very first page to start with.
-    // A new record.
-    repLevels[0] = 0;
+    random_numbers(
+        num_levels, seed + 789, zero, max_rep_level, rep_levels.data());
+    // The generated levels are random. Force the very first page to start with
+    // a new record.
+    rep_levels[0] = 0;
     // For a null value, rep_levels and def_levels are both 0.
-    // If we have a repeated value right after this, it needs to start with.
-    // Rep_level = 0 to indicate a new record.
-    for (int i = 0; i < numLevels - 1; ++i) {
-      if (repLevels[i] == 0 && defLevels[i] == 0) {
-        repLevels[i + 1] = 0;
+    // If we have a repeated value right after this, it needs to start with
+    // rep_level = 0 to indicate a new record.
+    for (int i = 0; i < num_levels - 1; ++i) {
+      if (rep_levels[i] == 0 && def_levels[i] == 0) {
+        rep_levels[i + 1] = 0;
       }
     }
   }
-  // Create values.
-  values.resize(numValues);
-  if (encoding == Encoding::kPlain) {
-    initValues<typename Type::CType>(numValues, values, buffer);
-    paginatePlain<Type>(
+  // Create values
+  values.resize(num_values);
+  if (encoding == Encoding::PLAIN) {
+    InitValues<typename Type::c_type>(num_values, values, buffer);
+    PaginatePlain<Type>(
         d,
         values,
-        defLevels,
-        maxDefLevel,
-        repLevels,
-        maxRepLevel,
-        levelsPerPage,
-        valuesPerPage,
+        def_levels,
+        max_def_level,
+        rep_levels,
+        max_rep_level,
+        levels_per_page,
+        values_per_page,
         pages);
   } else if (
-      encoding == Encoding::kRleDictionary ||
-      encoding == Encoding::kPlainDictionary) {
-    // Calls InitValues and repeats the data.
-    initDictValues<typename Type::CType>(
-        numValues, levelsPerPage, values, buffer);
-    paginateDict<Type>(
+      encoding == Encoding::RLE_DICTIONARY ||
+      encoding == Encoding::PLAIN_DICTIONARY) {
+    // Calls InitValues and repeats the data
+    InitDictValues<typename Type::c_type>(
+        num_values, levels_per_page, values, buffer);
+    PaginateDict<Type>(
         d,
         values,
-        defLevels,
-        maxDefLevel,
-        repLevels,
-        maxRepLevel,
-        levelsPerPage,
-        valuesPerPage,
+        def_levels,
+        max_def_level,
+        rep_levels,
+        max_rep_level,
+        levels_per_page,
+        values_per_page,
         pages);
   }
 
-  return numValues;
+  return num_values;
 }
 
-// ----------------------------------------------------------------------.
-// Test data generation.
+// ----------------------------------------------------------------------
+// Test data generation
 
 template <>
-void inline initValues<bool>(
-    int numValues,
+void inline InitValues<bool>(
+    int num_values,
     uint32_t seed,
     std::vector<bool>& values,
     std::vector<uint8_t>& buffer) {
@@ -732,183 +734,186 @@ void inline initValues<bool>(
   if (seed == 0) {
     seed = static_cast<uint32_t>(::arrow::random_seed());
   }
-  ::arrow::random_is_valid(numValues, 0.5, &values, static_cast<int>(seed));
+  ::arrow::random_is_valid(num_values, 0.5, &values, static_cast<int>(seed));
 }
 
 template <>
-inline void initValues<ByteArray>(
-    int numValues,
+inline void InitValues<ByteArray>(
+    int num_values,
     uint32_t seed,
     std::vector<ByteArray>& values,
     std::vector<uint8_t>& buffer) {
-  int maxByteArrayLen = 12;
-  int numBytes = static_cast<int>(maxByteArrayLen + sizeof(uint32_t));
-  size_t nbytes = numValues * numBytes;
+  int max_byte_array_len = 12;
+  int num_bytes = static_cast<int>(max_byte_array_len + sizeof(uint32_t));
+  size_t nbytes = num_values * num_bytes;
   buffer.resize(nbytes);
-  randomByteArray(
-      numValues, seed, buffer.data(), values.data(), maxByteArrayLen);
+  random_byte_array(
+      num_values, seed, buffer.data(), values.data(), max_byte_array_len);
 }
 
-inline void initWideByteArrayValues(
-    int numValues,
+inline void InitWideByteArrayValues(
+    int num_values,
     std::vector<ByteArray>& values,
     std::vector<uint8_t>& buffer,
-    int minLen,
-    int maxLen) {
-  int numBytes = static_cast<int>(maxLen + sizeof(uint32_t));
-  size_t nbytes = numValues * numBytes;
+    int min_len,
+    int max_len) {
+  int num_bytes = static_cast<int>(max_len + sizeof(uint32_t));
+  size_t nbytes = num_values * num_bytes;
   buffer.resize(nbytes);
-  randomByteArray(numValues, 0, buffer.data(), values.data(), minLen, maxLen);
+  random_byte_array(
+      num_values, 0, buffer.data(), values.data(), min_len, max_len);
 }
 
 template <>
-inline void initValues<FLBA>(
-    int numValues,
+inline void InitValues<FLBA>(
+    int num_values,
     uint32_t seed,
     std::vector<FLBA>& values,
     std::vector<uint8_t>& buffer) {
-  size_t nbytes = numValues * FLBA_LENGTH;
+  size_t nbytes = num_values * FLBA_LENGTH;
   buffer.resize(nbytes);
-  randomFixedByteArray(
-      numValues, seed, buffer.data(), FLBA_LENGTH, values.data());
+  random_fixed_byte_array(
+      num_values, seed, buffer.data(), FLBA_LENGTH, values.data());
 }
 
 template <>
-inline void initValues<Int96>(
-    int numValues,
+inline void InitValues<Int96>(
+    int num_values,
     uint32_t seed,
     std::vector<Int96>& values,
     std::vector<uint8_t>& buffer) {
-  randomInt96Numbers(
-      numValues,
+  random_Int96_numbers(
+      num_values,
       seed,
       std::numeric_limits<int32_t>::min(),
       std::numeric_limits<int32_t>::max(),
       values.data());
 }
 
-inline std::string testColumnName(int i) {
-  std::stringstream colName;
-  colName << "column_" << i;
-  return colName.str();
+inline std::string TestColumnName(int i) {
+  std::stringstream col_name;
+  col_name << "column_" << i;
+  return col_name.str();
 }
 
-// This class lives here because of its dependency on the InitValues.
-// Specializations.
+// This class lives here because of its dependency on the InitValues
+// specializations.
 template <typename TestType>
 class PrimitiveTypedTest : public ::testing::Test {
  public:
-  using CType = typename TestType::CType;
+  using c_type = typename TestType::c_type;
 
-  void setUpSchema(Repetition::type repetition, int numColumns = 1) {
+  void SetUpSchema(Repetition::type repetition, int num_columns = 1) {
     std::vector<schema::NodePtr> fields;
 
-    for (int i = 0; i < numColumns; ++i) {
-      std::string name = testColumnName(i);
+    for (int i = 0; i < num_columns; ++i) {
+      std::string name = TestColumnName(i);
       fields.push_back(
-          schema::PrimitiveNode::make(
+          schema::PrimitiveNode::Make(
               name,
               repetition,
-              TestType::typeNum,
-              ConvertedType::kNone,
+              TestType::type_num,
+              ConvertedType::NONE,
               FLBA_LENGTH));
     }
-    node_ = schema::GroupNode::make("schema", Repetition::kRequired, fields);
-    schema_.init(node_);
+    node_ = schema::GroupNode::Make("schema", Repetition::REQUIRED, fields);
+    schema_.Init(node_);
   }
 
-  void generateData(int64_t numValues, uint32_t seed = 0);
-  void setupValuesOut(int64_t numValues);
-  void syncValuesOut();
+  void GenerateData(int64_t num_values, uint32_t seed = 0);
+  void SetupValuesOut(int64_t num_values);
+  void SyncValuesOut();
 
  protected:
   schema::NodePtr node_;
   SchemaDescriptor schema_;
 
-  // Input buffers.
-  std::vector<CType> values_;
+  // Input buffers
+  std::vector<c_type> values_;
 
-  std::vector<int16_t> defLevels_;
+  std::vector<int16_t> def_levels_;
 
   std::vector<uint8_t> buffer_;
   // Pointer to the values, needed as we cannot use std::vector<bool>::data()
-  CType* valuesPtr_;
-  std::vector<uint8_t> boolBuffer_;
+  c_type* values_ptr_;
+  std::vector<uint8_t> bool_buffer_;
 
-  // Output buffers.
-  std::vector<CType> valuesOut_;
-  std::vector<uint8_t> boolBufferOut_;
-  CType* valuesOutPtr_;
+  // Output buffers
+  std::vector<c_type> values_out_;
+  std::vector<uint8_t> bool_buffer_out_;
+  c_type* values_out_ptr_;
 };
 
 template <typename TestType>
-inline void PrimitiveTypedTest<TestType>::syncValuesOut() {}
+inline void PrimitiveTypedTest<TestType>::SyncValuesOut() {}
 
 template <>
-inline void PrimitiveTypedTest<BooleanType>::syncValuesOut() {
-  std::vector<uint8_t>::const_iterator sourceIterator = boolBufferOut_.begin();
-  std::vector<CType>::iterator destinationIterator = valuesOut_.begin();
-  while (sourceIterator != boolBufferOut_.end()) {
-    *destinationIterator++ = *sourceIterator++ != 0;
+inline void PrimitiveTypedTest<BooleanType>::SyncValuesOut() {
+  std::vector<uint8_t>::const_iterator source_iterator =
+      bool_buffer_out_.begin();
+  std::vector<c_type>::iterator destination_iterator = values_out_.begin();
+  while (source_iterator != bool_buffer_out_.end()) {
+    *destination_iterator++ = *source_iterator++ != 0;
   }
 }
 
 template <typename TestType>
-inline void PrimitiveTypedTest<TestType>::setupValuesOut(int64_t numValues) {
-  valuesOut_.clear();
-  valuesOut_.resize(numValues);
-  valuesOutPtr_ = valuesOut_.data();
+inline void PrimitiveTypedTest<TestType>::SetupValuesOut(int64_t num_values) {
+  values_out_.clear();
+  values_out_.resize(num_values);
+  values_out_ptr_ = values_out_.data();
 }
 
 template <>
-inline void PrimitiveTypedTest<BooleanType>::setupValuesOut(int64_t numValues) {
-  valuesOut_.clear();
-  valuesOut_.resize(numValues);
+inline void PrimitiveTypedTest<BooleanType>::SetupValuesOut(
+    int64_t num_values) {
+  values_out_.clear();
+  values_out_.resize(num_values);
 
-  boolBufferOut_.clear();
-  boolBufferOut_.resize(numValues);
-  // Write once to all values so we can copy it without getting Valgrind errors.
-  // About uninitialised values.
-  std::fill(boolBufferOut_.begin(), boolBufferOut_.end(), true);
-  valuesOutPtr_ = reinterpret_cast<bool*>(boolBufferOut_.data());
+  bool_buffer_out_.clear();
+  bool_buffer_out_.resize(num_values);
+  // Write once to all values so we can copy it without getting Valgrind errors
+  // about uninitialised values.
+  std::fill(bool_buffer_out_.begin(), bool_buffer_out_.end(), true);
+  values_out_ptr_ = reinterpret_cast<bool*>(bool_buffer_out_.data());
 }
 
 template <typename TestType>
-inline void PrimitiveTypedTest<TestType>::generateData(
-    int64_t numValues,
+inline void PrimitiveTypedTest<TestType>::GenerateData(
+    int64_t num_values,
     uint32_t seed) {
-  defLevels_.resize(numValues);
-  values_.resize(numValues);
+  def_levels_.resize(num_values);
+  values_.resize(num_values);
 
-  initValues<CType>(static_cast<int>(numValues), seed, values_, buffer_);
-  valuesPtr_ = values_.data();
+  InitValues<c_type>(static_cast<int>(num_values), seed, values_, buffer_);
+  values_ptr_ = values_.data();
 
-  std::fill(defLevels_.begin(), defLevels_.end(), 1);
+  std::fill(def_levels_.begin(), def_levels_.end(), 1);
 }
 
 template <>
-inline void PrimitiveTypedTest<BooleanType>::generateData(
-    int64_t numValues,
+inline void PrimitiveTypedTest<BooleanType>::GenerateData(
+    int64_t num_values,
     uint32_t seed) {
-  defLevels_.resize(numValues);
-  values_.resize(numValues);
+  def_levels_.resize(num_values);
+  values_.resize(num_values);
 
-  initValues<CType>(static_cast<int>(numValues), seed, values_, buffer_);
-  boolBuffer_.resize(numValues);
-  std::copy(values_.begin(), values_.end(), boolBuffer_.begin());
-  valuesPtr_ = reinterpret_cast<bool*>(boolBuffer_.data());
+  InitValues<c_type>(static_cast<int>(num_values), seed, values_, buffer_);
+  bool_buffer_.resize(num_values);
+  std::copy(values_.begin(), values_.end(), bool_buffer_.begin());
+  values_ptr_ = reinterpret_cast<bool*>(bool_buffer_.data());
 
-  std::fill(defLevels_.begin(), defLevels_.end(), 1);
+  std::fill(def_levels_.begin(), def_levels_.end(), 1);
 }
 
-// ----------------------------------------------------------------------.
-// Test data generation.
+// ----------------------------------------------------------------------
+// test data generation
 
 template <typename T>
-inline void generateData(int numValues, T* out, std::vector<uint8_t>* heap) {
-  // Seed the prng so failure is deterministic.
-  randomNumbers(
-      numValues,
+inline void GenerateData(int num_values, T* out, std::vector<uint8_t>* heap) {
+  // seed the prng so failure is deterministic
+  random_numbers(
+      num_values,
       0,
       std::numeric_limits<T>::min(),
       std::numeric_limits<T>::max(),
@@ -916,29 +921,29 @@ inline void generateData(int numValues, T* out, std::vector<uint8_t>* heap) {
 }
 
 template <typename T>
-inline void generateBoundData(
-    int numValues,
+inline void GenerateBoundData(
+    int num_values,
     T* out,
     T min,
     T max,
     std::vector<uint8_t>* heap) {
-  // Seed the prng so failure is deterministic.
-  randomNumbers(numValues, 0, min, max, out);
+  // seed the prng so failure is deterministic
+  random_numbers(num_values, 0, min, max, out);
 }
 
 template <>
 inline void
-generateData<bool>(int numValues, bool* out, std::vector<uint8_t>* heap) {
-  // Seed the prng so failure is deterministic.
-  randomBools(numValues, 0.5, 0, out);
+GenerateData<bool>(int num_values, bool* out, std::vector<uint8_t>* heap) {
+  // seed the prng so failure is deterministic
+  random_bools(num_values, 0.5, 0, out);
 }
 
 template <>
 inline void
-generateData<Int96>(int numValues, Int96* out, std::vector<uint8_t>* heap) {
-  // Seed the prng so failure is deterministic.
-  randomInt96Numbers(
-      numValues,
+GenerateData<Int96>(int num_values, Int96* out, std::vector<uint8_t>* heap) {
+  // seed the prng so failure is deterministic
+  random_Int96_numbers(
+      num_values,
       0,
       std::numeric_limits<int32_t>::min(),
       std::numeric_limits<int32_t>::max(),
@@ -946,25 +951,25 @@ generateData<Int96>(int numValues, Int96* out, std::vector<uint8_t>* heap) {
 }
 
 template <>
-inline void generateData<ByteArray>(
-    int numValues,
+inline void GenerateData<ByteArray>(
+    int num_values,
     ByteArray* out,
     std::vector<uint8_t>* heap) {
-  // Seed the prng so failure is deterministic.
-  int maxByteArrayLen = 12;
-  heap->resize(numValues * maxByteArrayLen);
-  randomByteArray(numValues, 0, heap->data(), out, 2, maxByteArrayLen);
+  // seed the prng so failure is deterministic
+  int max_byte_array_len = 12;
+  heap->resize(num_values * max_byte_array_len);
+  random_byte_array(num_values, 0, heap->data(), out, 2, max_byte_array_len);
 }
 
 static constexpr int kGenerateDataFLBALength = 8;
 
 template <>
 inline void
-generateData<FLBA>(int numValues, FLBA* out, std::vector<uint8_t>* heap) {
-  // Seed the prng so failure is deterministic.
-  heap->resize(numValues * kGenerateDataFLBALength);
-  randomFixedByteArray(
-      numValues, 0, heap->data(), kGenerateDataFLBALength, out);
+GenerateData<FLBA>(int num_values, FLBA* out, std::vector<uint8_t>* heap) {
+  // seed the prng so failure is deterministic
+  heap->resize(num_values * kGenerateDataFLBALength);
+  random_fixed_byte_array(
+      num_values, 0, heap->data(), kGenerateDataFLBALength, out);
 }
 
 } // namespace test

@@ -37,29 +37,32 @@ class FileDecryptionProperties;
 class PARQUET_EXPORT Decryptor {
  public:
   Decryptor(
-      std::shared_ptr<encryption::AesDecryptor> Decryptor,
+      std::shared_ptr<encryption::AesDecryptor> decryptor,
       const std::string& key,
-      const std::string& fileAad,
+      const std::string& file_aad,
       const std::string& aad,
       ::arrow::MemoryPool* pool);
 
-  const std::string& fileAad() const {
-    return fileAad_;
+  const std::string& file_aad() const {
+    return file_aad_;
   }
-  void updateAad(const std::string& aad) {
+  void UpdateAad(const std::string& aad) {
     aad_ = aad;
   }
   ::arrow::MemoryPool* pool() {
     return pool_;
   }
 
-  int ciphertextSizeDelta();
-  int decrypt(const uint8_t* ciphertext, int ciphertextLen, uint8_t* plaintext);
+  int CiphertextSizeDelta();
+  int Decrypt(
+      const uint8_t* ciphertext,
+      int ciphertext_len,
+      uint8_t* plaintext);
 
  private:
-  std::shared_ptr<encryption::AesDecryptor> aesDecryptor_;
+  std::shared_ptr<encryption::AesDecryptor> aes_decryptor_;
   std::string key_;
-  std::string fileAad_;
+  std::string file_aad_;
   std::string aad_;
   ::arrow::MemoryPool* pool_;
 };
@@ -68,72 +71,72 @@ class InternalFileDecryptor {
  public:
   explicit InternalFileDecryptor(
       FileDecryptionProperties* properties,
-      const std::string& fileAad,
+      const std::string& file_aad,
       ParquetCipher::type algorithm,
-      const std::string& footerKeyMetadata,
+      const std::string& footer_key_metadata,
       ::arrow::MemoryPool* pool);
 
-  std::string& fileAad() {
-    return fileAad_;
+  std::string& file_aad() {
+    return file_aad_;
   }
 
-  std::string getFooterKey();
+  std::string GetFooterKey();
 
   ParquetCipher::type algorithm() {
     return algorithm_;
   }
 
-  std::string& footerKeyMetadata() {
-    return footerKeyMetadata_;
+  std::string& footer_key_metadata() {
+    return footer_key_metadata_;
   }
 
   FileDecryptionProperties* properties() {
     return properties_;
   }
 
-  void wipeOutDecryptionKeys();
+  void WipeOutDecryptionKeys();
 
   ::arrow::MemoryPool* pool() {
     return pool_;
   }
 
-  std::shared_ptr<Decryptor> getFooterDecryptor();
-  std::shared_ptr<Decryptor> getFooterDecryptorForColumnMeta(
+  std::shared_ptr<Decryptor> GetFooterDecryptor();
+  std::shared_ptr<Decryptor> GetFooterDecryptorForColumnMeta(
       const std::string& aad = "");
-  std::shared_ptr<Decryptor> getFooterDecryptorForColumnData(
+  std::shared_ptr<Decryptor> GetFooterDecryptorForColumnData(
       const std::string& aad = "");
-  std::shared_ptr<Decryptor> getColumnMetaDecryptor(
-      const std::string& ColumnPath,
-      const std::string& columnKeyMetadata,
+  std::shared_ptr<Decryptor> GetColumnMetaDecryptor(
+      const std::string& column_path,
+      const std::string& column_key_metadata,
       const std::string& aad = "");
-  std::shared_ptr<Decryptor> getColumnDataDecryptor(
-      const std::string& ColumnPath,
-      const std::string& columnKeyMetadata,
+  std::shared_ptr<Decryptor> GetColumnDataDecryptor(
+      const std::string& column_path,
+      const std::string& column_key_metadata,
       const std::string& aad = "");
 
  private:
   FileDecryptionProperties* properties_;
-  // Concatenation of aad_prefix (if exists) and aad_file_unique.
-  std::string fileAad_;
-  std::map<std::string, std::shared_ptr<Decryptor>> columnDataMap_;
-  std::map<std::string, std::shared_ptr<Decryptor>> columnMetadataMap_;
+  // Concatenation of aad_prefix (if exists) and aad_file_unique
+  std::string file_aad_;
+  std::map<std::string, std::shared_ptr<Decryptor>> column_data_map_;
+  std::map<std::string, std::shared_ptr<Decryptor>> column_metadata_map_;
 
-  std::shared_ptr<Decryptor> footerMetadataDecryptor_;
-  std::shared_ptr<Decryptor> footerDataDecryptor_;
+  std::shared_ptr<Decryptor> footer_metadata_decryptor_;
+  std::shared_ptr<Decryptor> footer_data_decryptor_;
   ParquetCipher::type algorithm_;
-  std::string footerKeyMetadata_;
-  // A weak reference to all decryptors that need to be wiped out when.
-  // Decryption is finished.
-  std::vector<std::weak_ptr<encryption::AesDecryptor>> allDecryptors_;
+  std::string footer_key_metadata_;
+  // A weak reference to all decryptors that need to be wiped out when
+  // decryption is finished
+  std::vector<std::weak_ptr<encryption::AesDecryptor>> all_decryptors_;
 
   ::arrow::MemoryPool* pool_;
 
-  std::shared_ptr<Decryptor> getFooterDecryptor(
+  std::shared_ptr<Decryptor> GetFooterDecryptor(
       const std::string& aad,
       bool metadata);
-  std::shared_ptr<Decryptor> getColumnDecryptor(
-      const std::string& ColumnPath,
-      const std::string& columnKeyMetadata,
+  std::shared_ptr<Decryptor> GetColumnDecryptor(
+      const std::string& column_path,
+      const std::string& column_key_metadata,
       const std::string& aad,
       bool metadata = false);
 };

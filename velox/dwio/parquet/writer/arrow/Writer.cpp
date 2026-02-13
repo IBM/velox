@@ -75,232 +75,233 @@ using schema::GroupNode;
 
 namespace {
 
-int calculateLeafCount(const DataType* type) {
+int CalculateLeafCount(const DataType* type) {
   if (type->id() == ::arrow::Type::EXTENSION) {
     type = checked_cast<const ExtensionType&>(*type).storage_type().get();
   }
-  // Note numFields() can be 0 for an empty struct type.
+  // Note num_fields() can be 0 for an empty struct type
   if (!::arrow::is_nested(type->id())) {
     // Primitive type.
     return 1;
   }
 
-  int numLeaves = 0;
+  int num_leaves = 0;
   for (const auto& field : type->fields()) {
-    numLeaves += calculateLeafCount(field->type().get());
+    num_leaves += CalculateLeafCount(field->type().get());
   }
-  return numLeaves;
+  return num_leaves;
 }
 
 // Determines if the |schema_field|'s root ancestor is nullable.
-bool hasNullableRoot(
-    const SchemaManifest& schemaManifest,
-    const SchemaField* schemaField) {
-  VELOX_DCHECK_NOT_NULL(schemaField);
-  const SchemaField* currentField = schemaField;
-  bool nullable = schemaField->field->nullable();
-  while (currentField != nullptr) {
-    nullable = currentField->field->nullable();
-    currentField = schemaManifest.getParent(currentField);
+bool HasNullableRoot(
+    const SchemaManifest& schema_manifest,
+    const SchemaField* schema_field) {
+  VELOX_DCHECK_NOT_NULL(schema_field);
+  const SchemaField* current_field = schema_field;
+  bool nullable = schema_field->field->nullable();
+  while (current_field != nullptr) {
+    nullable = current_field->field->nullable();
+    current_field = schema_manifest.GetParent(current_field);
   }
   return nullable;
 }
 
-// Manages writing nested parquet columns with support for all nested types.
-// Supported by Parquet.
+// Manages writing nested parquet columns with support for all nested types
+// supported by parquet.
 class ArrowColumnWriterV2 {
  public:
-  // Constructs a new object (use make() method below to construct from
-  // a ChunkedArray).
-  // LevelBuilders should contain one MultipathLevelBuilder per chunk of the
-  // arrow-column to write.
+  // Constructs a new object (use Make() method below to construct from
+  // A ChunkedArray).
+  // level_builders should contain one MultipathLevelBuilder per chunk of the
+  // Arrow-column to write.
   ArrowColumnWriterV2(
-      std::vector<std::unique_ptr<MultipathLevelBuilder>> levelBuilders,
-      int startLeafColumnIndex,
-      int leafCount,
-      RowGroupWriter* rowGroupWriter)
-      : levelBuilders_(std::move(levelBuilders)),
-        startLeafColumnIndex_(startLeafColumnIndex),
-        leafCount_(leafCount),
-        rowGroupWriter_(rowGroupWriter) {}
+      std::vector<std::unique_ptr<MultipathLevelBuilder>> level_builders,
+      int start_leaf_column_index,
+      int leaf_count,
+      RowGroupWriter* row_group_writer)
+      : level_builders_(std::move(level_builders)),
+        start_leaf_column_index_(start_leaf_column_index),
+        leaf_count_(leaf_count),
+        row_group_writer_(row_group_writer) {}
 
-  // Writes out all leaf Parquet columns to the rowGroupWriter that this
+  // Writes out all leaf parquet columns to the RowGroupWriter that this
   // object was constructed with.  Each leaf column is written fully before
   // the next column is written (i.e. no buffering is assumed).
   //
   // Columns are written in DFS order.
-  Status write(ArrowWriteContext* ctx) {
-    for (int leafIdx = 0; leafIdx < leafCount_; leafIdx++) {
-      ColumnWriter* columnWriter;
-      if (rowGroupWriter_->buffered()) {
-        const int columnIndex = startLeafColumnIndex_ + leafIdx;
+  Status Write(ArrowWriteContext* ctx) {
+    for (int leaf_idx = 0; leaf_idx < leaf_count_; leaf_idx++) {
+      ColumnWriter* column_writer;
+      if (row_group_writer_->buffered()) {
+        const int column_index = start_leaf_column_index_ + leaf_idx;
         PARQUET_CATCH_NOT_OK(
-            columnWriter = rowGroupWriter_->column(columnIndex));
+            column_writer = row_group_writer_->column(column_index));
       } else {
-        PARQUET_CATCH_NOT_OK(columnWriter = rowGroupWriter_->nextColumn());
+        PARQUET_CATCH_NOT_OK(column_writer = row_group_writer_->NextColumn());
       }
-      for (auto& levelBuilder : levelBuilders_) {
-        RETURN_NOT_OK(levelBuilder->write(
-            leafIdx, ctx, [&](const MultipathLevelBuilderResult& result) {
-              size_t visitedComponentSize =
-                  result.postListVisitedElements.size();
-              VELOX_DCHECK_GT(visitedComponentSize, 0);
-              if (visitedComponentSize != 1) {
+      for (auto& level_builder : level_builders_) {
+        RETURN_NOT_OK(level_builder->Write(
+            leaf_idx, ctx, [&](const MultipathLevelBuilderResult& result) {
+              size_t visited_component_size =
+                  result.post_list_visited_elements.size();
+              VELOX_DCHECK_GT(visited_component_size, 0);
+              if (visited_component_size != 1) {
                 return Status::NotImplemented(
                     "Lists with non-zero length null components are not supported");
               }
-              const ElementRange& range = result.postListVisitedElements[0];
-              std::shared_ptr<Array> valuesArray =
-                  result.leafArray->Slice(range.start, range.size());
+              const ElementRange& range = result.post_list_visited_elements[0];
+              std::shared_ptr<Array> values_array =
+                  result.leaf_array->Slice(range.start, range.Size());
 
-              return columnWriter->writeArrow(
-                  result.defLevels,
-                  result.repLevels,
-                  result.defRepLevelCount,
-                  *valuesArray,
+              return column_writer->WriteArrow(
+                  result.def_levels,
+                  result.rep_levels,
+                  result.def_rep_level_count,
+                  *values_array,
                   ctx,
-                  result.leafIsNullable);
+                  result.leaf_is_nullable);
             }));
       }
 
-      if (!rowGroupWriter_->buffered()) {
-        PARQUET_CATCH_NOT_OK(columnWriter->close());
+      if (!row_group_writer_->buffered()) {
+        PARQUET_CATCH_NOT_OK(column_writer->Close());
       }
     }
     return Status::OK();
   }
 
+  // Make a new object by converting each chunk in |data| to a
   // MultipathLevelBuilder.
   //
   // It is necessary to create a new builder per array because the
   // MultipathlevelBuilder extracts the data necessary for writing each leaf
-  // column at construction time (it optimizes based on null count) and with
+  // column at construction time. (it optimizes based on null count) and with
   // slicing via |offset| ephemeral chunks are created which need to be tracked
-  // across each leaf column-write. This decision could potentially be
-  // revisited if we wanted to use "buffered" RowGroupWriters (we could
-  // construct each builder on demand in that case).
-  static ::arrow::Result<std::unique_ptr<ArrowColumnWriterV2>> make(
+  // across each leaf column-write. This decision could potentially be revisited
+  // if we wanted to use "buffered" RowGroupWriters (we could construct each
+  // builder on demand in that case).
+  static ::arrow::Result<std::unique_ptr<ArrowColumnWriterV2>> Make(
       const ChunkedArray& data,
       int64_t offset,
       const int64_t size,
-      const SchemaManifest& schemaManifest,
-      RowGroupWriter* rowGroupWriter,
-      int startLeafColumnIndex = -1) {
-    int64_t absolutePosition = 0;
-    int chunkIndex = 0;
-    int64_t chunkOffset = 0;
+      const SchemaManifest& schema_manifest,
+      RowGroupWriter* row_group_writer,
+      int start_leaf_column_index = -1) {
+    int64_t absolute_position = 0;
+    int chunk_index = 0;
+    int64_t chunk_offset = 0;
     if (data.length() == 0) {
       return std::make_unique<ArrowColumnWriterV2>(
           std::vector<std::unique_ptr<MultipathLevelBuilder>>{},
-          startLeafColumnIndex,
-          calculateLeafCount(data.type().get()),
-          rowGroupWriter);
+          start_leaf_column_index,
+          CalculateLeafCount(data.type().get()),
+          row_group_writer);
     }
-    while (chunkIndex < data.num_chunks() && absolutePosition < offset) {
-      const int64_t chunkLength = data.chunk(chunkIndex)->length();
-      if (absolutePosition + chunkLength > offset) {
+    while (chunk_index < data.num_chunks() && absolute_position < offset) {
+      const int64_t chunk_length = data.chunk(chunk_index)->length();
+      if (absolute_position + chunk_length > offset) {
         // Relative offset into the chunk to reach the desired start offset for
-        // writing.
-        chunkOffset = offset - absolutePosition;
+        // writing
+        chunk_offset = offset - absolute_position;
         break;
       } else {
-        ++chunkIndex;
-        absolutePosition += chunkLength;
+        ++chunk_index;
+        absolute_position += chunk_length;
       }
     }
 
-    if (absolutePosition >= data.length()) {
+    if (absolute_position >= data.length()) {
       return Status::Invalid(
           "Cannot write data at offset past end of chunked array");
     }
 
-    int64_t valuesWritten = 0;
+    int64_t values_written = 0;
     std::vector<std::unique_ptr<MultipathLevelBuilder>> builders;
-    const int leafCount = calculateLeafCount(data.type().get());
-    bool isNullable = false;
+    const int leaf_count = CalculateLeafCount(data.type().get());
+    bool is_nullable = false;
 
-    int columnIndex = 0;
-    if (rowGroupWriter->buffered()) {
-      columnIndex = startLeafColumnIndex;
+    int column_index = 0;
+    if (row_group_writer->buffered()) {
+      column_index = start_leaf_column_index;
     } else {
-      // The rowGroupWriter hasn't been advanced yet so add 1 to the current
+      // The row_group_writer hasn't been advanced yet so add 1 to the current
       // which is the one this instance will start writing for.
-      columnIndex = rowGroupWriter->currentColumn() + 1;
+      column_index = row_group_writer->current_column() + 1;
     }
 
-    for (int leafOffset = 0; leafOffset < leafCount; ++leafOffset) {
-      const SchemaField* schemaField = nullptr;
-      RETURN_NOT_OK(schemaManifest.getColumnField(
-          columnIndex + leafOffset, &schemaField));
-      bool nullableRoot = hasNullableRoot(schemaManifest, schemaField);
-      if (leafOffset == 0) {
-        isNullable = nullableRoot;
+    for (int leaf_offset = 0; leaf_offset < leaf_count; ++leaf_offset) {
+      const SchemaField* schema_field = nullptr;
+      RETURN_NOT_OK(schema_manifest.GetColumnField(
+          column_index + leaf_offset, &schema_field));
+      bool nullable_root = HasNullableRoot(schema_manifest, schema_field);
+      if (leaf_offset == 0) {
+        is_nullable = nullable_root;
       }
 
 // Don't validate common ancestry for all leafs if not in debug.
 #ifndef NDEBUG
       break;
 #else
-      if (isNullable != nullableRoot) {
+      if (is_nullable != nullable_root) {
         return Status::UnknownError(
             "Unexpected mismatched nullability between column index",
-            columnIndex + leafOffset,
+            column_index + leaf_offset,
             " and ",
-            columnIndex);
+            column_index);
       }
 #endif
     }
-    while (valuesWritten < size) {
-      const Array& chunk = *data.chunk(chunkIndex);
-      const int64_t availableValues = chunk.length() - chunkOffset;
-      const int64_t chunkWriteSize =
-          std::min(size - valuesWritten, availableValues);
+    while (values_written < size) {
+      const Array& chunk = *data.chunk(chunk_index);
+      const int64_t available_values = chunk.length() - chunk_offset;
+      const int64_t chunk_write_size =
+          std::min(size - values_written, available_values);
 
       // The chunk offset here will be 0 except for possibly the first chunk
-      // because of the advancing logic above.
-      std::shared_ptr<Array> arrayToWrite =
-          chunk.Slice(chunkOffset, chunkWriteSize);
+      // because of the advancing logic above
+      std::shared_ptr<Array> array_to_write =
+          chunk.Slice(chunk_offset, chunk_write_size);
 
-      if (arrayToWrite->length() > 0) {
+      if (array_to_write->length() > 0) {
         ARROW_ASSIGN_OR_RAISE(
             std::unique_ptr<MultipathLevelBuilder> builder,
-            MultipathLevelBuilder::make(*arrayToWrite, isNullable));
-        if (leafCount != builder->getLeafCount()) {
+            MultipathLevelBuilder::Make(*array_to_write, is_nullable));
+        if (leaf_count != builder->GetLeafCount()) {
           return Status::UnknownError(
               "data type leaf_count != builder_leaf_count",
-              leafCount,
+              leaf_count,
               " ",
-              builder->getLeafCount());
+              builder->GetLeafCount());
         }
         builders.emplace_back(std::move(builder));
       }
 
-      if (chunkWriteSize == availableValues) {
-        chunkOffset = 0;
-        ++chunkIndex;
+      if (chunk_write_size == available_values) {
+        chunk_offset = 0;
+        ++chunk_index;
       }
-      valuesWritten += chunkWriteSize;
+      values_written += chunk_write_size;
     }
     return std::make_unique<ArrowColumnWriterV2>(
-        std::move(builders), columnIndex, leafCount, rowGroupWriter);
+        std::move(builders), column_index, leaf_count, row_group_writer);
   }
 
-  int leafCount() const {
-    return leafCount_;
+  int leaf_count() const {
+    return leaf_count_;
   }
 
  private:
   // One builder per column-chunk.
-  std::vector<std::unique_ptr<MultipathLevelBuilder>> levelBuilders_;
-  int startLeafColumnIndex_;
-  int leafCount_;
-  RowGroupWriter* rowGroupWriter_;
+  std::vector<std::unique_ptr<MultipathLevelBuilder>> level_builders_;
+  int start_leaf_column_index_;
+  int leaf_count_;
+  RowGroupWriter* row_group_writer_;
 };
 
 } // namespace
 
 // ----------------------------------------------------------------------
-// FileWriter implementation.
+// FileWriter implementation
 
 class FileWriterImpl : public FileWriter {
  public:
@@ -308,197 +309,221 @@ class FileWriterImpl : public FileWriter {
       std::shared_ptr<::arrow::Schema> schema,
       MemoryPool* pool,
       std::unique_ptr<ParquetFileWriter> writer,
-      std::shared_ptr<ArrowWriterProperties> arrowProperties)
+      std::shared_ptr<ArrowWriterProperties> arrow_properties)
       : schema_(std::move(schema)),
         writer_(std::move(writer)),
-        rowGroupWriter_(nullptr),
-        columnWriteContext_(pool, arrowProperties.get()),
-        arrowProperties_(std::move(arrowProperties)),
+        row_group_writer_(nullptr),
+        column_write_context_(pool, arrow_properties.get()),
+        arrow_properties_(std::move(arrow_properties)),
         closed_(false) {
-    if (arrowProperties_->useThreads()) {
-      parallelColumnWriteContexts_.reserve(schema_->num_fields());
+    if (arrow_properties_->use_threads()) {
+      parallel_column_write_contexts_.reserve(schema_->num_fields());
       for (int i = 0; i < schema_->num_fields(); ++i) {
         // Explicitly create each ArrowWriteContext object to avoid
-        // unintentional call of the copy constructor. Otherwise, the buffers
-        // in the type of shared_ptr will be shared among all contexts.
-        parallelColumnWriteContexts_.emplace_back(pool, arrowProperties_.get());
+        // unintentional call of the copy constructor. Otherwise, the buffers in
+        // the type of sharad_ptr will be shared among all contexts.
+        parallel_column_write_contexts_.emplace_back(
+            pool, arrow_properties_.get());
       }
     }
   }
 
-  Status init() {
-    return SchemaManifest::make(
+  Status Init() {
+    return SchemaManifest::Make(
         writer_->schema(),
-        nullptr,
-        defaultArrowReaderProperties(),
-        &schemaManifest_);
+        /*schema_metadata=*/nullptr,
+        default_arrow_reader_properties(),
+        &schema_manifest_);
   }
 
-  Status newRowGroup(int64_t chunkSize) override {
-    if (rowGroupWriter_ != nullptr) {
-      PARQUET_CATCH_NOT_OK(rowGroupWriter_->close());
+  Status NewRowGroup(int64_t chunk_size) override {
+    if (row_group_writer_ != nullptr) {
+      PARQUET_CATCH_NOT_OK(row_group_writer_->Close());
     }
-    PARQUET_CATCH_NOT_OK(rowGroupWriter_ = writer_->appendRowGroup());
+    PARQUET_CATCH_NOT_OK(row_group_writer_ = writer_->AppendRowGroup());
     return Status::OK();
   }
 
-  Status close() override {
+  Status Close() override {
     if (!closed_) {
-      // Make idempotent.
+      // Make idempotent
       closed_ = true;
-      if (rowGroupWriter_ != nullptr) {
-        PARQUET_CATCH_NOT_OK(rowGroupWriter_->close());
+      if (row_group_writer_ != nullptr) {
+        PARQUET_CATCH_NOT_OK(row_group_writer_->Close());
       }
-      PARQUET_CATCH_NOT_OK(writer_->close());
+      PARQUET_CATCH_NOT_OK(writer_->Close());
     }
     return Status::OK();
   }
 
-  Status writeColumnChunk(const Array& data) override {
+  Status WriteColumnChunk(const Array& data) override {
     // A bit awkward here since cannot instantiate ChunkedArray from const
-    // Array&.
+    // Array&
     auto chunk = ::arrow::MakeArray(data.data());
-    auto chunkedArray = std::make_shared<::arrow::ChunkedArray>(chunk);
-    return writeColumnChunk(chunkedArray, 0, data.length());
+    auto chunked_array = std::make_shared<::arrow::ChunkedArray>(chunk);
+    return WriteColumnChunk(chunked_array, 0, data.length());
   }
 
-  Status writeColumnChunk(
+  Status WriteColumnChunk(
       const std::shared_ptr<ChunkedArray>& data,
       int64_t offset,
       int64_t size) override {
-    if (arrowProperties_->engineVersion() == ArrowWriterProperties::V2 ||
-        arrowProperties_->engineVersion() == ArrowWriterProperties::V1) {
-      if (rowGroupWriter_->buffered()) {
+    if (arrow_properties_->engine_version() == ArrowWriterProperties::V2 ||
+        arrow_properties_->engine_version() == ArrowWriterProperties::V1) {
+      if (row_group_writer_->buffered()) {
         return Status::Invalid(
             "Cannot write column chunk into the buffered row group.");
       }
       ARROW_ASSIGN_OR_RAISE(
           std::unique_ptr<ArrowColumnWriterV2> writer,
-          ArrowColumnWriterV2::make(
-              *data, offset, size, schemaManifest_, rowGroupWriter_));
-      return writer->write(&columnWriteContext_);
+          ArrowColumnWriterV2::Make(
+              *data, offset, size, schema_manifest_, row_group_writer_));
+      return writer->Write(&column_write_context_);
     }
 
     return Status::NotImplemented("Unknown engine version.");
   }
 
-  Status writeColumnChunk(
+  Status WriteColumnChunk(
       const std::shared_ptr<::arrow::ChunkedArray>& data) override {
-    return writeColumnChunk(data, 0, data->length());
+    return WriteColumnChunk(data, 0, data->length());
   }
 
   std::shared_ptr<::arrow::Schema> schema() const override {
     return schema_;
   }
 
-  Status writeTable(const Table& table, int64_t chunkSize) override {
+  Status WriteTable(const Table& table, int64_t chunk_size) override {
     RETURN_NOT_OK(table.Validate());
 
-    if (chunkSize <= 0 && table.num_rows() > 0) {
-      return Status::Invalid("chunk size per row_group must be greater than 0");
-    } else if (!table.schema()->Equals(*schema_, false)) {
+    if (!table.schema()->Equals(*schema_, false)) {
       return Status::Invalid(
           "table schema does not match this writer's. table:'",
           table.schema()->ToString(),
           "' this:'",
           schema_->ToString(),
           "'");
-    } else if (chunkSize > this->properties().maxRowGroupLength()) {
-      chunkSize = this->properties().maxRowGroupLength();
+    } else if (chunk_size > this->properties().max_row_group_length()) {
+      chunk_size = this->properties().max_row_group_length();
+    }
+    // max_row_group_bytes is applied only after the row group has accumulated
+    // data.
+    if (row_group_writer_ != nullptr && row_group_writer_->num_rows() > 0) {
+      double avg_row_size = row_group_writer_->total_buffered_bytes() * 1.0 /
+          row_group_writer_->num_rows();
+      chunk_size = std::min(
+          chunk_size,
+          static_cast<int64_t>(
+              this->properties().max_row_group_bytes() / avg_row_size));
+    }
+    if (chunk_size <= 0 && table.num_rows() > 0) {
+      return Status::Invalid("rows per row_group must be greater than 0");
     }
 
-    auto writeRowGroup = [&](int64_t offset, int64_t size) {
-      RETURN_NOT_OK(newRowGroup(size));
+    auto WriteRowGroup = [&](int64_t offset, int64_t size) {
+      RETURN_NOT_OK(NewRowGroup(size));
       for (int i = 0; i < table.num_columns(); i++) {
-        RETURN_NOT_OK(writeColumnChunk(table.column(i), offset, size));
+        RETURN_NOT_OK(WriteColumnChunk(table.column(i), offset, size));
       }
       return Status::OK();
     };
 
     if (table.num_rows() == 0) {
-      // Append a row group with 0 rows.
-      RETURN_NOT_OK_ELSE(writeRowGroup(0, 0), PARQUET_IGNORE_NOT_OK(close()));
+      // Append a row group with 0 rows
+      RETURN_NOT_OK_ELSE(WriteRowGroup(0, 0), PARQUET_IGNORE_NOT_OK(Close()));
       return Status::OK();
     }
 
-    for (int chunk = 0; chunk * chunkSize < table.num_rows(); chunk++) {
-      int64_t offset = chunk * chunkSize;
+    for (int chunk = 0; chunk * chunk_size < table.num_rows(); chunk++) {
+      int64_t offset = chunk * chunk_size;
       RETURN_NOT_OK_ELSE(
-          writeRowGroup(offset, std::min(chunkSize, table.num_rows() - offset)),
-          PARQUET_IGNORE_NOT_OK(close()));
+          WriteRowGroup(
+              offset, std::min(chunk_size, table.num_rows() - offset)),
+          PARQUET_IGNORE_NOT_OK(Close()));
     }
     return Status::OK();
   }
 
-  Status newBufferedRowGroup() override {
-    if (rowGroupWriter_ != nullptr) {
-      PARQUET_CATCH_NOT_OK(rowGroupWriter_->close());
+  Status NewBufferedRowGroup() override {
+    if (row_group_writer_ != nullptr) {
+      PARQUET_CATCH_NOT_OK(row_group_writer_->Close());
     }
-    PARQUET_CATCH_NOT_OK(rowGroupWriter_ = writer_->appendBufferedRowGroup());
+    PARQUET_CATCH_NOT_OK(row_group_writer_ = writer_->AppendBufferedRowGroup());
     return Status::OK();
   }
 
-  Status writeRecordBatch(const RecordBatch& batch) override {
+  Status WriteRecordBatch(const RecordBatch& batch) override {
     if (batch.num_rows() == 0) {
       return Status::OK();
     }
 
-    // Max number of rows allowed in a row group.
-    const int64_t maxRowGroupLength = this->properties().maxRowGroupLength();
-
-    if (rowGroupWriter_ == nullptr || !rowGroupWriter_->buffered() ||
-        rowGroupWriter_->numRows() >= maxRowGroupLength) {
-      RETURN_NOT_OK(newBufferedRowGroup());
+    if (row_group_writer_ == nullptr || !row_group_writer_->buffered()) {
+      RETURN_NOT_OK(NewBufferedRowGroup());
     }
 
-    auto writeBatch = [&](int64_t offset, int64_t size) {
+    auto WriteBatch = [&](int64_t offset, int64_t size) {
       std::vector<std::unique_ptr<ArrowColumnWriterV2>> writers;
-      int columnIndexStart = 0;
+      int column_index_start = 0;
 
       for (int i = 0; i < batch.num_columns(); i++) {
-        ChunkedArray chunkedArray{batch.column(i)};
+        ChunkedArray chunked_array{batch.column(i)};
         ARROW_ASSIGN_OR_RAISE(
             std::unique_ptr<ArrowColumnWriterV2> writer,
-            ArrowColumnWriterV2::make(
-                chunkedArray,
+            ArrowColumnWriterV2::Make(
+                chunked_array,
                 offset,
                 size,
-                schemaManifest_,
-                rowGroupWriter_,
-                columnIndexStart));
-        columnIndexStart += writer->leafCount();
-        if (arrowProperties_->useThreads()) {
+                schema_manifest_,
+                row_group_writer_,
+                column_index_start));
+        column_index_start += writer->leaf_count();
+        if (arrow_properties_->use_threads()) {
           writers.emplace_back(std::move(writer));
         } else {
-          RETURN_NOT_OK(writer->write(&columnWriteContext_));
+          RETURN_NOT_OK(writer->Write(&column_write_context_));
         }
       }
 
-      if (arrowProperties_->useThreads()) {
-        VELOX_DCHECK_EQ(parallelColumnWriteContexts_.size(), writers.size());
+      if (arrow_properties_->use_threads()) {
+        VELOX_DCHECK_EQ(parallel_column_write_contexts_.size(), writers.size());
         RETURN_NOT_OK(
             ::arrow::internal::ParallelFor(
                 static_cast<int>(writers.size()),
                 [&](int i) {
-                  return writers[i]->write(&parallelColumnWriteContexts_[i]);
+                  return writers[i]->Write(&parallel_column_write_contexts_[i]);
                 },
-                arrowProperties_->executor()));
+                arrow_properties_->executor()));
       }
 
       return Status::OK();
     };
 
+    // Max number of rows allowed in a row group.
+    const int64_t max_row_group_length =
+        this->properties().max_row_group_length();
+    // Max number of bytes allowed in a row group.
+    const int64_t max_row_group_bytes =
+        this->properties().max_row_group_bytes();
+
     int64_t offset = 0;
     while (offset < batch.num_rows()) {
-      const int64_t batchSize = std::min(
-          maxRowGroupLength - rowGroupWriter_->numRows(),
-          batch.num_rows() - offset);
-      RETURN_NOT_OK(writeBatch(offset, batchSize));
-      offset += batchSize;
-
-      // Flush current row group if it is full.
-      if (rowGroupWriter_->numRows() >= maxRowGroupLength) {
-        RETURN_NOT_OK(newBufferedRowGroup());
+      int64_t group_rows = row_group_writer_->num_rows();
+      int64_t batch_size = std::min(
+          max_row_group_length - group_rows, batch.num_rows() - offset);
+      if (group_rows > 0) {
+        int64_t buffered_bytes = row_group_writer_->total_buffered_bytes();
+        double avg_row_size = buffered_bytes * 1.0 / group_rows;
+        batch_size = std::min(
+            batch_size,
+            static_cast<int64_t>(
+                (max_row_group_bytes - buffered_bytes) / avg_row_size));
+      }
+      if (batch_size > 0) {
+        RETURN_NOT_OK(WriteBatch(offset, batch_size));
+        offset += batch_size;
+      } else if (offset < batch.num_rows()) {
+        // Current row group is full, write remaining rows in a new group.
+        RETURN_NOT_OK(NewBufferedRowGroup());
       }
     }
 
@@ -509,8 +534,8 @@ class FileWriterImpl : public FileWriter {
     return *writer_->properties();
   }
 
-  ::arrow::MemoryPool* memoryPool() const override {
-    return columnWriteContext_.memoryPool;
+  ::arrow::MemoryPool* memory_pool() const override {
+    return column_write_context_.memory_pool;
   }
 
   const std::shared_ptr<FileMetaData> metadata() const override {
@@ -522,36 +547,36 @@ class FileWriterImpl : public FileWriter {
 
   std::shared_ptr<::arrow::Schema> schema_;
 
-  SchemaManifest schemaManifest_;
+  SchemaManifest schema_manifest_;
 
   std::unique_ptr<ParquetFileWriter> writer_;
-  RowGroupWriter* rowGroupWriter_;
-  ArrowWriteContext columnWriteContext_;
-  std::shared_ptr<ArrowWriterProperties> arrowProperties_;
+  RowGroupWriter* row_group_writer_;
+  ArrowWriteContext column_write_context_;
+  std::shared_ptr<ArrowWriterProperties> arrow_properties_;
   bool closed_;
 
-  /// If arrowProperties_->useThreads() is true, the vector size is equal to
+  /// If arrow_properties_.use_threads() is true, the vector size is equal to
   /// schema_->num_fields() to make it thread-safe. Otherwise, the vector is
-  /// empty and columnWriteContext_ above is shared by all columns.
-  std::vector<ArrowWriteContext> parallelColumnWriteContexts_;
+  /// empty and column_write_context_ above is shared by all columns.
+  std::vector<ArrowWriteContext> parallel_column_write_contexts_;
 };
 
 FileWriter::~FileWriter() {}
 
-Status FileWriter::make(
+Status FileWriter::Make(
     ::arrow::MemoryPool* pool,
     std::unique_ptr<ParquetFileWriter> writer,
     std::shared_ptr<::arrow::Schema> schema,
-    std::shared_ptr<ArrowWriterProperties> arrowProperties,
+    std::shared_ptr<ArrowWriterProperties> arrow_properties,
     std::unique_ptr<FileWriter>* out) {
   std::unique_ptr<FileWriterImpl> impl(new FileWriterImpl(
-      std::move(schema), pool, std::move(writer), std::move(arrowProperties)));
-  RETURN_NOT_OK(impl->init());
+      std::move(schema), pool, std::move(writer), std::move(arrow_properties)));
+  RETURN_NOT_OK(impl->Init());
   *out = std::move(impl);
   return Status::OK();
 }
 
-Status FileWriter::open(
+Status FileWriter::Open(
     const ::arrow::Schema& schema,
     ::arrow::MemoryPool* pool,
     std::shared_ptr<::arrow::io::OutputStream> sink,
@@ -559,21 +584,21 @@ Status FileWriter::open(
     std::unique_ptr<FileWriter>* writer) {
   ARROW_ASSIGN_OR_RAISE(
       *writer,
-      open(
+      Open(
           std::move(schema),
           pool,
           std::move(sink),
           std::move(properties),
-          defaultArrowWriterProperties()));
+          default_arrow_writer_properties()));
   return Status::OK();
 }
 
-Status getSchemaMetadata(
+Status GetSchemaMetadata(
     const ::arrow::Schema& schema,
     ::arrow::MemoryPool* pool,
     const ArrowWriterProperties& properties,
     std::shared_ptr<const KeyValueMetadata>* out) {
-  if (!properties.storeSchema()) {
+  if (!properties.store_schema()) {
     *out = nullptr;
     return Status::OK();
   }
@@ -590,102 +615,104 @@ Status getSchemaMetadata(
       std::shared_ptr<Buffer> serialized,
       ::arrow::ipc::SerializeSchema(schema, pool));
 
-  // The serialized schema is not UTF-8, which is required for Thrift.
-  std::string schemaAsString = serialized->ToString();
-  std::string schemaBase64 = ::arrow::util::base64_encode(schemaAsString);
-  result->Append(kArrowSchemaKey, schemaBase64);
+  // The serialized schema is not UTF-8, which is required for Thrift
+  std::string schema_as_string = serialized->ToString();
+  std::string schema_base64 = ::arrow::util::base64_encode(schema_as_string);
+  result->Append(kArrowSchemaKey, schema_base64);
   *out = result;
   return Status::OK();
 }
 
-Status FileWriter::open(
+Status FileWriter::Open(
     const ::arrow::Schema& schema,
     ::arrow::MemoryPool* pool,
     std::shared_ptr<::arrow::io::OutputStream> sink,
     std::shared_ptr<WriterProperties> properties,
-    std::shared_ptr<ArrowWriterProperties> arrowProperties,
+    std::shared_ptr<ArrowWriterProperties> arrow_properties,
     std::unique_ptr<FileWriter>* writer) {
   ARROW_ASSIGN_OR_RAISE(
       *writer,
-      open(
+      Open(
           std::move(schema),
           pool,
           std::move(sink),
           std::move(properties),
-          arrowProperties));
+          arrow_properties));
   return Status::OK();
 }
 
-Result<std::unique_ptr<FileWriter>> FileWriter::open(
+Result<std::unique_ptr<FileWriter>> FileWriter::Open(
     const ::arrow::Schema& schema,
     ::arrow::MemoryPool* pool,
     std::shared_ptr<::arrow::io::OutputStream> sink,
     std::shared_ptr<WriterProperties> properties,
-    std::shared_ptr<ArrowWriterProperties> arrowProperties) {
-  std::shared_ptr<SchemaDescriptor> parquetSchema;
-  RETURN_NOT_OK(
-      toParquetSchema(&schema, *properties, *arrowProperties, &parquetSchema));
+    std::shared_ptr<ArrowWriterProperties> arrow_properties) {
+  std::shared_ptr<SchemaDescriptor> parquet_schema;
+  RETURN_NOT_OK(ToParquetSchema(
+      &schema, *properties, *arrow_properties, &parquet_schema));
 
-  auto schemaNode =
-      std::static_pointer_cast<GroupNode>(parquetSchema->schemaRoot());
+  auto schema_node =
+      std::static_pointer_cast<GroupNode>(parquet_schema->schema_root());
 
   std::shared_ptr<const KeyValueMetadata> metadata;
-  RETURN_NOT_OK(getSchemaMetadata(schema, pool, *arrowProperties, &metadata));
+  RETURN_NOT_OK(GetSchemaMetadata(schema, pool, *arrow_properties, &metadata));
 
-  std::unique_ptr<ParquetFileWriter> baseWriter;
+  std::unique_ptr<ParquetFileWriter> base_writer;
   PARQUET_CATCH_NOT_OK(
-      baseWriter = ParquetFileWriter::open(
+      base_writer = ParquetFileWriter::Open(
           std::move(sink),
-          schemaNode,
+          schema_node,
           std::move(properties),
           std::move(metadata)));
 
   std::unique_ptr<FileWriter> writer;
-  auto schemaPtr = std::make_shared<::arrow::Schema>(schema);
-  RETURN_NOT_OK(make(
+  auto schema_ptr = std::make_shared<::arrow::Schema>(schema);
+  RETURN_NOT_OK(Make(
       pool,
-      std::move(baseWriter),
-      std::move(schemaPtr),
-      std::move(arrowProperties),
+      std::move(base_writer),
+      std::move(schema_ptr),
+      std::move(arrow_properties),
       &writer));
 
   return writer;
 }
 
-Status writeFileMetaData(
-    const FileMetaData& fileMetadata,
+Status WriteFileMetaData(
+    const FileMetaData& file_metadata,
     ::arrow::io::OutputStream* sink) {
   PARQUET_CATCH_NOT_OK(
-      ::facebook::velox::parquet::arrow::writeFileMetaData(fileMetadata, sink));
+      ::facebook::velox::parquet::arrow::WriteFileMetaData(
+          file_metadata, sink));
   return Status::OK();
 }
 
-Status writeMetaDataFile(
-    const FileMetaData& fileMetadata,
+Status WriteMetaDataFile(
+    const FileMetaData& file_metadata,
     ::arrow::io::OutputStream* sink) {
   PARQUET_CATCH_NOT_OK(
-      ::facebook::velox::parquet::arrow::writeMetaDataFile(fileMetadata, sink));
+      ::facebook::velox::parquet::arrow::WriteMetaDataFile(
+          file_metadata, sink));
   return Status::OK();
 }
 
-Status writeTable(
+Status WriteTable(
     const ::arrow::Table& table,
     ::arrow::MemoryPool* pool,
     std::shared_ptr<::arrow::io::OutputStream> sink,
-    int64_t chunkSize,
+    int64_t chunk_size,
     std::shared_ptr<WriterProperties> properties,
-    std::shared_ptr<ArrowWriterProperties> arrowProperties) {
+    std::shared_ptr<ArrowWriterProperties> arrow_properties) {
   std::unique_ptr<FileWriter> writer;
   ARROW_ASSIGN_OR_RAISE(
       writer,
-      FileWriter::open(
+      FileWriter::Open(
           *table.schema(),
           pool,
           std::move(sink),
           std::move(properties),
-          std::move(arrowProperties)));
-  RETURN_NOT_OK(writer->writeTable(table, chunkSize));
-  return writer->close();
+          std::move(arrow_properties)));
+  RETURN_NOT_OK(writer->WriteTable(table, chunk_size));
+  return writer->Close();
 }
 
 } // namespace facebook::velox::parquet::arrow::arrow
