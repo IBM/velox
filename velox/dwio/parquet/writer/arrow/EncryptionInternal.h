@@ -32,7 +32,7 @@ namespace facebook::velox::parquet::arrow::encryption {
 constexpr int kGcmTagLength = 16;
 constexpr int kNonceLength = 12;
 
-// Module types.
+// Module types
 constexpr int8_t kFooter = 0;
 constexpr int8_t kColumnMetaData = 1;
 constexpr int8_t kDataPage = 2;
@@ -46,58 +46,58 @@ constexpr int8_t kOffsetIndex = 7;
 class AesEncryptor {
  public:
   /// Can serve one key length only. Possible values: 16, 24, 32 bytes.
-  /// If write_length is true, prepend ciphertext length to the ciphertext.
+  /// If write_length is true, prepend ciphertext length to the ciphertext
   explicit AesEncryptor(
-      ParquetCipher::type algId,
-      int keyLen,
+      ParquetCipher::type alg_id,
+      int key_len,
       bool metadata,
-      bool writeLength = true);
+      bool write_length = true);
 
-  static AesEncryptor* make(
-      ParquetCipher::type algId,
-      int keyLen,
+  static AesEncryptor* Make(
+      ParquetCipher::type alg_id,
+      int key_len,
       bool metadata,
-      std::vector<AesEncryptor*>* allEncryptors);
+      std::vector<AesEncryptor*>* all_encryptors);
 
-  static AesEncryptor* make(
-      ParquetCipher::type algId,
-      int keyLen,
+  static AesEncryptor* Make(
+      ParquetCipher::type alg_id,
+      int key_len,
       bool metadata,
-      bool writeLength,
-      std::vector<AesEncryptor*>* allEncryptors);
+      bool write_length,
+      std::vector<AesEncryptor*>* all_encryptors);
 
   ~AesEncryptor();
 
   /// Size difference between plaintext and ciphertext, for this cipher.
-  int ciphertextSizeDelta();
+  int CiphertextSizeDelta();
 
-  /// Encrypts plaintext with the key and aad. Key length is passed only for.
-  /// Validation. If different from value in constructor, exception will be.
-  /// Thrown.
-  int encrypt(
+  /// Encrypts plaintext with the key and aad. Key length is passed only for
+  /// validation. If different from value in constructor, exception will be
+  /// thrown.
+  int Encrypt(
       const uint8_t* plaintext,
-      int plaintextLen,
+      int plaintext_len,
       const uint8_t* key,
-      int keyLen,
+      int key_len,
       const uint8_t* aad,
-      int aadLen,
+      int aad_len,
       uint8_t* ciphertext);
 
   /// Encrypts plaintext footer, in order to compute footer signature (tag).
-  int signedFooterEncrypt(
+  int SignedFooterEncrypt(
       const uint8_t* footer,
-      int footerLen,
+      int footer_len,
       const uint8_t* key,
-      int keyLen,
+      int key_len,
       const uint8_t* aad,
-      int aadLen,
+      int aad_len,
       const uint8_t* nonce,
-      uint8_t* encryptedFooter);
+      uint8_t* encrypted_footer);
 
-  void wipeOut();
+  void WipeOut();
 
  private:
-  // PIMPL Idiom.
+  // PIMPL Idiom
   class AesEncryptorImpl;
   std::unique_ptr<AesEncryptorImpl> impl_;
 };
@@ -106,65 +106,65 @@ class AesEncryptor {
 class AesDecryptor {
  public:
   /// Can serve one key length only. Possible values: 16, 24, 32 bytes.
-  /// If contains_length is true, expect ciphertext length prepended to the.
-  /// Ciphertext.
+  /// If contains_length is true, expect ciphertext length prepended to the
+  /// ciphertext
   explicit AesDecryptor(
-      ParquetCipher::type algId,
-      int keyLen,
+      ParquetCipher::type alg_id,
+      int key_len,
       bool metadata,
-      bool containsLength = true);
+      bool contains_length = true);
 
-  /// \brief Factory function to create an AesDecryptor.
+  /// \brief Factory function to create an AesDecryptor
   ///
-  /// \param alg_id the encryption algorithm to use.
+  /// \param alg_id the encryption algorithm to use
   /// \param key_len key length. Possible values: 16, 24, 32 bytes.
-  /// \param metadata if true then this is a metadata decryptor.
-  /// \param all_decryptors A weak reference to all decryptors that need to be.
-  /// Wiped out when decryption is finished \return shared pointer to a new.
-  /// AesDecryptor.
-  static std::shared_ptr<AesDecryptor> make(
-      ParquetCipher::type algId,
-      int keyLen,
+  /// \param metadata if true then this is a metadata decryptor
+  /// \param all_decryptors A weak reference to all decryptors that need to be
+  /// wiped out when decryption is finished \return shared pointer to a new
+  /// AesDecryptor
+  static std::shared_ptr<AesDecryptor> Make(
+      ParquetCipher::type alg_id,
+      int key_len,
       bool metadata,
-      std::vector<std::weak_ptr<AesDecryptor>>* allDecryptors);
+      std::vector<std::weak_ptr<AesDecryptor>>* all_decryptors);
 
   ~AesDecryptor();
-  void wipeOut();
+  void WipeOut();
 
   /// Size difference between plaintext and ciphertext, for this cipher.
-  int ciphertextSizeDelta();
+  int CiphertextSizeDelta();
 
-  /// Decrypts ciphertext with the key and aad. Key length is passed only for.
-  /// Validation. If different from value in constructor, exception will be.
-  /// Thrown.
-  int decrypt(
+  /// Decrypts ciphertext with the key and aad. Key length is passed only for
+  /// validation. If different from value in constructor, exception will be
+  /// thrown.
+  int Decrypt(
       const uint8_t* ciphertext,
-      int ciphertextLen,
+      int ciphertext_len,
       const uint8_t* key,
-      int keyLen,
+      int key_len,
       const uint8_t* aad,
-      int aadLen,
+      int aad_len,
       uint8_t* plaintext);
 
  private:
-  // PIMPL Idiom.
+  // PIMPL Idiom
   class AesDecryptorImpl;
   std::unique_ptr<AesDecryptorImpl> impl_;
 };
 
-std::string createModuleAad(
-    const std::string& fileAad,
-    int8_t moduleType,
-    int16_t rowGroupOrdinal,
-    int16_t columnOrdinal,
-    int32_t pageOrdinal);
+std::string CreateModuleAad(
+    const std::string& file_aad,
+    int8_t module_type,
+    int16_t row_group_ordinal,
+    int16_t column_ordinal,
+    int32_t page_ordinal);
 
-std::string createFooterAad(const std::string& aadPrefixBytes);
+std::string CreateFooterAad(const std::string& aad_prefix_bytes);
 
-// Update last two bytes of page (or page header) module AAD.
-void quickUpdatePageAad(int32_t newPageOrdinal, std::string* AAD);
+// Update last two bytes of page (or page header) module AAD
+void QuickUpdatePageAad(int32_t new_page_ordinal, std::string* AAD);
 
-// Wraps OpenSSL RAND_bytes function.
-void randBytes(unsigned char* buf, int num);
+// Wraps OpenSSL RAND_bytes function
+void RandBytes(unsigned char* buf, int num);
 
 } // namespace facebook::velox::parquet::arrow::encryption

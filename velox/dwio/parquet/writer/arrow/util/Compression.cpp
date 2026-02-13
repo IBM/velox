@@ -30,8 +30,8 @@ namespace facebook::velox::parquet::arrow::util {
 
 namespace {
 
-Status checkSupportsCompressionLevel(Compression::type type) {
-  if (!Codec::supportsCompressionLevel(type)) {
+Status CheckSupportsCompressionLevel(Compression::type type) {
+  if (!Codec::SupportsCompressionLevel(type)) {
     return Status::Invalid(
         "The specified codec does not support the compression level parameter");
   }
@@ -40,20 +40,20 @@ Status checkSupportsCompressionLevel(Compression::type type) {
 
 } // namespace
 
-int Codec::useDefaultCompressionLevel() {
+int Codec::UseDefaultCompressionLevel() {
   return kUseDefaultCompressionLevel;
 }
 
-Status Codec::init() {
+Status Codec::Init() {
   return Status::OK();
 }
 
-const std::string& Codec::getCodecAsString(Compression::type t) {
+const std::string& Codec::GetCodecAsString(Compression::type t) {
   static const std::string uncompressed = "uncompressed", snappy = "snappy",
                            gzip = "gzip", lzo = "lzo", brotli = "brotli",
-                           lz4Raw = "lz4_raw", lz4 = "lz4",
-                           lz4Hadoop = "lz4_hadoop", zstd = "zstd", bz2 = "bz2",
-                           unknown = "unknown";
+                           lz4_raw = "lz4_raw", lz4 = "lz4",
+                           lz4_hadoop = "lz4_hadoop", zstd = "zstd",
+                           bz2 = "bz2", unknown = "unknown";
 
   switch (t) {
     case Compression::UNCOMPRESSED:
@@ -67,11 +67,11 @@ const std::string& Codec::getCodecAsString(Compression::type t) {
     case Compression::BROTLI:
       return brotli;
     case Compression::LZ4:
-      return lz4Raw;
+      return lz4_raw;
     case Compression::LZ4_FRAME:
       return lz4;
     case Compression::LZ4_HADOOP:
-      return lz4Hadoop;
+      return lz4_hadoop;
     case Compression::ZSTD:
       return zstd;
     case Compression::BZ2:
@@ -81,7 +81,7 @@ const std::string& Codec::getCodecAsString(Compression::type t) {
   }
 }
 
-Result<Compression::type> Codec::getCompressionType(const std::string& name) {
+Result<Compression::type> Codec::GetCompressionType(const std::string& name) {
   if (name == "uncompressed") {
     return Compression::UNCOMPRESSED;
   } else if (name == "gzip") {
@@ -107,7 +107,7 @@ Result<Compression::type> Codec::getCompressionType(const std::string& name) {
   }
 }
 
-bool Codec::supportsCompressionLevel(Compression::type codec) {
+bool Codec::SupportsCompressionLevel(Compression::type codec) {
   switch (codec) {
     case Compression::GZIP:
     case Compression::BROTLI:
@@ -121,88 +121,88 @@ bool Codec::supportsCompressionLevel(Compression::type codec) {
   }
 }
 
-Result<int> Codec::maximumCompressionLevel(Compression::type codecType) {
-  RETURN_NOT_OK(checkSupportsCompressionLevel(codecType));
-  ARROW_ASSIGN_OR_RAISE(auto codec, Codec::create(codecType));
-  return codec->maximumCompressionLevel();
+Result<int> Codec::MaximumCompressionLevel(Compression::type codec_type) {
+  RETURN_NOT_OK(CheckSupportsCompressionLevel(codec_type));
+  ARROW_ASSIGN_OR_RAISE(auto codec, Codec::Create(codec_type));
+  return codec->maximum_compression_level();
 }
 
-Result<int> Codec::minimumCompressionLevel(Compression::type codecType) {
-  RETURN_NOT_OK(checkSupportsCompressionLevel(codecType));
-  ARROW_ASSIGN_OR_RAISE(auto codec, Codec::create(codecType));
-  return codec->minimumCompressionLevel();
+Result<int> Codec::MinimumCompressionLevel(Compression::type codec_type) {
+  RETURN_NOT_OK(CheckSupportsCompressionLevel(codec_type));
+  ARROW_ASSIGN_OR_RAISE(auto codec, Codec::Create(codec_type));
+  return codec->minimum_compression_level();
 }
 
-Result<int> Codec::defaultCompressionLevel(Compression::type codecType) {
-  RETURN_NOT_OK(checkSupportsCompressionLevel(codecType));
-  ARROW_ASSIGN_OR_RAISE(auto codec, Codec::create(codecType));
-  return codec->defaultCompressionLevel();
+Result<int> Codec::DefaultCompressionLevel(Compression::type codec_type) {
+  RETURN_NOT_OK(CheckSupportsCompressionLevel(codec_type));
+  ARROW_ASSIGN_OR_RAISE(auto codec, Codec::Create(codec_type));
+  return codec->default_compression_level();
 }
 
-Result<std::unique_ptr<Codec>> Codec::create(
-    Compression::type codecType,
-    const CodecOptions& codecOptions) {
-  if (!isAvailable(codecType)) {
-    if (codecType == Compression::LZO) {
+Result<std::unique_ptr<Codec>> Codec::Create(
+    Compression::type codec_type,
+    const CodecOptions& codec_options) {
+  if (!IsAvailable(codec_type)) {
+    if (codec_type == Compression::LZO) {
       return Status::NotImplemented("LZO codec not implemented");
     }
 
-    auto name = getCodecAsString(codecType);
+    auto name = GetCodecAsString(codec_type);
     if (name == "unknown") {
       return Status::Invalid("Unrecognized codec");
     }
 
     return Status::NotImplemented(
-        "Support for codec '", getCodecAsString(codecType), "' not built");
+        "Support for codec '", GetCodecAsString(codec_type), "' not built");
   }
 
-  auto compressionLevel = codecOptions.compressionLevel;
-  if (compressionLevel != kUseDefaultCompressionLevel &&
-      !supportsCompressionLevel(codecType)) {
+  auto compression_level = codec_options.compression_level;
+  if (compression_level != kUseDefaultCompressionLevel &&
+      !SupportsCompressionLevel(codec_type)) {
     return Status::Invalid(
         "Codec '",
-        getCodecAsString(codecType),
+        GetCodecAsString(codec_type),
         "' doesn't support setting a compression level.");
   }
 
   std::unique_ptr<Codec> codec;
-  switch (codecType) {
+  switch (codec_type) {
     case Compression::UNCOMPRESSED:
       return nullptr;
     case Compression::SNAPPY:
-      codec = internal::makeSnappyCodec();
+      codec = internal::MakeSnappyCodec();
       break;
     case Compression::GZIP: {
-      auto opt = dynamic_cast<const GZipCodecOptions*>(&codecOptions);
-      codec = internal::makeGZipCodec(
-          compressionLevel,
-          opt ? opt->gzipFormat : GZipFormat::GZIP,
-          opt ? opt->windowBits : std::nullopt);
+      auto opt = dynamic_cast<const GZipCodecOptions*>(&codec_options);
+      codec = internal::MakeGZipCodec(
+          compression_level,
+          opt ? opt->gzip_format : GZipFormat::GZIP,
+          opt ? opt->window_bits : std::nullopt);
       break;
     }
     case Compression::BROTLI: {
 #ifdef ARROW_WITH_BROTLI
-      auto opt = dynamic_cast<const BrotliCodecOptions*>(&codecOptions);
-      codec = internal::makeBrotliCodec(
-          compressionLevel, opt ? opt->windowBits : std::nullopt);
+      auto opt = dynamic_cast<const BrotliCodecOptions*>(&codec_options);
+      codec = internal::MakeBrotliCodec(
+          compression_level, opt ? opt->window_bits : std::nullopt);
 #endif
       break;
     }
     case Compression::LZ4:
-      codec = internal::makeLz4RawCodec(compressionLevel);
+      codec = internal::MakeLz4RawCodec(compression_level);
       break;
     case Compression::LZ4_FRAME:
-      codec = internal::makeLz4FrameCodec(compressionLevel);
+      codec = internal::MakeLz4FrameCodec(compression_level);
       break;
     case Compression::LZ4_HADOOP:
-      codec = internal::makeLz4HadoopRawCodec();
+      codec = internal::MakeLz4HadoopRawCodec();
       break;
     case Compression::ZSTD:
-      codec = internal::makeZSTDCodec(compressionLevel);
+      codec = internal::MakeZSTDCodec(compression_level);
       break;
     case Compression::BZ2:
 #ifdef ARROW_WITH_BZ2
-      codec = internal::makeBZ2Codec(compressionLevel);
+      codec = internal::MakeBZ2Codec(compression_level);
 #endif
       break;
     default:
@@ -213,19 +213,19 @@ Result<std::unique_ptr<Codec>> Codec::create(
     return Status::NotImplemented("LZO codec not implemented");
   }
 
-  RETURN_NOT_OK(codec->init());
+  RETURN_NOT_OK(codec->Init());
   return std::move(codec);
 }
 
-// Use compression level to create Codec.
-Result<std::unique_ptr<Codec>> Codec::create(
-    Compression::type codecType,
-    int compressionLevel) {
-  return Codec::create(codecType, CodecOptions{compressionLevel});
+// use compression level to create Codec
+Result<std::unique_ptr<Codec>> Codec::Create(
+    Compression::type codec_type,
+    int compression_level) {
+  return Codec::Create(codec_type, CodecOptions{compression_level});
 }
 
-bool Codec::isAvailable(Compression::type codecType) {
-  switch (codecType) {
+bool Codec::IsAvailable(Compression::type codec_type) {
+  switch (codec_type) {
     case Compression::UNCOMPRESSED:
     case Compression::SNAPPY:
     case Compression::GZIP:
