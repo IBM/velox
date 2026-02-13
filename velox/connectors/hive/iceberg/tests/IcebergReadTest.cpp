@@ -20,7 +20,6 @@
 #include "velox/common/encode/Base64.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
-#include "velox/connectors/hive/iceberg/IcebergConnector.h"
 #include "velox/connectors/hive/iceberg/IcebergDeleteFile.h"
 #include "velox/connectors/hive/iceberg/IcebergMetadataColumns.h"
 #include "velox/connectors/hive/iceberg/IcebergSplit.h"
@@ -42,8 +41,6 @@ using namespace facebook::velox::common::testutil;
 
 namespace facebook::velox::connector::hive::iceberg {
 
-static const char* kIcebergConnectorId = "test-iceberg";
-
 class HiveIcebergTest : public HiveConnectorTestBase {
  public:
   void SetUp() override {
@@ -51,19 +48,6 @@ class HiveIcebergTest : public HiveConnectorTestBase {
 #ifdef VELOX_ENABLE_PARQUET
     parquet::registerParquetReaderFactory();
 #endif
-    // Register IcebergConnector.
-    IcebergConnectorFactory icebergFactory;
-    auto icebergConnector = icebergFactory.newConnector(
-        kIcebergConnectorId,
-        std::make_shared<config::ConfigBase>(
-            std::unordered_map<std::string, std::string>()),
-        ioExecutor_.get());
-    connector::registerConnector(icebergConnector);
-  }
-
-  void TearDown() override {
-    connector::unregisterConnector(kIcebergConnectorId);
-    HiveConnectorTestBase::TearDown();
   }
 
   HiveIcebergTest()
@@ -254,13 +238,9 @@ class HiveIcebergTest : public HiveConnectorTestBase {
 
     std::string duckdbSql =
         getDuckDBQuery(rowGroupSizesForFiles, deleteFilesForBaseDatafiles);
-    auto plan = PlanBuilder()
-                    .startTableScan()
-                    .connectorId(kIcebergConnectorId)
-                    .outputType(ROW({"c0"}, {BIGINT()}))
-                    .endTableScan()
-                    .planNode();
-    auto task = assertQuery(plan, splits, duckdbSql, numPrefetchSplits);
+    auto plan = PlanBuilder().tableScan(ROW({"c0"}, {BIGINT()})).planNode();
+    auto task = HiveConnectorTestBase::assertQuery(
+        plan, splits, duckdbSql, numPrefetchSplits);
 
     auto planStats = toPlanStats(task->taskStats());
 
@@ -281,6 +261,9 @@ class HiveIcebergTest : public HiveConnectorTestBase {
       const std::unordered_map<std::string, std::optional<std::string>>&
           partitionKeys = {},
       const uint32_t splitCount = 1) {
+    std::unordered_map<std::string, std::string> customSplitInfo;
+    customSplitInfo["table_format"] = "hive-iceberg";
+
     auto file = filesystems::getFileSystem(dataFilePath, nullptr)
                     ->openFileForRead(dataFilePath);
     const int64_t fileSize = file->size();
@@ -292,14 +275,14 @@ class HiveIcebergTest : public HiveConnectorTestBase {
     for (int i = 0; i < splitCount; ++i) {
       splits.emplace_back(
           std::make_shared<HiveIcebergSplit>(
-              kIcebergConnectorId,
+              kHiveConnectorId,
               dataFilePath,
               fileFomat_,
               i * splitSize,
               splitSize,
               partitionKeys,
               std::nullopt,
-              std::unordered_map<std::string, std::string>{},
+              customSplitInfo,
               nullptr,
               /*cacheable=*/true,
               deleteFiles));
@@ -360,16 +343,18 @@ class HiveIcebergTest : public HiveConnectorTestBase {
                         ->openFileForRead(path)
                         ->size();
 
+    std::unordered_map<std::string, std::string> customSplitInfo{
+        {"table_format", "hive-iceberg"}};
     std::unordered_map<std::string, std::optional<std::string>> partitionKeys;
     return {std::make_shared<HiveIcebergSplit>(
-        kIcebergConnectorId,
+        kHiveConnectorId,
         path,
         dwio::common::FileFormat::PARQUET,
         0,
         fileSize,
         partitionKeys,
         std::nullopt,
-        std::unordered_map<std::string, std::string>{},
+        customSplitInfo,
         nullptr,
         /*cacheable=*/true,
         std::vector<IcebergDeleteFile>{icebergDeleteFile})};
@@ -804,12 +789,7 @@ TEST_F(HiveIcebergTest, schemaEvolutionRemoveColumn) {
       }));
 
   // Read with new schema (c0 and c2 only, c1 removed).
-  auto plan = PlanBuilder()
-                  .startTableScan()
-                  .connectorId(kIcebergConnectorId)
-                  .outputType(newRowType)
-                  .endTableScan()
-                  .planNode();
+  auto plan = PlanBuilder().tableScan(newRowType).planNode();
   AssertQueryBuilder(plan).splits(icebergSplits).assertResults(expectedVectors);
 }
 
@@ -835,13 +815,8 @@ TEST_F(HiveIcebergTest, schemaEvolutionAddColumns) {
   }));
 
   // Read with new schema (c0, c1, and c2).
-  auto plan = PlanBuilder()
-                  .startTableScan()
-                  .connectorId(kIcebergConnectorId)
-                  .outputType(newRowType)
-                  .dataColumns(newRowType)
-                  .endTableScan()
-                  .planNode();
+  auto plan =
+      PlanBuilder().tableScan(newRowType, {}, "", newRowType).planNode();
   AssertQueryBuilder(plan).splits(icebergSplits).assertResults(expectedVectors);
 }
 
@@ -887,12 +862,7 @@ TEST_F(HiveIcebergTest, partitionColumnsFromHive) {
 
   // Read with table schema including partition columns.
   auto plan = PlanBuilder()
-                  .startTableScan()
-                  .connectorId(kIcebergConnectorId)
-                  .outputType(tableRowType)
-                  .dataColumns(tableRowType)
-                  .assignments(assignments)
-                  .endTableScan()
+                  .tableScan(tableRowType, {}, "", tableRowType, assignments)
                   .planNode();
   AssertQueryBuilder(plan).splits(icebergSplits).assertResults(expectedVectors);
 }
@@ -989,15 +959,10 @@ TEST_F(HiveIcebergTest, positionalDeleteFileWithRowGroupFilter) {
       deletedPositionSize); // allocate 100 elements, [100, 199].
   std::iota(deletePositionsVec.begin(), deletePositionsVec.end(), 100);
   auto deleteFilePath = TempFilePath::create();
-  assertQuery(
+  HiveConnectorTestBase::assertQuery(
       PlanBuilder()
-          .startTableScan()
-          .connectorId(kIcebergConnectorId)
-          .outputType(ROW({"id"}, {BIGINT()}))
-          .remainingFilter("id >= 100")
-          .endTableScan()
+          .tableScan(ROW({"id"}, {BIGINT()}), {"id >= 100"})
           .planNode(),
-
       createParquetDeleteFileAndSplits(
           path, deletePositionsVec, deletedPositionSize, deleteFilePath),
       "SELECT i AS id FROM range(100, 300) AS t(i)",
