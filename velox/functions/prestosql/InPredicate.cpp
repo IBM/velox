@@ -278,8 +278,8 @@ std::pair<std::unique_ptr<common::Filter>, bool> createBytesValuesFilter(
     const VectorPtr& valuesVector,
     vector_size_t offset,
     vector_size_t size) {
-  auto valuesPair =
-      toValues<std::string, StringView>(valuesVector, offset, size);
+  auto valuesPair = toValues<std::string, StringView>(
+      valuesVector, offset, size);
 
   const auto& values = valuesPair.first;
   bool nullAllowed = valuesPair.second;
