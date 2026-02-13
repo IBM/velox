@@ -155,6 +155,14 @@ class FileDataSource : public DataSource {
   // post-read using the extraction chains.
   folly::F14FastMap<column_index_t, const FileColumnHandle*> extractionColumns_;
 
+  core::ExpressionEvaluator* expressionEvaluator() const {
+    return expressionEvaluator_;
+  }
+
+  std::atomic_uint64_t& totalRemainingFilterTime() {
+    return totalRemainingFilterTime_;
+  }
+
   dwio::common::RuntimeStatistics runtimeStats_;
 
  private:
@@ -195,7 +203,7 @@ class FileDataSource : public DataSource {
   /// transform column values. Indexed by output column position.
   std::vector<std::function<void(VectorPtr&)>> columnPostProcessors_;
   std::shared_ptr<common::MetadataFilter> metadataFilter_;
-  std::unique_ptr<exec::ExprSet> remainingFilterExprSet_;
+  std::shared_ptr<exec::ExprSet> remainingFilterExprSet_;
   RowVectorPtr emptyOutput_;
   std::atomic_uint64_t totalRemainingFilterTime_{0};
   std::atomic_uint64_t totalRemainingFilterCpuTime_{0};

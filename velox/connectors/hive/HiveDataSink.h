@@ -19,7 +19,6 @@
 #include "velox/connectors/Connector.h"
 #include "velox/connectors/hive/FileDataSink.h"
 #include "velox/connectors/hive/HiveConfig.h"
-#include "velox/connectors/hive/HivePartitionName.h"
 #include "velox/connectors/hive/PartitionIdGenerator.h"
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/dwio/common/Options.h"
@@ -257,7 +256,38 @@ class HiveInsertTableHandle : public ConnectorInsertTableHandle {
       std::shared_ptr<const FileNameGenerator> fileNameGenerator =
           std::make_shared<const HiveInsertFileNameGenerator>(),
       const std::unordered_map<std::string, std::string>& storageParameters =
-          {});
+          {})
+      : inputColumns_(std::move(inputColumns)),
+        locationHandle_(std::move(locationHandle)),
+        storageFormat_(storageFormat),
+        bucketProperty_(std::move(bucketProperty)),
+        compressionKind_(compressionKind),
+        serdeParameters_(serdeParameters),
+        writerOptions_(writerOptions),
+        ensureFiles_(ensureFiles),
+        fileNameGenerator_(std::move(fileNameGenerator)),
+        storageParameters_(storageParameters) {
+    if (compressionKind.has_value()) {
+      VELOX_CHECK(
+          compressionKind.value() != common::CompressionKind_MAX,
+          "Unsupported compression type: CompressionKind_MAX");
+    }
+
+    if (ensureFiles_) {
+      // If ensureFiles is set and either the bucketProperty is set or some
+      // partition keys are in the data, there is not a 1:1 mapping from Task to
+      // files so we can't proactively create writers.
+      VELOX_CHECK(
+          bucketProperty_ == nullptr || bucketProperty_->bucketCount() == 0,
+          "ensureFiles is not supported with bucketing");
+
+      for (const auto& inputColumn : inputColumns_) {
+        VELOX_CHECK(
+            !inputColumn->isPartitionKey(),
+            "ensureFiles is not supported with partition keys in the data");
+      }
+    }
+  }
 
   virtual ~HiveInsertTableHandle() = default;
 
@@ -512,19 +542,24 @@ class HiveDataSink : public FileDataSink {
   // Compute the partition id and bucket id for each row in 'input'.
   void computePartitionAndBucketIds(const RowVectorPtr& input) override;
 
+  WriterId getWriterId(size_t row) const;
+
+  void splitInputRowsAndEnsureWriters();
+
+  uint32_t ensureWriter(const WriterId& id) override;
+
+  uint32_t appendWriter(const WriterId& id);
   std::unique_ptr<facebook::velox::dwio::common::Writer> createWriterForIndex(
       size_t writerIndex) override;
+
+  std::string getPartitionName(uint32_t partitionId) const override;
 
   // Creates and configures WriterOptions based on file format.
   std::shared_ptr<dwio::common::WriterOptions> createWriterOptions()
       const override;
 
-  virtual std::shared_ptr<dwio::common::WriterOptions> createWriterOptions(
+  std::shared_ptr<dwio::common::WriterOptions> createWriterOptions(
       size_t writerIndex) const override;
-
-  // Returns the Hive partition directory name for the given partition ID.
-  virtual std::string getPartitionName(uint32_t partitionId) const override;
-
   std::unique_ptr<facebook::velox::dwio::common::Writer>
   maybeCreateBucketSortWriter(
       size_t writerIndex,
@@ -540,6 +575,13 @@ class HiveDataSink : public FileDataSink {
 
   WriterParameters::UpdateMode getUpdateMode() const;
 
+  void write(size_t index, RowVectorPtr input);
+
+  void rotateWriter(size_t index) override;
+
+  void finalizeWriterFile(size_t index);
+
+  void closeInternal() override;
   const std::shared_ptr<const HiveInsertTableHandle> insertTableHandle_;
   const std::shared_ptr<const HiveConfig> hiveConfig_;
   const WriterParameters::UpdateMode updateMode_;
