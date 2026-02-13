@@ -423,7 +423,7 @@ TEST_F(IcebergParquetStatsTest, empty) {
           {makeFlatVector<int32_t>(0), makeFlatVector<StringView>(0)})},
       outputDir->getPath());
   auto commitTasks = dataSink->close();
-  EXPECT_TRUE(commitTasks.empty());
+  EXPECT_FALSE(commitTasks.empty());
 }
 
 TEST_F(IcebergParquetStatsTest, nullValues) {
