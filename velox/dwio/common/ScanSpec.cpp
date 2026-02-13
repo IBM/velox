@@ -76,6 +76,7 @@ bool ScanSpec::compareTimeToDropValue(
       }
       return left->filter_->kind() < right->filter_->kind();
     }
+
     // If hasFilter() is true but 'filter_' is nullptr, we have a filter
     // on complex type members. The simple type filter goes first.
     if (left->filter_) {

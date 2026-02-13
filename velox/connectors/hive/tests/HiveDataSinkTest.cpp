@@ -1156,7 +1156,7 @@ TEST_F(HiveDataSinkTest, insertTableHandleToString) {
 TEST_F(HiveDataSinkTest, flushPolicyWithParquet) {
   const auto outputDirectory = TempDirectoryPath::create();
   auto flushPolicyFactory = []() {
-    return std::make_unique<parquet::DefaultFlushPolicy>(1234, 0);
+    return std::make_unique<parquet::DefaultFlushPolicy>(1234, 1);
   };
   auto writeOptions = std::make_shared<parquet::WriterOptions>();
   writeOptions->flushPolicyFactory = flushPolicyFactory;
