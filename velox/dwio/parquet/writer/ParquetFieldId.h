@@ -14,22 +14,14 @@
  * limitations under the License.
  */
 
-#include "velox/connectors/hive/iceberg/IcebergConfig.h"
+#pragma once
 
-#include "velox/common/config/Config.h"
-
-namespace facebook::velox::connector::hive::iceberg {
-
-IcebergConfig::IcebergConfig(
-    const std::shared_ptr<const config::ConfigBase>& config)
-    : config_(config) {
-  VELOX_CHECK_NOT_NULL(
-      config_, "Config is null for IcebergConfig initialization");
-}
-
-std::string IcebergConfig::functionPrefix() const {
-  return config_->get<std::string>(
-      kFunctionPrefixConfig, kDefaultFunctionPrefix);
-}
-
-} // namespace facebook::velox::connector::hive::iceberg
+namespace facebook::velox::parquet {
+/// Parquet field IDs during write operations. Each ID must be unique positive
+/// number, do not need to be sequential.
+/// Used to explicitly control field ID assignment in the Parquet schema.
+struct ParquetFieldId {
+  int32_t fieldId;
+  std::vector<ParquetFieldId> children;
+};
+} // namespace facebook::velox::parquet
