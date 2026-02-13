@@ -137,7 +137,7 @@ std::unique_ptr<FileSplitReader> HiveDataSource::createSplitReader() {
   auto bucketChannels = prepareSplit();
   auto hiveSplit = checkedPointerCast<const HiveConnectorSplit>(split_);
 
-  return std::make_unique<HiveSplitReader>(
+  return HiveSplitReader::create(
       hiveSplit,
       tableHandle_,
       &partitionKeys_,
@@ -149,6 +149,8 @@ std::unique_ptr<FileSplitReader> HiveDataSource::createSplitReader() {
       fileHandleFactory_,
       ioExecutor_,
       scanSpec_,
+      expressionEvaluator(),
+      totalRemainingFilterTime(),
       &infoColumns_,
       std::move(bucketChannels),
       /*subfieldFiltersForValidation=*/&filters_);
