@@ -16,8 +16,9 @@
 
 #include "velox/connectors/hive/iceberg/tests/IcebergSplitReaderBenchmark.h"
 #include <filesystem>
-
 #include "velox/connectors/hive/HiveConfig.h"
+#include <folly/executors/IOThreadPoolExecutor.h>
+#include "velox/vector/tests/utils/VectorMaker.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::dwio;
@@ -101,6 +102,8 @@ IcebergSplitReaderBenchmark::makeIcebergSplit(
     const std::string& dataFilePath,
     const std::vector<IcebergDeleteFile>& deleteFiles) {
   std::unordered_map<std::string, std::optional<std::string>> partitionKeys;
+  std::unordered_map<std::string, std::string> customSplitInfo;
+  customSplitInfo["table_format"] = "hive-iceberg";
 
   auto readFile = std::make_shared<LocalReadFile>(dataFilePath);
   const int64_t fileSize = readFile->size();
@@ -113,7 +116,7 @@ IcebergSplitReaderBenchmark::makeIcebergSplit(
       fileSize,
       partitionKeys,
       std::nullopt,
-      std::unordered_map<std::string, std::string>{},
+      customSplitInfo,
       nullptr,
       /*cacheable=*/true,
       deleteFiles);
@@ -328,13 +331,16 @@ void IcebergSplitReaderBenchmark::readSingleColumn(
 
   suspender.dismiss();
 
+  auto ioExecutor = std::make_unique<folly::IOThreadPoolExecutor>(3);
+  std::shared_ptr<exec::ExprSet> remainingFilterExprSet{nullptr};
+  std::atomic<uint64_t> totalRemainingFilterMs;
+
   uint64_t resultSize = 0;
   for (const auto& split : splits) {
     scanSpec->resetCachedValues(true);
-    auto icebergSplit = checkedPointerCast<const HiveIcebergSplit>(split);
     std::unique_ptr<IcebergSplitReader> icebergSplitReader =
         std::make_unique<IcebergSplitReader>(
-            icebergSplit,
+            std::dynamic_pointer_cast<const HiveIcebergSplit>(split),
             hiveTableHandle,
             nullptr,
             connectorQueryCtx_.get(),
@@ -343,8 +349,13 @@ void IcebergSplitReaderBenchmark::readSingleColumn(
             ioStatistics,
             ioStats,
             &fileHandleFactory,
-            nullptr,
-            scanSpec);
+            ioExecutor.get(),
+            scanSpec,
+            connectorQueryCtx_->expressionEvaluator(),
+            totalRemainingFilterMs,
+            nullptr,                      // infoColumns
+            std::vector<column_index_t>{}, // bucketChannels
+            nullptr);                     // subfieldFiltersForValidation
 
     std::shared_ptr<random::RandomSkipTracker> randomSkip;
     icebergSplitReader->configureReaderOptions(randomSkip);
