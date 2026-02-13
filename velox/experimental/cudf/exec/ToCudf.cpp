@@ -17,6 +17,7 @@
 #include "velox/experimental/cudf/CudfConfig.h"
 #include "velox/experimental/cudf/connectors/hive/CudfHiveConnector.h"
 #include "velox/experimental/cudf/connectors/hive/CudfHiveDataSource.h"
+#include "velox/experimental/cudf/exec/CudfPlanNodeChecker.h"
 #include "velox/experimental/cudf/exec/CudfAssignUniqueId.h"
 #include "velox/experimental/cudf/exec/CudfConversion.h"
 #include "velox/experimental/cudf/exec/CudfFilterProject.h"
@@ -135,7 +136,7 @@ bool CompileState::compile(bool allowCpuFallback) {
       // Check filter separately.
       if (filterNode) {
         if (!canBeEvaluatedByCudf(
-                {filterNode->filter()}, ctx->task->queryCtx().get())) {
+                std::vector<velox::core::TypedExprPtr>{filterNode->filter()}, ctx->task->queryCtx().get())) {
           return false;
         }
       }
@@ -194,7 +195,7 @@ bool CompileState::compile(bool allowCpuFallback) {
     }
     if (planNode->filter()) {
       if (!canBeEvaluatedByCudf(
-              {planNode->filter()}, ctx->task->queryCtx().get())) {
+              std::vector<velox::core::TypedExprPtr>{planNode->filter()}, ctx->task->queryCtx().get())) {
         return false;
       }
     }

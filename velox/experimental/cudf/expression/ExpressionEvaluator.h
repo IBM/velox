@@ -96,6 +96,8 @@ class CudfExpression {
 using CudfExpressionPtr = std::shared_ptr<CudfExpression>;
 
 using CudfExpressionEvaluatorCanEvaluate =
+    std::function<bool(const velox::core::TypedExprPtr& expr)>;
+using CudfExpressionEvaluatorCanEvaluateExec =
     std::function<bool(std::shared_ptr<velox::exec::Expr> expr)>;
 using CudfExpressionEvaluatorCreate =
     std::function<std::shared_ptr<CudfExpression>(
@@ -112,6 +114,7 @@ bool registerCudfExpressionEvaluator(
     const std::string& name,
     int priority,
     CudfExpressionEvaluatorCanEvaluate canEvaluate,
+    CudfExpressionEvaluatorCanEvaluateExec canEvaluateExec,
     CudfExpressionEvaluatorCreate create,
     bool overwrite = true);
 
@@ -135,6 +138,8 @@ class FunctionExpression : public CudfExpression {
   // Check if this specific operation can be evaluated by FunctionExpression
   // (does not recursively check children)
   static bool canEvaluate(std::shared_ptr<velox::exec::Expr> expr);
+  
+  static bool canEvaluate(const velox::core::TypedExprPtr& expr);
 
  private:
   std::shared_ptr<velox::exec::Expr> expr_;
@@ -150,6 +155,17 @@ std::shared_ptr<CudfExpression> createCudfExpression(
     std::optional<std::string> except = std::nullopt);
 
 /// Lightweight check if an expression tree is supported by any CUDF evaluator
+/// without initializing CudfExpression objects.
+/// \param expr Expression to check
+/// \param deep If true, recursively check all children in the expression tree;
+///             if false, only check if the top-level operation is supported
+///             (useful when delegating to subexpressions)
+bool canBeEvaluatedByCudf(
+    const velox::core::TypedExprPtr& expr,
+    bool deep = true);
+
+/// @deprecated: prefer new function variant that uses core::TypedExprPtr.
+/// Checks if an expression tree is supported by any CUDF evaluator
 /// without initializing CudfExpression objects.
 /// \param expr Expression to check
 /// \param deep If true, recursively check all children in the expression tree;
