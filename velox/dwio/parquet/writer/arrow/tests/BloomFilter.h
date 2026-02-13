@@ -32,154 +32,153 @@
 
 namespace facebook::velox::parquet::arrow {
 
-// A Bloom filter is a compact structure to indicate whether an item is not in
-// a. Set or probably in a set. The Bloom filter usually consists of a bit set
-// that. Represents a set of elements, a hash strategy and a Bloom filter
-// algorithm.
+// A Bloom filter is a compact structure to indicate whether an item is not in a
+// set or probably in a set. The Bloom filter usually consists of a bit set that
+// represents a set of elements, a hash strategy and a Bloom filter algorithm.
 class PARQUET_EXPORT BloomFilter {
  public:
-  // Maximum Bloom filter size, it sets to HDFS default block size 128MB.
+  // Maximum Bloom filter size, it sets to HDFS default block size 128MB
   // This value will be reconsidered when implementing Bloom filter producer.
   static constexpr uint32_t kMaximumBloomFilterBytes = 128 * 1024 * 1024;
 
   /// Determine whether an element exist in set or not.
   ///
   /// @param hash the element to contain.
-  /// @return false if value is definitely not in set, and true means PROBABLY.
-  /// In set.
-  virtual bool findHash(uint64_t hash) const = 0;
+  /// @return false if value is definitely not in set, and true means PROBABLY
+  /// in set.
+  virtual bool FindHash(uint64_t hash) const = 0;
 
   /// Insert element to set represented by Bloom filter bitset.
   /// @param hash the hash of value to insert into Bloom filter.
-  virtual void insertHash(uint64_t hash) = 0;
+  virtual void InsertHash(uint64_t hash) = 0;
 
   /// Insert elements to set represented by Bloom filter bitset.
   /// @param hashes the hash values to insert into Bloom filter.
   /// @param num_values the number of hash values to insert.
-  virtual void insertHashes(const uint64_t* hashes, int numValues) = 0;
+  virtual void InsertHashes(const uint64_t* hashes, int num_values) = 0;
 
-  /// Write this Bloom filter to an output stream. A Bloom filter structure.
-  /// Should include bitset length, hash strategy, algorithm, and bitset.
+  /// Write this Bloom filter to an output stream. A Bloom filter structure
+  /// should include bitset length, hash strategy, algorithm, and bitset.
   ///
-  /// @param sink the output stream to write.
-  virtual void writeTo(ArrowOutputStream* sink) const = 0;
+  /// @param sink the output stream to write
+  virtual void WriteTo(ArrowOutputStream* sink) const = 0;
 
-  /// Get the number of bytes of bitset.
-  virtual uint32_t getBitsetSize() const = 0;
+  /// Get the number of bytes of bitset
+  virtual uint32_t GetBitsetSize() const = 0;
 
   /// Compute hash for 32 bits value by using its plain encoding result.
   ///
   /// @param value the value to hash.
   /// @return hash result.
-  virtual uint64_t hash(int32_t value) const = 0;
+  virtual uint64_t Hash(int32_t value) const = 0;
 
   /// Compute hash for 64 bits value by using its plain encoding result.
   ///
   /// @param value the value to hash.
   /// @return hash result.
-  virtual uint64_t hash(int64_t value) const = 0;
+  virtual uint64_t Hash(int64_t value) const = 0;
 
   /// Compute hash for float value by using its plain encoding result.
   ///
   /// @param value the value to hash.
   /// @return hash result.
-  virtual uint64_t hash(float value) const = 0;
+  virtual uint64_t Hash(float value) const = 0;
 
   /// Compute hash for double value by using its plain encoding result.
   ///
   /// @param value the value to hash.
   /// @return hash result.
-  virtual uint64_t hash(double value) const = 0;
+  virtual uint64_t Hash(double value) const = 0;
 
   /// Compute hash for Int96 value by using its plain encoding result.
   ///
   /// @param value the value to hash.
   /// @return hash result.
-  virtual uint64_t hash(const Int96* value) const = 0;
+  virtual uint64_t Hash(const Int96* value) const = 0;
 
   /// Compute hash for ByteArray value by using its plain encoding result.
   ///
   /// @param value the value to hash.
   /// @return hash result.
-  virtual uint64_t hash(const ByteArray* value) const = 0;
+  virtual uint64_t Hash(const ByteArray* value) const = 0;
 
-  /// Compute hash for fixed byte array value by using its plain encoding.
-  /// Result.
+  /// Compute hash for fixed byte array value by using its plain encoding
+  /// result.
   ///
   /// @param value the value address.
   /// @param len the value length.
   /// @return hash result.
-  virtual uint64_t hash(const FLBA* value, uint32_t len) const = 0;
+  virtual uint64_t Hash(const FLBA* value, uint32_t len) const = 0;
 
-  /// Batch compute hashes for 32 bits values by using its plain encoding.
-  /// Result.
+  /// Batch compute hashes for 32 bits values by using its plain encoding
+  /// result.
   ///
   /// @param values values a pointer to the values to hash.
   /// @param num_values the number of values to hash.
-  /// @param hashes a pointer to the output hash values, its length should be.
-  /// Equal to num_values.
-  virtual void hashes(const int32_t* values, int numValues, uint64_t* hashes)
+  /// @param hashes a pointer to the output hash values, its length should be
+  /// equal to num_values.
+  virtual void Hashes(const int32_t* values, int num_values, uint64_t* hashes)
       const = 0;
 
-  /// Batch compute hashes for 64 bits values by using its plain encoding.
-  /// Result.
+  /// Batch compute hashes for 64 bits values by using its plain encoding
+  /// result.
   ///
   /// @param values values a pointer to the values to hash.
   /// @param num_values the number of values to hash.
-  /// @param hashes a pointer to the output hash values, its length should be.
-  /// Equal to num_values.
-  virtual void hashes(const int64_t* values, int numValues, uint64_t* hashes)
+  /// @param hashes a pointer to the output hash values, its length should be
+  /// equal to num_values.
+  virtual void Hashes(const int64_t* values, int num_values, uint64_t* hashes)
       const = 0;
 
   /// Batch compute hashes for float values by using its plain encoding result.
   ///
   /// @param values values a pointer to the values to hash.
   /// @param num_values the number of values to hash.
-  /// @param hashes a pointer to the output hash values, its length should be.
-  /// Equal to num_values.
-  virtual void hashes(const float* values, int numValues, uint64_t* hashes)
+  /// @param hashes a pointer to the output hash values, its length should be
+  /// equal to num_values.
+  virtual void Hashes(const float* values, int num_values, uint64_t* hashes)
       const = 0;
 
   /// Batch compute hashes for double values by using its plain encoding result.
   ///
   /// @param values values a pointer to the values to hash.
   /// @param num_values the number of values to hash.
-  /// @param hashes a pointer to the output hash values, its length should be.
-  /// Equal to num_values.
-  virtual void hashes(const double* values, int numValues, uint64_t* hashes)
+  /// @param hashes a pointer to the output hash values, its length should be
+  /// equal to num_values.
+  virtual void Hashes(const double* values, int num_values, uint64_t* hashes)
       const = 0;
 
   /// Batch compute hashes for Int96 values by using its plain encoding result.
   ///
   /// @param values values a pointer to the values to hash.
   /// @param num_values the number of values to hash.
-  /// @param hashes a pointer to the output hash values, its length should be.
-  /// Equal to num_values.
-  virtual void hashes(const Int96* values, int numValues, uint64_t* hashes)
+  /// @param hashes a pointer to the output hash values, its length should be
+  /// equal to num_values.
+  virtual void Hashes(const Int96* values, int num_values, uint64_t* hashes)
       const = 0;
 
-  /// Batch compute hashes for ByteArray values by using its plain encoding.
-  /// Result.
+  /// Batch compute hashes for ByteArray values by using its plain encoding
+  /// result.
   ///
   /// @param values values a pointer to the values to hash.
   /// @param num_values the number of values to hash.
-  /// @param hashes a pointer to the output hash values, its length should be.
-  /// Equal to num_values.
-  virtual void hashes(const ByteArray* values, int numValues, uint64_t* hashes)
+  /// @param hashes a pointer to the output hash values, its length should be
+  /// equal to num_values.
+  virtual void Hashes(const ByteArray* values, int num_values, uint64_t* hashes)
       const = 0;
 
-  /// Batch compute hashes for fixed byte array values by using its plain.
-  /// Encoding result.
+  /// Batch compute hashes for fixed byte array values by using its plain
+  /// encoding result.
   ///
   /// @param values values a pointer to the values to hash.
   /// @param type_len the value length.
   /// @param num_values the number of values to hash.
-  /// @param hashes a pointer to the output hash values, its length should be.
-  /// Equal to num_values.
-  virtual void hashes(
+  /// @param hashes a pointer to the output hash values, its length should be
+  /// equal to num_values.
+  virtual void Hashes(
       const FLBA* values,
-      uint32_t typeLen,
-      int numValues,
+      uint32_t type_len,
+      int num_values,
       uint64_t* hashes) const = 0;
 
   virtual ~BloomFilter() = default;
@@ -194,13 +193,13 @@ class PARQUET_EXPORT BloomFilter {
   enum class CompressionStrategy : uint32_t { UNCOMPRESSED = 0 };
 };
 
-/// The BlockSplitBloomFilter is implemented using block-based Bloom filters.
-/// From Putze et al.'s "Cache-,Hash- and Space-Efficient Bloom filters". The.
-/// Basic idea is to hash the item to a tiny Bloom filter which size fit a.
-/// Single cache line or smaller.
+/// The BlockSplitBloomFilter is implemented using block-based Bloom filters
+/// from Putze et al.'s "Cache-,Hash- and Space-Efficient Bloom filters". The
+/// basic idea is to hash the item to a tiny Bloom filter which size fit a
+/// single cache line or smaller.
 ///
-/// This implementation sets 8 bits in each tiny Bloom filter. Each tiny Bloom.
-/// Filter is 32 bytes to take advantage of 32-byte SIMD instructions.
+/// This implementation sets 8 bits in each tiny Bloom filter. Each tiny Bloom
+/// filter is 32 bytes to take advantage of 32-byte SIMD instructions.
 class PARQUET_EXPORT BlockSplitBloomFilter : public BloomFilter {
  public:
   /// The constructor of BlockSplitBloomFilter. It uses XXH64 as hash function.
@@ -209,171 +208,170 @@ class PARQUET_EXPORT BlockSplitBloomFilter : public BloomFilter {
   explicit BlockSplitBloomFilter(
       ::arrow::MemoryPool* pool = ::arrow::default_memory_pool());
 
-  /// Initialize the BlockSplitBloomFilter. The range of num_bytes should be.
-  /// Within [kMinimumBloomFilterBytes, kMaximumBloomFilterBytes], it will be.
-  /// Rounded up/down to lower/upper bound if num_bytes is out of range and
-  /// also. Will be rounded up to a power of 2.
+  /// Initialize the BlockSplitBloomFilter. The range of num_bytes should be
+  /// within [kMinimumBloomFilterBytes, kMaximumBloomFilterBytes], it will be
+  /// rounded up/down to lower/upper bound if num_bytes is out of range and also
+  /// will be rounded up to a power of 2.
   ///
   /// @param num_bytes The number of bytes to store Bloom filter bitset.
-  void init(uint32_t numBytes);
+  void Init(uint32_t num_bytes);
 
-  /// Initialize the BlockSplitBloomFilter. It copies the bitset as underlying.
-  /// Bitset because the given bitset may not satisfy the 32-byte alignment.
-  /// Requirement which may lead to segfault when performing SIMD instructions.
-  /// It is the caller's responsibility to free the bitset passed in. This is.
-  /// Used when reconstructing a Bloom filter from a parquet file.
+  /// Initialize the BlockSplitBloomFilter. It copies the bitset as underlying
+  /// bitset because the given bitset may not satisfy the 32-byte alignment
+  /// requirement which may lead to segfault when performing SIMD instructions.
+  /// It is the caller's responsibility to free the bitset passed in. This is
+  /// used when reconstructing a Bloom filter from a parquet file.
   ///
   /// @param bitset The given bitset to initialize the Bloom filter.
   /// @param num_bytes  The number of bytes of given bitset.
-  void init(const uint8_t* bitset, uint32_t numBytes);
+  void Init(const uint8_t* bitset, uint32_t num_bytes);
 
   /// Minimum Bloom filter size, it sets to 32 bytes to fit a tiny Bloom filter.
   static constexpr uint32_t kMinimumBloomFilterBytes = 32;
 
-  /// Calculate optimal size according to the number of distinct values and.
-  /// False positive probability.
+  /// Calculate optimal size according to the number of distinct values and
+  /// false positive probability.
   ///
   /// @param ndv The number of distinct values.
   /// @param fpp The false positive probability.
-  /// @return it always return a value between kMinimumBloomFilterBytes and.
-  /// KMaximumBloomFilterBytes, and the return value is always a power of 2.
-  static uint32_t optimalNumOfBytes(uint32_t ndv, double fpp) {
-    uint32_t optimalNumBits = optimalNumOfBits(ndv, fpp);
-    VELOX_DCHECK(::arrow::bit_util::IsMultipleOf8(optimalNumBits));
-    return optimalNumBits >> 3;
+  /// @return it always return a value between kMinimumBloomFilterBytes and
+  /// kMaximumBloomFilterBytes, and the return value is always a power of 2
+  static uint32_t OptimalNumOfBytes(uint32_t ndv, double fpp) {
+    uint32_t optimal_num_of_bits = OptimalNumOfBits(ndv, fpp);
+    VELOX_DCHECK(::arrow::bit_util::IsMultipleOf8(optimal_num_of_bits));
+    return optimal_num_of_bits >> 3;
   }
 
-  /// Calculate optimal size according to the number of distinct values and.
-  /// False positive probability.
+  /// Calculate optimal size according to the number of distinct values and
+  /// false positive probability.
   ///
   /// @param ndv The number of distinct values.
   /// @param fpp The false positive probability.
-  /// @return it always return a value between kMinimumBloomFilterBytes * 8 and.
-  /// KMaximumBloomFilterBytes * 8, and the return value is always a power
-  /// of 16.
-  static uint32_t optimalNumOfBits(uint32_t ndv, double fpp) {
+  /// @return it always return a value between kMinimumBloomFilterBytes * 8 and
+  /// kMaximumBloomFilterBytes * 8, and the return value is always a power of 16
+  static uint32_t OptimalNumOfBits(uint32_t ndv, double fpp) {
     VELOX_DCHECK(fpp > 0.0 && fpp < 1.0);
     const double m = -8.0 * ndv / log(1 - pow(fpp, 1.0 / 8));
-    uint32_t numBits;
+    uint32_t num_bits;
 
     // Handle overflow.
     if (m < 0 || m > kMaximumBloomFilterBytes << 3) {
-      numBits = static_cast<uint32_t>(kMaximumBloomFilterBytes << 3);
+      num_bits = static_cast<uint32_t>(kMaximumBloomFilterBytes << 3);
     } else {
-      numBits = static_cast<uint32_t>(m);
+      num_bits = static_cast<uint32_t>(m);
     }
 
-    // Round up to lower bound.
-    if (numBits < kMinimumBloomFilterBytes << 3) {
-      numBits = kMinimumBloomFilterBytes << 3;
+    // Round up to lower bound
+    if (num_bits < kMinimumBloomFilterBytes << 3) {
+      num_bits = kMinimumBloomFilterBytes << 3;
     }
 
     // Get next power of 2 if bits is not power of 2.
-    if ((numBits & (numBits - 1)) != 0) {
-      numBits = static_cast<uint32_t>(::arrow::bit_util::NextPower2(numBits));
+    if ((num_bits & (num_bits - 1)) != 0) {
+      num_bits = static_cast<uint32_t>(::arrow::bit_util::NextPower2(num_bits));
     }
 
-    // Round down to upper bound.
-    if (numBits > kMaximumBloomFilterBytes << 3) {
-      numBits = kMaximumBloomFilterBytes << 3;
+    // Round down to upper bound
+    if (num_bits > kMaximumBloomFilterBytes << 3) {
+      num_bits = kMaximumBloomFilterBytes << 3;
     }
 
-    return numBits;
+    return num_bits;
   }
 
-  bool findHash(uint64_t hash) const override;
-  void insertHash(uint64_t hash) override;
-  void insertHashes(const uint64_t* hashes, int numValues) override;
-  void writeTo(ArrowOutputStream* sink) const override;
-  uint32_t getBitsetSize() const override {
-    return numBytes_;
+  bool FindHash(uint64_t hash) const override;
+  void InsertHash(uint64_t hash) override;
+  void InsertHashes(const uint64_t* hashes, int num_values) override;
+  void WriteTo(ArrowOutputStream* sink) const override;
+  uint32_t GetBitsetSize() const override {
+    return num_bytes_;
   }
 
-  uint64_t hash(int32_t value) const override {
-    return hasher_->hash(value);
+  uint64_t Hash(int32_t value) const override {
+    return hasher_->Hash(value);
   }
-  uint64_t hash(int64_t value) const override {
-    return hasher_->hash(value);
+  uint64_t Hash(int64_t value) const override {
+    return hasher_->Hash(value);
   }
-  uint64_t hash(float value) const override {
-    return hasher_->hash(value);
+  uint64_t Hash(float value) const override {
+    return hasher_->Hash(value);
   }
-  uint64_t hash(double value) const override {
-    return hasher_->hash(value);
+  uint64_t Hash(double value) const override {
+    return hasher_->Hash(value);
   }
-  uint64_t hash(const Int96* value) const override {
-    return hasher_->hash(value);
+  uint64_t Hash(const Int96* value) const override {
+    return hasher_->Hash(value);
   }
-  uint64_t hash(const ByteArray* value) const override {
-    return hasher_->hash(value);
+  uint64_t Hash(const ByteArray* value) const override {
+    return hasher_->Hash(value);
   }
-  uint64_t hash(const FLBA* value, uint32_t len) const override {
-    return hasher_->hash(value, len);
+  uint64_t Hash(const FLBA* value, uint32_t len) const override {
+    return hasher_->Hash(value, len);
   }
 
-  void hashes(const int32_t* values, int numValues, uint64_t* hashes)
+  void Hashes(const int32_t* values, int num_values, uint64_t* hashes)
       const override {
-    hasher_->hashes(values, numValues, hashes);
+    hasher_->Hashes(values, num_values, hashes);
   }
-  void hashes(const int64_t* values, int numValues, uint64_t* hashes)
+  void Hashes(const int64_t* values, int num_values, uint64_t* hashes)
       const override {
-    hasher_->hashes(values, numValues, hashes);
+    hasher_->Hashes(values, num_values, hashes);
   }
-  void hashes(const float* values, int numValues, uint64_t* hashes)
+  void Hashes(const float* values, int num_values, uint64_t* hashes)
       const override {
-    hasher_->hashes(values, numValues, hashes);
+    hasher_->Hashes(values, num_values, hashes);
   }
-  void hashes(const double* values, int numValues, uint64_t* hashes)
+  void Hashes(const double* values, int num_values, uint64_t* hashes)
       const override {
-    hasher_->hashes(values, numValues, hashes);
+    hasher_->Hashes(values, num_values, hashes);
   }
-  void hashes(const Int96* values, int numValues, uint64_t* hashes)
+  void Hashes(const Int96* values, int num_values, uint64_t* hashes)
       const override {
-    hasher_->hashes(values, numValues, hashes);
+    hasher_->Hashes(values, num_values, hashes);
   }
-  void hashes(const ByteArray* values, int numValues, uint64_t* hashes)
+  void Hashes(const ByteArray* values, int num_values, uint64_t* hashes)
       const override {
-    hasher_->hashes(values, numValues, hashes);
+    hasher_->Hashes(values, num_values, hashes);
   }
-  void hashes(
+  void Hashes(
       const FLBA* values,
-      uint32_t typeLen,
-      int numValues,
+      uint32_t type_len,
+      int num_values,
       uint64_t* hashes) const override {
-    hasher_->hashes(values, typeLen, numValues, hashes);
+    hasher_->Hashes(values, type_len, num_values, hashes);
   }
 
-  uint64_t hash(const int32_t* value) const {
-    return hasher_->hash(*value);
+  uint64_t Hash(const int32_t* value) const {
+    return hasher_->Hash(*value);
   }
-  uint64_t hash(const int64_t* value) const {
-    return hasher_->hash(*value);
+  uint64_t Hash(const int64_t* value) const {
+    return hasher_->Hash(*value);
   }
-  uint64_t hash(const float* value) const {
-    return hasher_->hash(*value);
+  uint64_t Hash(const float* value) const {
+    return hasher_->Hash(*value);
   }
-  uint64_t hash(const double* value) const {
-    return hasher_->hash(*value);
+  uint64_t Hash(const double* value) const {
+    return hasher_->Hash(*value);
   }
 
-  /// Deserialize the Bloom filter from an input stream. It is used when.
-  /// Reconstructing a Bloom filter from a parquet filter.
+  /// Deserialize the Bloom filter from an input stream. It is used when
+  /// reconstructing a Bloom filter from a parquet filter.
   ///
   /// @param properties The parquet reader properties.
-  /// @param input_stream The input stream from which to construct the Bloom.
-  /// Filter.
+  /// @param input_stream The input stream from which to construct the Bloom
+  /// filter.
   /// @return The BlockSplitBloomFilter.
-  static BlockSplitBloomFilter deserialize(
+  static BlockSplitBloomFilter Deserialize(
       const ReaderProperties& properties,
-      ArrowInputStream* inputStream);
+      ArrowInputStream* input_stream);
 
  private:
-  inline void insertHashImpl(uint64_t hash);
+  inline void InsertHashImpl(uint64_t hash);
 
   // Bytes in a tiny Bloom filter block.
   static constexpr int kBytesPerFilterBlock = 32;
 
-  // The number of bits to be set in each tiny Bloom filter.
+  // The number of bits to be set in each tiny Bloom filter
   static constexpr int kBitsSetPerBlock = 8;
 
   // A mask structure used to set bits in each tiny Bloom filter.
@@ -381,8 +379,8 @@ class PARQUET_EXPORT BlockSplitBloomFilter : public BloomFilter {
     uint32_t item[kBitsSetPerBlock];
   };
 
-  // The block-based algorithm needs eight odd SALT values to calculate eight.
-  // Indexes of bit to set, one bit in each 32-bit word.
+  // The block-based algorithm needs eight odd SALT values to calculate eight
+  // indexes of bit to set, one bit in each 32-bit word.
   static constexpr uint32_t SALT[kBitsSetPerBlock] = {
       0x47b6137bU,
       0x44974d91U,
@@ -393,23 +391,23 @@ class PARQUET_EXPORT BlockSplitBloomFilter : public BloomFilter {
       0x9efc4947U,
       0x5c6bfb31U};
 
-  // Memory pool to allocate aligned buffer for bitset.
+  // Memory pool to allocate aligned buffer for bitset
   ::arrow::MemoryPool* pool_;
 
   // The underlying buffer of bitset.
   std::shared_ptr<Buffer> data_;
 
   // The number of bytes of Bloom filter bitset.
-  uint32_t numBytes_;
+  uint32_t num_bytes_;
 
   // Hash strategy used in this Bloom filter.
-  HashStrategy hashStrategy_;
+  HashStrategy hash_strategy_;
 
   // Algorithm used in this Bloom filter.
   Algorithm algorithm_;
 
   // Compression used in this Bloom filter.
-  CompressionStrategy compressionStrategy_;
+  CompressionStrategy compression_strategy_;
 
   // The hash pointer points to actual hash class used.
   std::unique_ptr<Hasher> hasher_;

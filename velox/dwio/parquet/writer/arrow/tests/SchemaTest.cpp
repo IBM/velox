@@ -42,513 +42,513 @@ using facebook::velox::parquet::thrift::SchemaElement;
 
 namespace schema {
 
-static inline SchemaElement newPrimitive(
+static inline SchemaElement NewPrimitive(
     const std::string& name,
     FieldRepetitionType::type repetition,
     Type::type type,
-    int fieldId = -1) {
+    int field_id = -1) {
   SchemaElement result;
   result.__set_name(name);
   result.__set_repetition_type(repetition);
   result.__set_type(
       static_cast<facebook::velox::parquet::thrift::Type::type>(type));
-  if (fieldId >= 0) {
-    result.__set_field_id(fieldId);
+  if (field_id >= 0) {
+    result.__set_field_id(field_id);
   }
   return result;
 }
 
-static inline SchemaElement newGroup(
+static inline SchemaElement NewGroup(
     const std::string& name,
     FieldRepetitionType::type repetition,
-    int numChildren,
-    int fieldId = -1) {
+    int num_children,
+    int field_id = -1) {
   SchemaElement result;
   result.__set_name(name);
   result.__set_repetition_type(repetition);
-  result.__set_num_children(numChildren);
+  result.__set_num_children(num_children);
 
-  if (fieldId >= 0) {
-    result.__set_field_id(fieldId);
+  if (field_id >= 0) {
+    result.__set_field_id(field_id);
   }
 
   return result;
 }
 
 template <typename NodeType>
-static void checkNodeRoundtrip(const Node& node) {
+static void CheckNodeRoundtrip(const Node& node) {
   facebook::velox::parquet::thrift::SchemaElement serialized;
-  node.toParquet(&serialized);
-  std::unique_ptr<Node> recovered = NodeType::fromParquet(&serialized);
-  ASSERT_TRUE(node.equals(recovered.get()))
+  node.ToParquet(&serialized);
+  std::unique_ptr<Node> recovered = NodeType::FromParquet(&serialized);
+  ASSERT_TRUE(node.Equals(recovered.get()))
       << "Recovered node not equivalent to original node constructed "
-      << "with logical type " << node.logicalType()->toString() << " got "
-      << recovered->logicalType()->toString();
+      << "with logical type " << node.logical_type()->ToString() << " got "
+      << recovered->logical_type()->ToString();
 }
 
-static void confirmPrimitiveNodeRoundtrip(
-    const std::shared_ptr<const LogicalType>& logicalType,
-    Type::type physicalType,
-    int physicalLength,
-    int fieldId = -1) {
-  auto Node = PrimitiveNode::make(
+static void ConfirmPrimitiveNodeRoundtrip(
+    const std::shared_ptr<const LogicalType>& logical_type,
+    Type::type physical_type,
+    int physical_length,
+    int field_id = -1) {
+  auto node = PrimitiveNode::Make(
       "something",
-      Repetition::kRequired,
-      logicalType,
-      physicalType,
-      physicalLength,
-      fieldId);
-  checkNodeRoundtrip<PrimitiveNode>(*Node);
+      Repetition::REQUIRED,
+      logical_type,
+      physical_type,
+      physical_length,
+      field_id);
+  CheckNodeRoundtrip<PrimitiveNode>(*node);
 }
 
-static void confirmGroupNodeRoundtrip(
+static void ConfirmGroupNodeRoundtrip(
     std::string name,
-    const std::shared_ptr<const LogicalType>& logicalType,
-    int fieldId = -1) {
-  auto Node =
-      GroupNode::make(name, Repetition::kRequired, {}, logicalType, fieldId);
-  checkNodeRoundtrip<GroupNode>(*Node);
+    const std::shared_ptr<const LogicalType>& logical_type,
+    int field_id = -1) {
+  auto node =
+      GroupNode::Make(name, Repetition::REQUIRED, {}, logical_type, field_id);
+  CheckNodeRoundtrip<GroupNode>(*node);
 }
 
-// ----------------------------------------------------------------------.
-// ColumnPath.
+// ----------------------------------------------------------------------
+// ColumnPath
 
 TEST(TestColumnPath, TestAttrs) {
   ColumnPath path(std::vector<std::string>({"toplevel", "leaf"}));
 
-  ASSERT_EQ(path.toDotString(), "toplevel.leaf");
+  ASSERT_EQ(path.ToDotString(), "toplevel.leaf");
 
-  std::shared_ptr<ColumnPath> pathPtr =
-      ColumnPath::fromDotString("toplevel.leaf");
-  ASSERT_EQ(pathPtr->toDotString(), "toplevel.leaf");
+  std::shared_ptr<ColumnPath> path_ptr =
+      ColumnPath::FromDotString("toplevel.leaf");
+  ASSERT_EQ(path_ptr->ToDotString(), "toplevel.leaf");
 
-  std::shared_ptr<ColumnPath> extended = pathPtr->extend("anotherlevel");
-  ASSERT_EQ(extended->toDotString(), "toplevel.leaf.anotherlevel");
+  std::shared_ptr<ColumnPath> extended = path_ptr->extend("anotherlevel");
+  ASSERT_EQ(extended->ToDotString(), "toplevel.leaf.anotherlevel");
 }
 
-// ----------------------------------------------------------------------.
-// Primitive node.
+// ----------------------------------------------------------------------
+// Primitive node
 
 class TestPrimitiveNode : public ::testing::Test {
  public:
   void SetUp() {
     name_ = "name";
-    fieldId_ = 5;
+    field_id_ = 5;
   }
 
-  void convert(const facebook::velox::parquet::thrift::SchemaElement* element) {
-    node_ = PrimitiveNode::fromParquet(element);
-    ASSERT_TRUE(node_->isPrimitive());
-    primNode_ = static_cast<const PrimitiveNode*>(node_.get());
+  void Convert(const facebook::velox::parquet::thrift::SchemaElement* element) {
+    node_ = PrimitiveNode::FromParquet(element);
+    ASSERT_TRUE(node_->is_primitive());
+    prim_node_ = static_cast<const PrimitiveNode*>(node_.get());
   }
 
  protected:
   std::string name_;
-  const PrimitiveNode* primNode_;
+  const PrimitiveNode* prim_node_;
 
-  int fieldId_;
+  int field_id_;
   std::unique_ptr<Node> node_;
 };
 
 TEST_F(TestPrimitiveNode, Attrs) {
-  PrimitiveNode node1("foo", Repetition::kRepeated, Type::kInt32);
+  PrimitiveNode node1("foo", Repetition::REPEATED, Type::INT32);
 
   PrimitiveNode node2(
-      "bar", Repetition::kOptional, Type::kByteArray, ConvertedType::kUtf8);
+      "bar", Repetition::OPTIONAL, Type::BYTE_ARRAY, ConvertedType::UTF8);
 
   ASSERT_EQ("foo", node1.name());
 
-  ASSERT_TRUE(node1.isPrimitive());
-  ASSERT_FALSE(node1.isGroup());
+  ASSERT_TRUE(node1.is_primitive());
+  ASSERT_FALSE(node1.is_group());
 
-  ASSERT_EQ(Repetition::kRepeated, node1.repetition());
-  ASSERT_EQ(Repetition::kOptional, node2.repetition());
+  ASSERT_EQ(Repetition::REPEATED, node1.repetition());
+  ASSERT_EQ(Repetition::OPTIONAL, node2.repetition());
 
-  ASSERT_EQ(Node::kPrimitive, node1.nodeType());
+  ASSERT_EQ(Node::PRIMITIVE, node1.node_type());
 
-  ASSERT_EQ(Type::kInt32, node1.physicalType());
-  ASSERT_EQ(Type::kByteArray, node2.physicalType());
+  ASSERT_EQ(Type::INT32, node1.physical_type());
+  ASSERT_EQ(Type::BYTE_ARRAY, node2.physical_type());
 
-  // Logical types.
-  ASSERT_EQ(ConvertedType::kNone, node1.convertedType());
-  ASSERT_EQ(ConvertedType::kUtf8, node2.convertedType());
+  // logical types
+  ASSERT_EQ(ConvertedType::NONE, node1.converted_type());
+  ASSERT_EQ(ConvertedType::UTF8, node2.converted_type());
 
-  // Repetition.
-  PrimitiveNode node3("foo", Repetition::kRepeated, Type::kInt32);
-  PrimitiveNode node4("foo", Repetition::kRequired, Type::kInt32);
-  PrimitiveNode node5("foo", Repetition::kOptional, Type::kInt32);
+  // repetition
+  PrimitiveNode node3("foo", Repetition::REPEATED, Type::INT32);
+  PrimitiveNode node4("foo", Repetition::REQUIRED, Type::INT32);
+  PrimitiveNode node5("foo", Repetition::OPTIONAL, Type::INT32);
 
-  ASSERT_TRUE(node3.isRepeated());
-  ASSERT_FALSE(node3.isOptional());
+  ASSERT_TRUE(node3.is_repeated());
+  ASSERT_FALSE(node3.is_optional());
 
-  ASSERT_TRUE(node4.isRequired());
+  ASSERT_TRUE(node4.is_required());
 
-  ASSERT_TRUE(node5.isOptional());
-  ASSERT_FALSE(node5.isRequired());
+  ASSERT_TRUE(node5.is_optional());
+  ASSERT_FALSE(node5.is_required());
 }
 
-TEST_F(TestPrimitiveNode, fromParquet) {
-  SchemaElement elt = newPrimitive(
-      name_, FieldRepetitionType::OPTIONAL, Type::kInt32, fieldId_);
-  ASSERT_NO_FATAL_FAILURE(convert(&elt));
-  ASSERT_EQ(name_, primNode_->name());
-  ASSERT_EQ(fieldId_, primNode_->fieldId());
-  ASSERT_EQ(Repetition::kOptional, primNode_->repetition());
-  ASSERT_EQ(Type::kInt32, primNode_->physicalType());
-  ASSERT_EQ(ConvertedType::kNone, primNode_->convertedType());
+TEST_F(TestPrimitiveNode, FromParquet) {
+  SchemaElement elt = NewPrimitive(
+      name_, FieldRepetitionType::OPTIONAL, Type::INT32, field_id_);
+  ASSERT_NO_FATAL_FAILURE(Convert(&elt));
+  ASSERT_EQ(name_, prim_node_->name());
+  ASSERT_EQ(field_id_, prim_node_->field_id());
+  ASSERT_EQ(Repetition::OPTIONAL, prim_node_->repetition());
+  ASSERT_EQ(Type::INT32, prim_node_->physical_type());
+  ASSERT_EQ(ConvertedType::NONE, prim_node_->converted_type());
 
-  // Test a logical type.
-  elt = newPrimitive(
-      name_, FieldRepetitionType::REQUIRED, Type::kByteArray, fieldId_);
+  // Test a logical type
+  elt = NewPrimitive(
+      name_, FieldRepetitionType::REQUIRED, Type::BYTE_ARRAY, field_id_);
   elt.__set_converted_type(
       facebook::velox::parquet::thrift::ConvertedType::UTF8);
 
-  ASSERT_NO_FATAL_FAILURE(convert(&elt));
-  ASSERT_EQ(Repetition::kRequired, primNode_->repetition());
-  ASSERT_EQ(Type::kByteArray, primNode_->physicalType());
-  ASSERT_EQ(ConvertedType::kUtf8, primNode_->convertedType());
+  ASSERT_NO_FATAL_FAILURE(Convert(&elt));
+  ASSERT_EQ(Repetition::REQUIRED, prim_node_->repetition());
+  ASSERT_EQ(Type::BYTE_ARRAY, prim_node_->physical_type());
+  ASSERT_EQ(ConvertedType::UTF8, prim_node_->converted_type());
 
-  // FIXED_LEN_BYTE_ARRAY.
-  elt = newPrimitive(
-      name_, FieldRepetitionType::OPTIONAL, Type::kFixedLenByteArray, fieldId_);
+  // FIXED_LEN_BYTE_ARRAY
+  elt = NewPrimitive(
+      name_,
+      FieldRepetitionType::OPTIONAL,
+      Type::FIXED_LEN_BYTE_ARRAY,
+      field_id_);
   elt.__set_type_length(16);
 
-  ASSERT_NO_FATAL_FAILURE(convert(&elt));
-  ASSERT_EQ(name_, primNode_->name());
-  ASSERT_EQ(fieldId_, primNode_->fieldId());
-  ASSERT_EQ(Repetition::kOptional, primNode_->repetition());
-  ASSERT_EQ(Type::kFixedLenByteArray, primNode_->physicalType());
-  ASSERT_EQ(16, primNode_->typeLength());
+  ASSERT_NO_FATAL_FAILURE(Convert(&elt));
+  ASSERT_EQ(name_, prim_node_->name());
+  ASSERT_EQ(field_id_, prim_node_->field_id());
+  ASSERT_EQ(Repetition::OPTIONAL, prim_node_->repetition());
+  ASSERT_EQ(Type::FIXED_LEN_BYTE_ARRAY, prim_node_->physical_type());
+  ASSERT_EQ(16, prim_node_->type_length());
 
-  // Facebook::velox::parquet::thrift::ConvertedType::Decimal.
-  elt = newPrimitive(
-      name_, FieldRepetitionType::OPTIONAL, Type::kFixedLenByteArray, fieldId_);
+  // facebook::velox::parquet::thrift::ConvertedType::Decimal
+  elt = NewPrimitive(
+      name_,
+      FieldRepetitionType::OPTIONAL,
+      Type::FIXED_LEN_BYTE_ARRAY,
+      field_id_);
   elt.__set_converted_type(
       facebook::velox::parquet::thrift::ConvertedType::DECIMAL);
   elt.__set_type_length(6);
   elt.__set_scale(2);
   elt.__set_precision(12);
 
-  ASSERT_NO_FATAL_FAILURE(convert(&elt));
-  ASSERT_EQ(Type::kFixedLenByteArray, primNode_->physicalType());
-  ASSERT_EQ(ConvertedType::kDecimal, primNode_->convertedType());
-  ASSERT_EQ(6, primNode_->typeLength());
-  ASSERT_EQ(2, primNode_->decimalMetadata().scale);
-  ASSERT_EQ(12, primNode_->decimalMetadata().precision);
+  ASSERT_NO_FATAL_FAILURE(Convert(&elt));
+  ASSERT_EQ(Type::FIXED_LEN_BYTE_ARRAY, prim_node_->physical_type());
+  ASSERT_EQ(ConvertedType::DECIMAL, prim_node_->converted_type());
+  ASSERT_EQ(6, prim_node_->type_length());
+  ASSERT_EQ(2, prim_node_->decimal_metadata().scale);
+  ASSERT_EQ(12, prim_node_->decimal_metadata().precision);
 }
 
-TEST_F(TestPrimitiveNode, equals) {
-  PrimitiveNode node1("foo", Repetition::kRequired, Type::kInt32);
-  PrimitiveNode node2("foo", Repetition::kRequired, Type::kInt64);
-  PrimitiveNode node3("bar", Repetition::kRequired, Type::kInt32);
-  PrimitiveNode node4("foo", Repetition::kOptional, Type::kInt32);
-  PrimitiveNode node5("foo", Repetition::kRequired, Type::kInt32);
+TEST_F(TestPrimitiveNode, Equals) {
+  PrimitiveNode node1("foo", Repetition::REQUIRED, Type::INT32);
+  PrimitiveNode node2("foo", Repetition::REQUIRED, Type::INT64);
+  PrimitiveNode node3("bar", Repetition::REQUIRED, Type::INT32);
+  PrimitiveNode node4("foo", Repetition::OPTIONAL, Type::INT32);
+  PrimitiveNode node5("foo", Repetition::REQUIRED, Type::INT32);
 
-  ASSERT_TRUE(node1.equals(&node1));
-  ASSERT_FALSE(node1.equals(&node2));
-  ASSERT_FALSE(node1.equals(&node3));
-  ASSERT_FALSE(node1.equals(&node4));
-  ASSERT_TRUE(node1.equals(&node5));
+  ASSERT_TRUE(node1.Equals(&node1));
+  ASSERT_FALSE(node1.Equals(&node2));
+  ASSERT_FALSE(node1.Equals(&node3));
+  ASSERT_FALSE(node1.Equals(&node4));
+  ASSERT_TRUE(node1.Equals(&node5));
 
   PrimitiveNode flba1(
       "foo",
-      Repetition::kRequired,
-      Type::kFixedLenByteArray,
-      ConvertedType::kDecimal,
+      Repetition::REQUIRED,
+      Type::FIXED_LEN_BYTE_ARRAY,
+      ConvertedType::DECIMAL,
       12,
       4,
       2);
 
   PrimitiveNode flba2(
       "foo",
-      Repetition::kRequired,
-      Type::kFixedLenByteArray,
-      ConvertedType::kDecimal,
+      Repetition::REQUIRED,
+      Type::FIXED_LEN_BYTE_ARRAY,
+      ConvertedType::DECIMAL,
       1,
       4,
       2);
-  flba2.setTypeLength(12);
+  flba2.SetTypeLength(12);
 
   PrimitiveNode flba3(
       "foo",
-      Repetition::kRequired,
-      Type::kFixedLenByteArray,
-      ConvertedType::kDecimal,
+      Repetition::REQUIRED,
+      Type::FIXED_LEN_BYTE_ARRAY,
+      ConvertedType::DECIMAL,
       1,
       4,
       2);
-  flba3.setTypeLength(16);
+  flba3.SetTypeLength(16);
 
   PrimitiveNode flba4(
       "foo",
-      Repetition::kRequired,
-      Type::kFixedLenByteArray,
-      ConvertedType::kDecimal,
+      Repetition::REQUIRED,
+      Type::FIXED_LEN_BYTE_ARRAY,
+      ConvertedType::DECIMAL,
       12,
       4,
       0);
 
   PrimitiveNode flba5(
       "foo",
-      Repetition::kRequired,
-      Type::kFixedLenByteArray,
-      ConvertedType::kNone,
+      Repetition::REQUIRED,
+      Type::FIXED_LEN_BYTE_ARRAY,
+      ConvertedType::NONE,
       12,
       4,
       0);
 
-  ASSERT_TRUE(flba1.equals(&flba2));
-  ASSERT_FALSE(flba1.equals(&flba3));
-  ASSERT_FALSE(flba1.equals(&flba4));
-  ASSERT_FALSE(flba1.equals(&flba5));
+  ASSERT_TRUE(flba1.Equals(&flba2));
+  ASSERT_FALSE(flba1.Equals(&flba3));
+  ASSERT_FALSE(flba1.Equals(&flba4));
+  ASSERT_FALSE(flba1.Equals(&flba5));
 }
 
 TEST_F(TestPrimitiveNode, PhysicalLogicalMapping) {
   ASSERT_NO_THROW(
-      PrimitiveNode::make(
-          "foo", Repetition::kRequired, Type::kInt32, ConvertedType::kInt32));
+      PrimitiveNode::Make(
+          "foo", Repetition::REQUIRED, Type::INT32, ConvertedType::INT_32));
   ASSERT_NO_THROW(
-      PrimitiveNode::make(
-          "foo",
-          Repetition::kRequired,
-          Type::kByteArray,
-          ConvertedType::kJson));
+      PrimitiveNode::Make(
+          "foo", Repetition::REQUIRED, Type::BYTE_ARRAY, ConvertedType::JSON));
   ASSERT_THROW(
-      PrimitiveNode::make(
-          "foo", Repetition::kRequired, Type::kInt32, ConvertedType::kJson),
+      PrimitiveNode::Make(
+          "foo", Repetition::REQUIRED, Type::INT32, ConvertedType::JSON),
       ParquetException);
   ASSERT_NO_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kInt64,
-          ConvertedType::kTimestampMillis));
+          Repetition::REQUIRED,
+          Type::INT64,
+          ConvertedType::TIMESTAMP_MILLIS));
   ASSERT_THROW(
-      PrimitiveNode::make(
-          "foo", Repetition::kRequired, Type::kInt32, ConvertedType::kInt64),
+      PrimitiveNode::Make(
+          "foo", Repetition::REQUIRED, Type::INT32, ConvertedType::INT_64),
       ParquetException);
   ASSERT_THROW(
-      PrimitiveNode::make(
-          "foo", Repetition::kRequired, Type::kByteArray, ConvertedType::kInt8),
+      PrimitiveNode::Make(
+          "foo", Repetition::REQUIRED, Type::BYTE_ARRAY, ConvertedType::INT_8),
       ParquetException);
   ASSERT_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kByteArray,
-          ConvertedType::kInterval),
+          Repetition::REQUIRED,
+          Type::BYTE_ARRAY,
+          ConvertedType::INTERVAL),
       ParquetException);
   ASSERT_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kFixedLenByteArray,
-          ConvertedType::kEnum),
+          Repetition::REQUIRED,
+          Type::FIXED_LEN_BYTE_ARRAY,
+          ConvertedType::ENUM),
       ParquetException);
   ASSERT_NO_THROW(
-      PrimitiveNode::make(
-          "foo",
-          Repetition::kRequired,
-          Type::kByteArray,
-          ConvertedType::kEnum));
+      PrimitiveNode::Make(
+          "foo", Repetition::REQUIRED, Type::BYTE_ARRAY, ConvertedType::ENUM));
   ASSERT_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kFixedLenByteArray,
-          ConvertedType::kDecimal,
+          Repetition::REQUIRED,
+          Type::FIXED_LEN_BYTE_ARRAY,
+          ConvertedType::DECIMAL,
           0,
           2,
           4),
       ParquetException);
   ASSERT_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kFloat,
-          ConvertedType::kDecimal,
+          Repetition::REQUIRED,
+          Type::FLOAT,
+          ConvertedType::DECIMAL,
           0,
           2,
           4),
       ParquetException);
   ASSERT_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kFixedLenByteArray,
-          ConvertedType::kDecimal,
+          Repetition::REQUIRED,
+          Type::FIXED_LEN_BYTE_ARRAY,
+          ConvertedType::DECIMAL,
           0,
           4,
           0),
       ParquetException);
   ASSERT_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kFixedLenByteArray,
-          ConvertedType::kDecimal,
+          Repetition::REQUIRED,
+          Type::FIXED_LEN_BYTE_ARRAY,
+          ConvertedType::DECIMAL,
           10,
           0,
           4),
       ParquetException);
   ASSERT_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kFixedLenByteArray,
-          ConvertedType::kDecimal,
+          Repetition::REQUIRED,
+          Type::FIXED_LEN_BYTE_ARRAY,
+          ConvertedType::DECIMAL,
           10,
           4,
           -1),
       ParquetException);
   ASSERT_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kFixedLenByteArray,
-          ConvertedType::kDecimal,
+          Repetition::REQUIRED,
+          Type::FIXED_LEN_BYTE_ARRAY,
+          ConvertedType::DECIMAL,
           10,
           2,
           4),
       ParquetException);
   ASSERT_NO_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kFixedLenByteArray,
-          ConvertedType::kDecimal,
+          Repetition::REQUIRED,
+          Type::FIXED_LEN_BYTE_ARRAY,
+          ConvertedType::DECIMAL,
           10,
           6,
           4));
   ASSERT_NO_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kFixedLenByteArray,
-          ConvertedType::kInterval,
+          Repetition::REQUIRED,
+          Type::FIXED_LEN_BYTE_ARRAY,
+          ConvertedType::INTERVAL,
           12));
   ASSERT_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "foo",
-          Repetition::kRequired,
-          Type::kFixedLenByteArray,
-          ConvertedType::kInterval,
+          Repetition::REQUIRED,
+          Type::FIXED_LEN_BYTE_ARRAY,
+          ConvertedType::INTERVAL,
           10),
       ParquetException);
 }
 
-// ----------------------------------------------------------------------.
-// Group node.
+// ----------------------------------------------------------------------
+// Group node
 
 class TestGroupNode : public ::testing::Test {
  public:
-  NodeVector fields1() {
+  NodeVector Fields1() {
     NodeVector fields;
 
-    fields.push_back(int32("one", Repetition::kRequired));
-    fields.push_back(int64("two"));
-    fields.push_back(doubleType("three"));
+    fields.push_back(Int32("one", Repetition::REQUIRED));
+    fields.push_back(Int64("two"));
+    fields.push_back(Double("three"));
 
     return fields;
   }
 
-  NodeVector fields2() {
-    // Fields with a duplicate name.
+  NodeVector Fields2() {
+    // Fields with a duplicate name
     NodeVector fields;
 
-    fields.push_back(int32("duplicate", Repetition::kRequired));
-    fields.push_back(int64("unique"));
-    fields.push_back(doubleType("duplicate"));
+    fields.push_back(Int32("duplicate", Repetition::REQUIRED));
+    fields.push_back(Int64("unique"));
+    fields.push_back(Double("duplicate"));
 
     return fields;
   }
 };
 
 TEST_F(TestGroupNode, Attrs) {
-  NodeVector fields = fields1();
+  NodeVector fields = Fields1();
 
-  GroupNode node1("foo", Repetition::kRepeated, fields);
-  GroupNode node2("bar", Repetition::kOptional, fields, ConvertedType::kList);
+  GroupNode node1("foo", Repetition::REPEATED, fields);
+  GroupNode node2("bar", Repetition::OPTIONAL, fields, ConvertedType::LIST);
 
   ASSERT_EQ("foo", node1.name());
 
-  ASSERT_TRUE(node1.isGroup());
-  ASSERT_FALSE(node1.isPrimitive());
+  ASSERT_TRUE(node1.is_group());
+  ASSERT_FALSE(node1.is_primitive());
 
-  ASSERT_EQ(fields.size(), node1.fieldCount());
+  ASSERT_EQ(fields.size(), node1.field_count());
 
-  ASSERT_TRUE(node1.isRepeated());
-  ASSERT_TRUE(node2.isOptional());
+  ASSERT_TRUE(node1.is_repeated());
+  ASSERT_TRUE(node2.is_optional());
 
-  ASSERT_EQ(Repetition::kRepeated, node1.repetition());
-  ASSERT_EQ(Repetition::kOptional, node2.repetition());
+  ASSERT_EQ(Repetition::REPEATED, node1.repetition());
+  ASSERT_EQ(Repetition::OPTIONAL, node2.repetition());
 
-  ASSERT_EQ(Node::kGroup, node1.nodeType());
+  ASSERT_EQ(Node::GROUP, node1.node_type());
 
-  // Logical types.
-  ASSERT_EQ(ConvertedType::kNone, node1.convertedType());
-  ASSERT_EQ(ConvertedType::kList, node2.convertedType());
+  // logical types
+  ASSERT_EQ(ConvertedType::NONE, node1.converted_type());
+  ASSERT_EQ(ConvertedType::LIST, node2.converted_type());
 }
 
-TEST_F(TestGroupNode, equals) {
-  NodeVector f1 = fields1();
-  NodeVector f2 = fields1();
+TEST_F(TestGroupNode, Equals) {
+  NodeVector f1 = Fields1();
+  NodeVector f2 = Fields1();
 
-  GroupNode group1("group", Repetition::kRepeated, f1);
-  GroupNode group2("group", Repetition::kRepeated, f2);
-  GroupNode group3("group2", Repetition::kRepeated, f2);
+  GroupNode group1("group", Repetition::REPEATED, f1);
+  GroupNode group2("group", Repetition::REPEATED, f2);
+  GroupNode group3("group2", Repetition::REPEATED, f2);
 
-  // This is copied in the GroupNode ctor, so this is okay.
-  f2.push_back(floatType("four", Repetition::kOptional));
-  GroupNode group4("group", Repetition::kRepeated, f2);
-  GroupNode group5("group", Repetition::kRepeated, fields1());
+  // This is copied in the GroupNode ctor, so this is okay
+  f2.push_back(Float("four", Repetition::OPTIONAL));
+  GroupNode group4("group", Repetition::REPEATED, f2);
+  GroupNode group5("group", Repetition::REPEATED, Fields1());
 
-  ASSERT_TRUE(group1.equals(&group1));
-  ASSERT_TRUE(group1.equals(&group2));
-  ASSERT_FALSE(group1.equals(&group3));
+  ASSERT_TRUE(group1.Equals(&group1));
+  ASSERT_TRUE(group1.Equals(&group2));
+  ASSERT_FALSE(group1.Equals(&group3));
 
-  ASSERT_FALSE(group1.equals(&group4));
-  ASSERT_FALSE(group5.equals(&group4));
+  ASSERT_FALSE(group1.Equals(&group4));
+  ASSERT_FALSE(group5.Equals(&group4));
 }
 
-TEST_F(TestGroupNode, fieldIndex) {
-  NodeVector fields = fields1();
-  GroupNode group("group", Repetition::kRequired, fields);
+TEST_F(TestGroupNode, FieldIndex) {
+  NodeVector fields = Fields1();
+  GroupNode group("group", Repetition::REQUIRED, fields);
   for (size_t i = 0; i < fields.size(); i++) {
     auto field = group.field(static_cast<int>(i));
-    ASSERT_EQ(i, group.fieldIndex(*field));
+    ASSERT_EQ(i, group.FieldIndex(*field));
   }
 
-  // Test a non field node.
-  auto nonFieldAlien = int32("alien", Repetition::kRequired); // other name
-  auto nonFieldFamiliar = int32("one", Repetition::kRepeated); // other node
-  ASSERT_LT(group.fieldIndex(*nonFieldAlien), 0);
-  ASSERT_LT(group.fieldIndex(*nonFieldFamiliar), 0);
+  // Test a non field node
+  auto non_field_alien = Int32("alien", Repetition::REQUIRED); // other name
+  auto non_field_familiar = Int32("one", Repetition::REPEATED); // other node
+  ASSERT_LT(group.FieldIndex(*non_field_alien), 0);
+  ASSERT_LT(group.FieldIndex(*non_field_familiar), 0);
 }
 
 TEST_F(TestGroupNode, FieldIndexDuplicateName) {
-  NodeVector fields = fields2();
-  GroupNode group("group", Repetition::kRequired, fields);
+  NodeVector fields = Fields2();
+  GroupNode group("group", Repetition::REQUIRED, fields);
   for (size_t i = 0; i < fields.size(); i++) {
     auto field = group.field(static_cast<int>(i));
-    ASSERT_EQ(i, group.fieldIndex(*field));
+    ASSERT_EQ(i, group.FieldIndex(*field));
   }
 }
 
-// ----------------------------------------------------------------------.
-// Test convert group.
+// ----------------------------------------------------------------------
+// Test convert group
 
 class TestSchemaConverter : public ::testing::Test {
  public:
-  void SetUp() {
+  void setUp() {
     name_ = "parquet_schema";
   }
 
-  void convert(
+  void Convert(
       const facebook::velox::parquet::thrift::SchemaElement* elements,
       int length) {
-    node_ = unflatten(elements, length);
-    ASSERT_TRUE(node_->isGroup());
+    node_ = Unflatten(elements, length);
+    ASSERT_TRUE(node_->is_group());
     group_ = static_cast<const GroupNode*>(node_.get());
   }
 
@@ -558,16 +558,16 @@ class TestSchemaConverter : public ::testing::Test {
   std::unique_ptr<Node> node_;
 };
 
-bool checkForParentConsistency(const GroupNode* Node) {
-  // Each node should have the group as parent.
-  for (int i = 0; i < Node->fieldCount(); i++) {
-    const NodePtr& field = Node->field(i);
-    if (field->parent() != Node) {
+bool check_for_parent_consistency(const GroupNode* node) {
+  // Each node should have the group as parent
+  for (int i = 0; i < node->field_count(); i++) {
+    const NodePtr& field = node->field(i);
+    if (field->parent() != node) {
       return false;
     }
-    if (field->isGroup()) {
+    if (field->is_group()) {
       const GroupNode* group = static_cast<GroupNode*>(field.get());
-      if (!checkForParentConsistency(group)) {
+      if (!check_for_parent_consistency(group)) {
         return false;
       }
     }
@@ -578,99 +578,108 @@ bool checkForParentConsistency(const GroupNode* Node) {
 TEST_F(TestSchemaConverter, NestedExample) {
   SchemaElement elt;
   std::vector<SchemaElement> elements;
-  elements.push_back(newGroup(name_, FieldRepetitionType::REPEATED, 2, 0));
+  elements.push_back(NewGroup(
+      name_,
+      FieldRepetitionType::REPEATED,
+      /*num_children=*/2,
+      /*field_id=*/0));
 
-  // A primitive one.
+  // A primitive one
   elements.push_back(
-      newPrimitive("a", FieldRepetitionType::REQUIRED, Type::kInt32, 1));
+      NewPrimitive("a", FieldRepetitionType::REQUIRED, Type::INT32, 1));
 
-  // A group.
-  elements.push_back(newGroup("bag", FieldRepetitionType::OPTIONAL, 1, 2));
+  // A group
+  elements.push_back(NewGroup("bag", FieldRepetitionType::OPTIONAL, 1, 2));
 
-  // 3-Level list encoding, by hand.
-  elt = newGroup("b", FieldRepetitionType::REPEATED, 1, 3);
+  // 3-level list encoding, by hand
+  elt = NewGroup("b", FieldRepetitionType::REPEATED, 1, 3);
   elt.__set_converted_type(
       facebook::velox::parquet::thrift::ConvertedType::LIST);
   elements.push_back(elt);
   elements.push_back(
-      newPrimitive("item", FieldRepetitionType::OPTIONAL, Type::kInt64, 4));
+      NewPrimitive("item", FieldRepetitionType::OPTIONAL, Type::INT64, 4));
 
   ASSERT_NO_FATAL_FAILURE(
-      convert(&elements[0], static_cast<int>(elements.size())));
+      Convert(&elements[0], static_cast<int>(elements.size())));
 
-  // Construct the expected schema.
+  // Construct the expected schema
   NodeVector fields;
-  fields.push_back(int32("a", Repetition::kRequired, 1));
+  fields.push_back(Int32("a", Repetition::REQUIRED, 1));
 
-  // 3-Level list encoding.
-  NodePtr item = int64("item", Repetition::kOptional, 4);
-  NodePtr List(
-      GroupNode::make(
-          "b", Repetition::kRepeated, {item}, ConvertedType::kList, 3));
+  // 3-level list encoding
+  NodePtr item = Int64("item", Repetition::OPTIONAL, 4);
+  NodePtr list(
+      GroupNode::Make(
+          "b", Repetition::REPEATED, {item}, ConvertedType::LIST, 3));
   NodePtr bag(
-      GroupNode::make("bag", Repetition::kOptional, {List}, nullptr, 2));
+      GroupNode::Make(
+          "bag", Repetition::OPTIONAL, {list}, /*logical_type=*/nullptr, 2));
   fields.push_back(bag);
 
-  NodePtr schema =
-      GroupNode::make(name_, Repetition::kRepeated, fields, nullptr, 0);
+  NodePtr schema = GroupNode::Make(
+      name_,
+      Repetition::REPEATED,
+      fields,
+      /*logical_type=*/nullptr,
+      0);
 
-  ASSERT_TRUE(schema->equals(group_));
+  ASSERT_TRUE(schema->Equals(group_));
 
-  // Check that the parent relationship in each node is consistent.
+  // Check that the parent relationship in each node is consistent
   ASSERT_EQ(group_->parent(), nullptr);
-  ASSERT_TRUE(checkForParentConsistency(group_));
+  ASSERT_TRUE(check_for_parent_consistency(group_));
 }
 
 TEST_F(TestSchemaConverter, ZeroColumns) {
-  // ARROW-3843.
+  // ARROW-3843
   SchemaElement elements[1];
-  elements[0] = newGroup("schema", FieldRepetitionType::REPEATED, 0, 0);
-  ASSERT_NO_THROW(convert(elements, 1));
+  elements[0] = NewGroup("schema", FieldRepetitionType::REPEATED, 0, 0);
+  ASSERT_NO_THROW(Convert(elements, 1));
 }
 
 TEST_F(TestSchemaConverter, InvalidRoot) {
-  // According to the Parquet specification, the first element in the.
+  // According to the Parquet specification, the first element in the
   // list<SchemaElement> is a group whose children (and their descendants)
-  // Contain all of the rest of the flattened schema elements. If the first.
-  // Element is not a group, it is a malformed Parquet file.
+  // contain all of the rest of the flattened schema elements. If the first
+  // element is not a group, it is a malformed Parquet file.
 
   SchemaElement elements[2];
-  elements[0] = newPrimitive(
-      "not-a-group", FieldRepetitionType::REQUIRED, Type::kInt32, 0);
-  ASSERT_THROW(convert(elements, 2), ParquetException);
+  elements[0] = NewPrimitive(
+      "not-a-group", FieldRepetitionType::REQUIRED, Type::INT32, 0);
+  ASSERT_THROW(Convert(elements, 2), ParquetException);
 
-  // While the Parquet spec indicates that the root group should have REPEATED.
-  // Repetition type, some implementations may return REQUIRED or OPTIONAL.
-  // Groups as the first element. These tests check that this is okay as a.
-  // Practicality matter.
-  elements[0] = newGroup("not-repeated", FieldRepetitionType::REQUIRED, 1, 0);
+  // While the Parquet spec indicates that the root group should have REPEATED
+  // repetition type, some implementations may return REQUIRED or OPTIONAL
+  // groups as the first element. These tests check that this is okay as a
+  // practicality matter.
+  elements[0] = NewGroup("not-repeated", FieldRepetitionType::REQUIRED, 1, 0);
   elements[1] =
-      newPrimitive("a", FieldRepetitionType::REQUIRED, Type::kInt32, 1);
-  ASSERT_NO_FATAL_FAILURE(convert(elements, 2));
+      NewPrimitive("a", FieldRepetitionType::REQUIRED, Type::INT32, 1);
+  ASSERT_NO_FATAL_FAILURE(Convert(elements, 2));
 
-  elements[0] = newGroup("not-repeated", FieldRepetitionType::OPTIONAL, 1, 0);
-  ASSERT_NO_FATAL_FAILURE(convert(elements, 2));
+  elements[0] = NewGroup("not-repeated", FieldRepetitionType::OPTIONAL, 1, 0);
+  ASSERT_NO_FATAL_FAILURE(Convert(elements, 2));
 }
 
 TEST_F(TestSchemaConverter, NotEnoughChildren) {
-  // Throw a ParquetException, but don't core dump or anything.
+  // Throw a ParquetException, but don't core dump or anything
   SchemaElement elt;
   std::vector<SchemaElement> elements;
-  elements.push_back(newGroup(name_, FieldRepetitionType::REPEATED, 2, 0));
-  ASSERT_THROW(convert(&elements[0], 1), ParquetException);
+  elements.push_back(NewGroup(name_, FieldRepetitionType::REPEATED, 2, 0));
+  ASSERT_THROW(Convert(&elements[0], 1), ParquetException);
 }
 
-// ----------------------------------------------------------------------.
-// Schema tree flatten / unflatten.
+// ----------------------------------------------------------------------
+// Schema tree flatten / unflatten
 
 class TestSchemaFlatten : public ::testing::Test {
  public:
-  void SetUp() {
+  void setUp() {
     name_ = "parquet_schema";
   }
 
-  void flatten(const GroupNode* schema) {
-    toParquet(schema, &elements_);
+  void Flatten(const GroupNode* schema) {
+    ToParquet(schema, &elements_);
   }
 
  protected:
@@ -679,42 +688,42 @@ class TestSchemaFlatten : public ::testing::Test {
 };
 
 TEST_F(TestSchemaFlatten, DecimalMetadata) {
-  // Checks that DecimalMetadata is only set for DecimalTypes.
-  NodePtr Node = PrimitiveNode::make(
+  // Checks that DecimalMetadata is only set for DecimalTypes
+  NodePtr node = PrimitiveNode::Make(
       "decimal",
-      Repetition::kRequired,
-      Type::kInt64,
-      ConvertedType::kDecimal,
+      Repetition::REQUIRED,
+      Type::INT64,
+      ConvertedType::DECIMAL,
       -1,
       8,
       4);
-  NodePtr group = GroupNode::make(
-      "group", Repetition::kRepeated, {Node}, ConvertedType::kList);
-  flatten(reinterpret_cast<GroupNode*>(group.get()));
+  NodePtr group = GroupNode::Make(
+      "group", Repetition::REPEATED, {node}, ConvertedType::LIST);
+  Flatten(reinterpret_cast<GroupNode*>(group.get()));
   ASSERT_EQ("decimal", elements_[1].name);
   ASSERT_TRUE(elements_[1].__isset.precision);
   ASSERT_TRUE(elements_[1].__isset.scale);
 
   elements_.clear();
-  // ... Including those created with new logical types.
-  Node = PrimitiveNode::make(
+  // ... including those created with new logical types
+  node = PrimitiveNode::Make(
       "decimal",
-      Repetition::kRequired,
-      DecimalLogicalType::make(10, 5),
-      Type::kInt64,
+      Repetition::REQUIRED,
+      DecimalLogicalType::Make(10, 5),
+      Type::INT64,
       -1);
-  group = GroupNode::make(
-      "group", Repetition::kRepeated, {Node}, ListLogicalType::make());
-  flatten(reinterpret_cast<GroupNode*>(group.get()));
+  group = GroupNode::Make(
+      "group", Repetition::REPEATED, {node}, ListLogicalType::Make());
+  Flatten(reinterpret_cast<GroupNode*>(group.get()));
   ASSERT_EQ("decimal", elements_[1].name);
   ASSERT_TRUE(elements_[1].__isset.precision);
   ASSERT_TRUE(elements_[1].__isset.scale);
 
   elements_.clear();
-  // Not for integers with no logical type.
-  group = GroupNode::make(
-      "group", Repetition::kRepeated, {int64("int64")}, ConvertedType::kList);
-  flatten(reinterpret_cast<GroupNode*>(group.get()));
+  // Not for integers with no logical type
+  group = GroupNode::Make(
+      "group", Repetition::REPEATED, {Int64("int64")}, ConvertedType::LIST);
+  Flatten(reinterpret_cast<GroupNode*>(group.get()));
   ASSERT_EQ("int64", elements_[1].name);
   ASSERT_FALSE(elements_[0].__isset.precision);
   ASSERT_FALSE(elements_[0].__isset.scale);
@@ -723,17 +732,17 @@ TEST_F(TestSchemaFlatten, DecimalMetadata) {
 TEST_F(TestSchemaFlatten, NestedExample) {
   SchemaElement elt;
   std::vector<SchemaElement> elements;
-  elements.push_back(newGroup(name_, FieldRepetitionType::REPEATED, 2, 0));
+  elements.push_back(NewGroup(name_, FieldRepetitionType::REPEATED, 2, 0));
 
-  // A primitive one.
+  // A primitive one
   elements.push_back(
-      newPrimitive("a", FieldRepetitionType::REQUIRED, Type::kInt32, 1));
+      NewPrimitive("a", FieldRepetitionType::REQUIRED, Type::INT32, 1));
 
-  // A group.
-  elements.push_back(newGroup("bag", FieldRepetitionType::OPTIONAL, 1, 2));
+  // A group
+  elements.push_back(NewGroup("bag", FieldRepetitionType::OPTIONAL, 1, 2));
 
-  // 3-Level list encoding, by hand.
-  elt = newGroup("b", FieldRepetitionType::REPEATED, 1, 3);
+  // 3-level list encoding, by hand
+  elt = NewGroup("b", FieldRepetitionType::REPEATED, 1, 3);
   elt.__set_converted_type(
       facebook::velox::parquet::thrift::ConvertedType::LIST);
   facebook::velox::parquet::thrift::ListType ls;
@@ -742,25 +751,34 @@ TEST_F(TestSchemaFlatten, NestedExample) {
   elt.__set_logicalType(lt);
   elements.push_back(elt);
   elements.push_back(
-      newPrimitive("item", FieldRepetitionType::OPTIONAL, Type::kInt64, 4));
+      NewPrimitive("item", FieldRepetitionType::OPTIONAL, Type::INT64, 4));
 
-  // Construct the schema.
+  // Construct the schema
   NodeVector fields;
-  fields.push_back(int32("a", Repetition::kRequired, 1));
+  fields.push_back(Int32("a", Repetition::REQUIRED, 1));
 
-  // 3-Level list encoding.
-  NodePtr item = int64("item", Repetition::kOptional, 4);
-  NodePtr List(
-      GroupNode::make(
-          "b", Repetition::kRepeated, {item}, ConvertedType::kList, 3));
+  // 3-level list encoding
+  NodePtr item = Int64("item", Repetition::OPTIONAL, 4);
+  NodePtr list(
+      GroupNode::Make(
+          "b", Repetition::REPEATED, {item}, ConvertedType::LIST, 3));
   NodePtr bag(
-      GroupNode::make("bag", Repetition::kOptional, {List}, nullptr, 2));
+      GroupNode::Make(
+          "bag",
+          Repetition::OPTIONAL,
+          {list},
+          /*logical_type=*/nullptr,
+          2));
   fields.push_back(bag);
 
-  NodePtr schema =
-      GroupNode::make(name_, Repetition::kRepeated, fields, nullptr, 0);
+  NodePtr schema = GroupNode::Make(
+      name_,
+      Repetition::REPEATED,
+      fields,
+      /*logical_type=*/nullptr,
+      0);
 
-  flatten(static_cast<GroupNode*>(schema.get()));
+  Flatten(static_cast<GroupNode*>(schema.get()));
   ASSERT_EQ(elements_.size(), elements.size());
   for (size_t i = 0; i < elements_.size(); i++) {
     ASSERT_EQ(elements_[i], elements[i]);
@@ -768,18 +786,18 @@ TEST_F(TestSchemaFlatten, NestedExample) {
 }
 
 TEST(TestColumnDescriptor, TestAttrs) {
-  NodePtr Node = PrimitiveNode::make(
-      "name", Repetition::kOptional, Type::kByteArray, ConvertedType::kUtf8);
-  ColumnDescriptor descr(Node, 4, 1);
+  NodePtr node = PrimitiveNode::Make(
+      "name", Repetition::OPTIONAL, Type::BYTE_ARRAY, ConvertedType::UTF8);
+  ColumnDescriptor descr(node, 4, 1);
 
   ASSERT_EQ("name", descr.name());
-  ASSERT_EQ(4, descr.maxDefinitionLevel());
-  ASSERT_EQ(1, descr.maxRepetitionLevel());
+  ASSERT_EQ(4, descr.max_definition_level());
+  ASSERT_EQ(1, descr.max_repetition_level());
 
-  ASSERT_EQ(Type::kByteArray, descr.physicalType());
+  ASSERT_EQ(Type::BYTE_ARRAY, descr.physical_type());
 
-  ASSERT_EQ(-1, descr.typeLength());
-  const char* expectedDescr = R"(column descriptor = {
+  ASSERT_EQ(-1, descr.type_length());
+  const char* expected_descr = R"(column descriptor = {
   name: name,
   path: ,
   physical_type: BYTE_ARRAY,
@@ -788,23 +806,23 @@ TEST(TestColumnDescriptor, TestAttrs) {
   max_definition_level: 4,
   max_repetition_level: 1,
 })";
-  ASSERT_EQ(expectedDescr, descr.toString());
+  ASSERT_EQ(expected_descr, descr.ToString());
 
-  // Test FIXED_LEN_BYTE_ARRAY.
-  Node = PrimitiveNode::make(
+  // Test FIXED_LEN_BYTE_ARRAY
+  node = PrimitiveNode::Make(
       "name",
-      Repetition::kOptional,
-      Type::kFixedLenByteArray,
-      ConvertedType::kDecimal,
+      Repetition::OPTIONAL,
+      Type::FIXED_LEN_BYTE_ARRAY,
+      ConvertedType::DECIMAL,
       12,
       10,
       4);
-  ColumnDescriptor descr2(Node, 4, 1);
+  ColumnDescriptor descr2(node, 4, 1);
 
-  ASSERT_EQ(Type::kFixedLenByteArray, descr2.physicalType());
-  ASSERT_EQ(12, descr2.typeLength());
+  ASSERT_EQ(Type::FIXED_LEN_BYTE_ARRAY, descr2.physical_type());
+  ASSERT_EQ(12, descr2.type_length());
 
-  expectedDescr = R"(column descriptor = {
+  expected_descr = R"(column descriptor = {
   name: name,
   path: ,
   physical_type: FIXED_LEN_BYTE_ARRAY,
@@ -816,259 +834,262 @@ TEST(TestColumnDescriptor, TestAttrs) {
   precision: 10,
   scale: 4,
 })";
-  ASSERT_EQ(expectedDescr, descr2.toString());
+  ASSERT_EQ(expected_descr, descr2.ToString());
 }
 
 class TestSchemaDescriptor : public ::testing::Test {
  public:
-  void SetUp() {}
+  void setUp() {}
 
  protected:
   SchemaDescriptor descr_;
 };
 
 TEST_F(TestSchemaDescriptor, InitNonGroup) {
-  NodePtr Node =
-      PrimitiveNode::make("field", Repetition::kOptional, Type::kInt32);
+  NodePtr node =
+      PrimitiveNode::Make("field", Repetition::OPTIONAL, Type::INT32);
 
-  ASSERT_THROW(descr_.init(Node), ParquetException);
+  ASSERT_THROW(descr_.Init(node), ParquetException);
 }
 
-TEST_F(TestSchemaDescriptor, equals) {
+TEST_F(TestSchemaDescriptor, Equals) {
   NodePtr schema;
 
-  NodePtr inta = int32("a", Repetition::kRequired);
-  NodePtr intb = int64("b", Repetition::kOptional);
-  NodePtr intb2 = int64("b2", Repetition::kOptional);
-  NodePtr intc = byteArray("c", Repetition::kRepeated);
+  NodePtr inta = Int32("a", Repetition::REQUIRED);
+  NodePtr intb = Int64("b", Repetition::OPTIONAL);
+  NodePtr intb2 = Int64("b2", Repetition::OPTIONAL);
+  NodePtr intc = ByteArray("c", Repetition::REPEATED);
 
-  NodePtr item1 = int64("item1", Repetition::kRequired);
-  NodePtr item2 = boolean("item2", Repetition::kOptional);
-  NodePtr item3 = int32("item3", Repetition::kRepeated);
-  NodePtr List(
-      GroupNode::make(
+  NodePtr item1 = Int64("item1", Repetition::REQUIRED);
+  NodePtr item2 = Boolean("item2", Repetition::OPTIONAL);
+  NodePtr item3 = Int32("item3", Repetition::REPEATED);
+  NodePtr list(
+      GroupNode::Make(
           "records",
-          Repetition::kRepeated,
+          Repetition::REPEATED,
           {item1, item2, item3},
-          ConvertedType::kList));
+          ConvertedType::LIST));
 
-  NodePtr bag(GroupNode::make("bag", Repetition::kOptional, {List}));
-  NodePtr bag2(GroupNode::make("bag", Repetition::kRequired, {List}));
+  NodePtr bag(GroupNode::Make("bag", Repetition::OPTIONAL, {list}));
+  NodePtr bag2(GroupNode::Make("bag", Repetition::REQUIRED, {list}));
 
   SchemaDescriptor descr1;
-  descr1.init(
-      GroupNode::make(
-          "schema", Repetition::kRepeated, {inta, intb, intc, bag}));
+  descr1.Init(
+      GroupNode::Make("schema", Repetition::REPEATED, {inta, intb, intc, bag}));
 
-  ASSERT_TRUE(descr1.equals(descr1));
+  ASSERT_TRUE(descr1.Equals(descr1));
 
   SchemaDescriptor descr2;
-  descr2.init(
-      GroupNode::make(
-          "schema", Repetition::kRepeated, {inta, intb, intc, bag2}));
-  ASSERT_FALSE(descr1.equals(descr2));
+  descr2.Init(
+      GroupNode::Make(
+          "schema", Repetition::REPEATED, {inta, intb, intc, bag2}));
+  ASSERT_FALSE(descr1.Equals(descr2));
 
   SchemaDescriptor descr3;
-  descr3.init(
-      GroupNode::make(
-          "schema", Repetition::kRepeated, {inta, intb2, intc, bag}));
-  ASSERT_FALSE(descr1.equals(descr3));
+  descr3.Init(
+      GroupNode::Make(
+          "schema", Repetition::REPEATED, {inta, intb2, intc, bag}));
+  ASSERT_FALSE(descr1.Equals(descr3));
 
-  // Robust to name of parent node.
+  // Robust to name of parent node
   SchemaDescriptor descr4;
-  descr4.init(
-      GroupNode::make(
-          "SCHEMA", Repetition::kRepeated, {inta, intb, intc, bag}));
-  ASSERT_TRUE(descr1.equals(descr4));
+  descr4.Init(
+      GroupNode::Make("SCHEMA", Repetition::REPEATED, {inta, intb, intc, bag}));
+  ASSERT_TRUE(descr1.Equals(descr4));
 
   SchemaDescriptor descr5;
-  descr5.init(
-      GroupNode::make(
-          "schema", Repetition::kRepeated, {inta, intb, intc, bag, intb2}));
-  ASSERT_FALSE(descr1.equals(descr5));
+  descr5.Init(
+      GroupNode::Make(
+          "schema", Repetition::REPEATED, {inta, intb, intc, bag, intb2}));
+  ASSERT_FALSE(descr1.Equals(descr5));
 
-  // Different max repetition / definition levels.
+  // Different max repetition / definition levels
   ColumnDescriptor col1(inta, 5, 1);
   ColumnDescriptor col2(inta, 6, 1);
   ColumnDescriptor col3(inta, 5, 2);
 
-  ASSERT_TRUE(col1.equals(col1));
-  ASSERT_FALSE(col1.equals(col2));
-  ASSERT_FALSE(col1.equals(col3));
+  ASSERT_TRUE(col1.Equals(col1));
+  ASSERT_FALSE(col1.Equals(col2));
+  ASSERT_FALSE(col1.Equals(col3));
 }
 
-TEST_F(TestSchemaDescriptor, buildTree) {
+TEST_F(TestSchemaDescriptor, BuildTree) {
   NodeVector fields;
   NodePtr schema;
 
-  NodePtr inta = int32("a", Repetition::kRequired);
+  NodePtr inta = Int32("a", Repetition::REQUIRED);
   fields.push_back(inta);
-  fields.push_back(int64("b", Repetition::kOptional));
-  fields.push_back(byteArray("c", Repetition::kRepeated));
+  fields.push_back(Int64("b", Repetition::OPTIONAL));
+  fields.push_back(ByteArray("c", Repetition::REPEATED));
 
-  // 3-Level list encoding.
-  NodePtr item1 = int64("item1", Repetition::kRequired);
-  NodePtr item2 = boolean("item2", Repetition::kOptional);
-  NodePtr item3 = int32("item3", Repetition::kRepeated);
-  NodePtr List(
-      GroupNode::make(
+  // 3-level list encoding
+  NodePtr item1 = Int64("item1", Repetition::REQUIRED);
+  NodePtr item2 = Boolean("item2", Repetition::OPTIONAL);
+  NodePtr item3 = Int32("item3", Repetition::REPEATED);
+  NodePtr list(
+      GroupNode::Make(
           "records",
-          Repetition::kRepeated,
+          Repetition::REPEATED,
           {item1, item2, item3},
-          ConvertedType::kList));
-  NodePtr bag(GroupNode::make("bag", Repetition::kOptional, {List}));
+          ConvertedType::LIST));
+  NodePtr bag(GroupNode::Make("bag", Repetition::OPTIONAL, {list}));
   fields.push_back(bag);
 
-  schema = GroupNode::make("schema", Repetition::kRepeated, fields);
+  schema = GroupNode::Make("schema", Repetition::REPEATED, fields);
 
-  descr_.init(schema);
+  descr_.Init(schema);
 
   int nleaves = 6;
 
-  // 6 Leaves.
-  ASSERT_EQ(nleaves, descr_.numColumns());
+  // 6 leaves
+  ASSERT_EQ(nleaves, descr_.num_columns());
 
-  //                             Mdef mrep.
-  // Required int32 a            0    0.
-  // Optional int64 b            1    0.
-  // Repeated byte_array c       1    1.
-  // Optional group bag          1    0.
-  //   Repeated group records    2    1.
-  //     Required int64 item1    2    1.
-  //     Optional boolean item2  3    1.
-  //     Repeated int32 item3    3    2.
-  int16_t exMaxDefLevels[6] = {0, 1, 1, 2, 3, 3};
-  int16_t exMaxRepLevels[6] = {0, 0, 1, 1, 1, 2};
-
-  for (int i = 0; i < nleaves; ++i) {
-    const ColumnDescriptor* col = descr_.column(i);
-    EXPECT_EQ(exMaxDefLevels[i], col->maxDefinitionLevel()) << i;
-    EXPECT_EQ(exMaxRepLevels[i], col->maxRepetitionLevel()) << i;
-  }
-
-  ASSERT_EQ(descr_.column(0)->path()->toDotString(), "a");
-  ASSERT_EQ(descr_.column(1)->path()->toDotString(), "b");
-  ASSERT_EQ(descr_.column(2)->path()->toDotString(), "c");
-  ASSERT_EQ(descr_.column(3)->path()->toDotString(), "bag.records.item1");
-  ASSERT_EQ(descr_.column(4)->path()->toDotString(), "bag.records.item2");
-  ASSERT_EQ(descr_.column(5)->path()->toDotString(), "bag.records.item3");
+  //                             mdef mrep
+  // required int32 a            0    0
+  // optional int64 b            1    0
+  // repeated byte_array c       1    1
+  // optional group bag          1    0
+  //   repeated group records    2    1
+  //     required int64 item1    2    1
+  //     optional boolean item2  3    1
+  //     repeated int32 item3    3    2
+  int16_t ex_max_def_levels[6] = {0, 1, 1, 2, 3, 3};
+  int16_t ex_max_rep_levels[6] = {0, 0, 1, 1, 1, 2};
 
   for (int i = 0; i < nleaves; ++i) {
-    auto col = descr_.column(i);
-    ASSERT_EQ(i, descr_.columnIndex(*col->schemaNode()));
+    const ColumnDescriptor* col = descr_.Column(i);
+    EXPECT_EQ(ex_max_def_levels[i], col->max_definition_level()) << i;
+    EXPECT_EQ(ex_max_rep_levels[i], col->max_repetition_level()) << i;
   }
 
-  // Test non-column nodes find.
-  NodePtr nonColumnAlien = int32("alien", Repetition::kRequired); // other path
-  NodePtr nonColumnFamiliar = int32("a", Repetition::kRepeated); // other node
-  ASSERT_LT(descr_.columnIndex(*nonColumnAlien), 0);
-  ASSERT_LT(descr_.columnIndex(*nonColumnFamiliar), 0);
+  ASSERT_EQ(descr_.Column(0)->path()->ToDotString(), "a");
+  ASSERT_EQ(descr_.Column(1)->path()->ToDotString(), "b");
+  ASSERT_EQ(descr_.Column(2)->path()->ToDotString(), "c");
+  ASSERT_EQ(descr_.Column(3)->path()->ToDotString(), "bag.records.item1");
+  ASSERT_EQ(descr_.Column(4)->path()->ToDotString(), "bag.records.item2");
+  ASSERT_EQ(descr_.Column(5)->path()->ToDotString(), "bag.records.item3");
 
-  ASSERT_EQ(inta.get(), descr_.getColumnRoot(0));
-  ASSERT_EQ(bag.get(), descr_.getColumnRoot(3));
-  ASSERT_EQ(bag.get(), descr_.getColumnRoot(4));
-  ASSERT_EQ(bag.get(), descr_.getColumnRoot(5));
+  for (int i = 0; i < nleaves; ++i) {
+    auto col = descr_.Column(i);
+    ASSERT_EQ(i, descr_.ColumnIndex(*col->schema_node()));
+  }
 
-  ASSERT_EQ(schema.get(), descr_.groupNode());
+  // Test non-column nodes find
+  NodePtr non_column_alien = Int32("alien", Repetition::REQUIRED); // other path
+  NodePtr non_column_familiar = Int32("a", Repetition::REPEATED); // other node
+  ASSERT_LT(descr_.ColumnIndex(*non_column_alien), 0);
+  ASSERT_LT(descr_.ColumnIndex(*non_column_familiar), 0);
 
-  // Init clears the leaves.
-  descr_.init(schema);
-  ASSERT_EQ(nleaves, descr_.numColumns());
+  ASSERT_EQ(inta.get(), descr_.GetColumnRoot(0));
+  ASSERT_EQ(bag.get(), descr_.GetColumnRoot(3));
+  ASSERT_EQ(bag.get(), descr_.GetColumnRoot(4));
+  ASSERT_EQ(bag.get(), descr_.GetColumnRoot(5));
+
+  ASSERT_EQ(schema.get(), descr_.group_node());
+
+  // Init clears the leaves
+  descr_.Init(schema);
+  ASSERT_EQ(nleaves, descr_.num_columns());
 }
 
-TEST_F(TestSchemaDescriptor, hasRepeatedFields) {
+TEST_F(TestSchemaDescriptor, HasRepeatedFields) {
   NodeVector fields;
   NodePtr schema;
 
-  NodePtr inta = int32("a", Repetition::kRequired);
+  NodePtr inta = Int32("a", Repetition::REQUIRED);
   fields.push_back(inta);
-  fields.push_back(int64("b", Repetition::kOptional));
-  fields.push_back(byteArray("c", Repetition::kRepeated));
+  fields.push_back(Int64("b", Repetition::OPTIONAL));
+  fields.push_back(ByteArray("c", Repetition::REPEATED));
 
-  schema = GroupNode::make("schema", Repetition::kRepeated, fields);
-  descr_.init(schema);
-  ASSERT_EQ(true, descr_.hasRepeatedFields());
+  schema = GroupNode::Make("schema", Repetition::REPEATED, fields);
+  descr_.Init(schema);
+  ASSERT_EQ(true, descr_.HasRepeatedFields());
 
-  // 3-Level list encoding.
-  NodePtr item1 = int64("item1", Repetition::kRequired);
-  NodePtr item2 = boolean("item2", Repetition::kOptional);
-  NodePtr item3 = int32("item3", Repetition::kRepeated);
-  NodePtr List(
-      GroupNode::make(
+  // 3-level list encoding
+  NodePtr item1 = Int64("item1", Repetition::REQUIRED);
+  NodePtr item2 = Boolean("item2", Repetition::OPTIONAL);
+  NodePtr item3 = Int32("item3", Repetition::REPEATED);
+  NodePtr list(
+      GroupNode::Make(
           "records",
-          Repetition::kRepeated,
+          Repetition::REPEATED,
           {item1, item2, item3},
-          ConvertedType::kList));
-  NodePtr bag(GroupNode::make("bag", Repetition::kOptional, {List}));
+          ConvertedType::LIST));
+  NodePtr bag(GroupNode::Make("bag", Repetition::OPTIONAL, {list}));
   fields.push_back(bag);
 
-  schema = GroupNode::make("schema", Repetition::kRepeated, fields);
-  descr_.init(schema);
-  ASSERT_EQ(true, descr_.hasRepeatedFields());
+  schema = GroupNode::Make("schema", Repetition::REPEATED, fields);
+  descr_.Init(schema);
+  ASSERT_EQ(true, descr_.HasRepeatedFields());
 
-  // 3-Level list encoding.
-  NodePtr itemKey = int64("key", Repetition::kRequired);
-  NodePtr itemValue = boolean("value", Repetition::kOptional);
-  NodePtr Map(
-      GroupNode::make(
+  // 3-level list encoding
+  NodePtr item_key = Int64("key", Repetition::REQUIRED);
+  NodePtr item_value = Boolean("value", Repetition::OPTIONAL);
+  NodePtr map(
+      GroupNode::Make(
           "map",
-          Repetition::kRepeated,
-          {itemKey, itemValue},
-          ConvertedType::kMap));
-  NodePtr myMap(GroupNode::make("my_map", Repetition::kOptional, {Map}));
-  fields.push_back(myMap);
+          Repetition::REPEATED,
+          {item_key, item_value},
+          ConvertedType::MAP));
+  NodePtr my_map(GroupNode::Make("my_map", Repetition::OPTIONAL, {map}));
+  fields.push_back(my_map);
 
-  schema = GroupNode::make("schema", Repetition::kRepeated, fields);
-  descr_.init(schema);
-  ASSERT_EQ(true, descr_.hasRepeatedFields());
-  ASSERT_EQ(true, descr_.hasRepeatedFields());
+  schema = GroupNode::Make("schema", Repetition::REPEATED, fields);
+  descr_.Init(schema);
+  ASSERT_EQ(true, descr_.HasRepeatedFields());
+  ASSERT_EQ(true, descr_.HasRepeatedFields());
 }
 
-static std::string print(const NodePtr& Node) {
+static std::string Print(const NodePtr& node) {
   std::stringstream ss;
-  printSchema(Node.get(), ss);
+  PrintSchema(node.get(), ss);
   return ss.str();
 }
 
 TEST(TestSchemaPrinter, Examples) {
-  // Test schema 1.
+  // Test schema 1
   NodeVector fields;
-  fields.push_back(int32("a", Repetition::kRequired, 1));
+  fields.push_back(Int32("a", Repetition::REQUIRED, 1));
 
-  // 3-Level list encoding.
-  NodePtr item1 = int64("item1", Repetition::kOptional, 4);
-  NodePtr item2 = boolean("item2", Repetition::kRequired, 5);
-  NodePtr List(
-      GroupNode::make(
-          "b", Repetition::kRepeated, {item1, item2}, ConvertedType::kList, 3));
+  // 3-level list encoding
+  NodePtr item1 = Int64("item1", Repetition::OPTIONAL, 4);
+  NodePtr item2 = Boolean("item2", Repetition::REQUIRED, 5);
+  NodePtr list(
+      GroupNode::Make(
+          "b", Repetition::REPEATED, {item1, item2}, ConvertedType::LIST, 3));
   NodePtr bag(
-      GroupNode::make("bag", Repetition::kOptional, {List}, nullptr, 2));
+      GroupNode::Make(
+          "bag", Repetition::OPTIONAL, {list}, /*logical_type=*/nullptr, 2));
   fields.push_back(bag);
 
   fields.push_back(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "c",
-          Repetition::kRequired,
-          Type::kInt32,
-          ConvertedType::kDecimal,
+          Repetition::REQUIRED,
+          Type::INT32,
+          ConvertedType::DECIMAL,
           -1,
           3,
           2,
           6));
 
   fields.push_back(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "d",
-          Repetition::kRequired,
-          DecimalLogicalType::make(10, 5),
-          Type::kInt64,
-          -1,
+          Repetition::REQUIRED,
+          DecimalLogicalType::Make(10, 5),
+          Type::INT64,
+          /*length=*/-1,
           7));
 
-  NodePtr schema =
-      GroupNode::make("schema", Repetition::kRepeated, fields, nullptr, 0);
+  NodePtr schema = GroupNode::Make(
+      "schema",
+      Repetition::REPEATED,
+      fields,
+      /*logical_type=*/nullptr,
+      0);
 
-  std::string result = print(schema);
+  std::string result = Print(schema);
 
   std::string expected = R"(repeated group field_id=0 schema {
   required int32 field_id=1 a;
@@ -1085,330 +1106,349 @@ TEST(TestSchemaPrinter, Examples) {
   ASSERT_EQ(expected, result);
 }
 
-static void confirmFactoryEquivalence(
-    ConvertedType::type convertedType,
-    const std::shared_ptr<const LogicalType>& fromMake,
+static void ConfirmFactoryEquivalence(
+    ConvertedType::type converted_type,
+    const std::shared_ptr<const LogicalType>& from_make,
     std::function<bool(const std::shared_ptr<const LogicalType>&)>
-        checkIsType) {
-  std::shared_ptr<const LogicalType> fromConvertedType =
-      LogicalType::fromConvertedType(convertedType);
-  ASSERT_EQ(fromConvertedType->type(), fromMake->type())
-      << fromMake->toString()
+        check_is_type) {
+  std::shared_ptr<const LogicalType> from_converted_type =
+      LogicalType::FromConvertedType(converted_type);
+  ASSERT_EQ(from_converted_type->type(), from_make->type())
+      << from_make->ToString()
       << " logical types unexpectedly do not match on type";
-  ASSERT_TRUE(fromConvertedType->equals(*fromMake))
-      << fromMake->toString() << " logical types unexpectedly not equivalent";
-  ASSERT_TRUE(checkIsType(fromConvertedType))
-      << fromConvertedType->toString()
+  ASSERT_TRUE(from_converted_type->Equals(*from_make))
+      << from_make->ToString() << " logical types unexpectedly not equivalent";
+  ASSERT_TRUE(check_is_type(from_converted_type))
+      << from_converted_type->ToString()
       << " logical type (from converted type) does not have expected type property";
-  ASSERT_TRUE(checkIsType(fromMake))
-      << fromMake->toString()
+  ASSERT_TRUE(check_is_type(from_make))
+      << from_make->ToString()
       << " logical type (from Make()) does not have expected type property";
   return;
 }
 
 TEST(TestLogicalTypeConstruction, FactoryEquivalence) {
-  // For each legacy converted type, ensure that the equivalent logical type.
+  // For each legacy converted type, ensure that the equivalent logical type
   // object can be obtained from either the base class's FromConvertedType()
-  // Factory method or the logical type type class's Make() method (accessed
-  // via. Convenience methods on the base class) and that these logical type
-  // objects. Are equivalent.
+  // factory method or the logical type type class's Make() method (accessed via
+  // convenience methods on the base class) and that these logical type objects
+  // are equivalent
 
   struct ConfirmFactoryEquivalenceArguments {
-    ConvertedType::type convertedType;
-    std::shared_ptr<const LogicalType> logicalType;
-    std::function<bool(const std::shared_ptr<const LogicalType>&)> checkIsType;
+    ConvertedType::type converted_type;
+    std::shared_ptr<const LogicalType> logical_type;
+    std::function<bool(const std::shared_ptr<const LogicalType>&)>
+        check_is_type;
   };
 
-  auto checkIsString =
-      [](const std::shared_ptr<const LogicalType>& logicalType) {
-        return logicalType->isString();
+  auto check_is_string =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_string();
       };
-  auto checkIsMap = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isMap();
-  };
-  auto checkIsList = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isList();
-  };
-  auto checkIsenum = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isEnum();
-  };
-  auto checkIsDate = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isDate();
-  };
-  auto checkIsTime = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isTime();
-  };
-  auto checkIsTimestamp =
-      [](const std::shared_ptr<const LogicalType>& logicalType) {
-        return logicalType->isTimestamp();
+  auto check_is_map =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_map();
       };
-  auto checkIsInt = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isInt();
-  };
-  auto checkIsJson = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isJson();
-  };
-  auto checkIsBson = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isBson();
-  };
-  auto checkIsInterval =
-      [](const std::shared_ptr<const LogicalType>& logicalType) {
-        return logicalType->isInterval();
+  auto check_is_list =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_list();
       };
-  auto checkIsNone = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isNone();
-  };
+  auto check_is_enum =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_enum();
+      };
+  auto check_is_date =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_date();
+      };
+  auto check_is_time =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_time();
+      };
+  auto check_is_timestamp =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_timestamp();
+      };
+  auto check_is_int =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_int();
+      };
+  auto check_is_JSON =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_JSON();
+      };
+  auto check_is_BSON =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_BSON();
+      };
+  auto check_is_interval =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_interval();
+      };
+  auto check_is_none =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_none();
+      };
 
   std::vector<ConfirmFactoryEquivalenceArguments> cases = {
-      {ConvertedType::kUtf8, LogicalType::string(), checkIsString},
-      {ConvertedType::kMap, LogicalType::map(), checkIsMap},
-      {ConvertedType::kMapKeyValue, LogicalType::map(), checkIsMap},
-      {ConvertedType::kList, LogicalType::list(), checkIsList},
-      {ConvertedType::kEnum, LogicalType::enumType(), checkIsenum},
-      {ConvertedType::kDate, LogicalType::date(), checkIsDate},
-      {ConvertedType::kTimeMillis,
-       LogicalType::time(true, LogicalType::TimeUnit::kMillis),
-       checkIsTime},
-      {ConvertedType::kTimeMicros,
-       LogicalType::time(true, LogicalType::TimeUnit::kMicros),
-       checkIsTime},
-      {ConvertedType::kTimestampMillis,
-       LogicalType::timestamp(true, LogicalType::TimeUnit::kMillis),
-       checkIsTimestamp},
-      {ConvertedType::kTimestampMicros,
-       LogicalType::timestamp(true, LogicalType::TimeUnit::kMicros),
-       checkIsTimestamp},
-      {ConvertedType::kUint8, LogicalType::intType(8, false), checkIsInt},
-      {ConvertedType::kUint16, LogicalType::intType(16, false), checkIsInt},
-      {ConvertedType::kUint32, LogicalType::intType(32, false), checkIsInt},
-      {ConvertedType::kUint64, LogicalType::intType(64, false), checkIsInt},
-      {ConvertedType::kInt8, LogicalType::intType(8, true), checkIsInt},
-      {ConvertedType::kInt16, LogicalType::intType(16, true), checkIsInt},
-      {ConvertedType::kInt32, LogicalType::intType(32, true), checkIsInt},
-      {ConvertedType::kInt64, LogicalType::intType(64, true), checkIsInt},
-      {ConvertedType::kJson, LogicalType::json(), checkIsJson},
-      {ConvertedType::kBson, LogicalType::bson(), checkIsBson},
-      {ConvertedType::kInterval, LogicalType::interval(), checkIsInterval},
-      {ConvertedType::kNone, LogicalType::none(), checkIsNone}};
+      {ConvertedType::UTF8, LogicalType::String(), check_is_string},
+      {ConvertedType::MAP, LogicalType::Map(), check_is_map},
+      {ConvertedType::MAP_KEY_VALUE, LogicalType::Map(), check_is_map},
+      {ConvertedType::LIST, LogicalType::List(), check_is_list},
+      {ConvertedType::ENUM, LogicalType::Enum(), check_is_enum},
+      {ConvertedType::DATE, LogicalType::Date(), check_is_date},
+      {ConvertedType::TIME_MILLIS,
+       LogicalType::Time(true, LogicalType::TimeUnit::MILLIS),
+       check_is_time},
+      {ConvertedType::TIME_MICROS,
+       LogicalType::Time(true, LogicalType::TimeUnit::MICROS),
+       check_is_time},
+      {ConvertedType::TIMESTAMP_MILLIS,
+       LogicalType::Timestamp(true, LogicalType::TimeUnit::MILLIS),
+       check_is_timestamp},
+      {ConvertedType::TIMESTAMP_MICROS,
+       LogicalType::Timestamp(true, LogicalType::TimeUnit::MICROS),
+       check_is_timestamp},
+      {ConvertedType::UINT_8, LogicalType::Int(8, false), check_is_int},
+      {ConvertedType::UINT_16, LogicalType::Int(16, false), check_is_int},
+      {ConvertedType::UINT_32, LogicalType::Int(32, false), check_is_int},
+      {ConvertedType::UINT_64, LogicalType::Int(64, false), check_is_int},
+      {ConvertedType::INT_8, LogicalType::Int(8, true), check_is_int},
+      {ConvertedType::INT_16, LogicalType::Int(16, true), check_is_int},
+      {ConvertedType::INT_32, LogicalType::Int(32, true), check_is_int},
+      {ConvertedType::INT_64, LogicalType::Int(64, true), check_is_int},
+      {ConvertedType::JSON, LogicalType::JSON(), check_is_JSON},
+      {ConvertedType::BSON, LogicalType::BSON(), check_is_BSON},
+      {ConvertedType::INTERVAL, LogicalType::Interval(), check_is_interval},
+      {ConvertedType::NONE, LogicalType::None(), check_is_none}};
 
   for (const ConfirmFactoryEquivalenceArguments& c : cases) {
-    confirmFactoryEquivalence(c.convertedType, c.logicalType, c.checkIsType);
+    ConfirmFactoryEquivalence(
+        c.converted_type, c.logical_type, c.check_is_type);
   }
 
-  // ConvertedType::kDecimal, LogicalType::decimal, is_decimal.
-  schema::DecimalMetadata convertedDecimalMetadata;
-  convertedDecimalMetadata.isset = true;
-  convertedDecimalMetadata.precision = 10;
-  convertedDecimalMetadata.scale = 4;
-  std::shared_ptr<const LogicalType> fromConvertedType =
-      LogicalType::fromConvertedType(
-          ConvertedType::kDecimal, convertedDecimalMetadata);
-  std::shared_ptr<const LogicalType> fromMake = LogicalType::decimal(10, 4);
-  ASSERT_EQ(fromConvertedType->type(), fromMake->type());
-  ASSERT_TRUE(fromConvertedType->equals(*fromMake));
-  ASSERT_TRUE(fromConvertedType->isDecimal());
-  ASSERT_TRUE(fromMake->isDecimal());
-  ASSERT_TRUE(LogicalType::decimal(16)->equals(*LogicalType::decimal(16, 0)));
+  // ConvertedType::DECIMAL, LogicalType::Decimal, is_decimal
+  schema::DecimalMetadata converted_decimal_metadata;
+  converted_decimal_metadata.isset = true;
+  converted_decimal_metadata.precision = 10;
+  converted_decimal_metadata.scale = 4;
+  std::shared_ptr<const LogicalType> from_converted_type =
+      LogicalType::FromConvertedType(
+          ConvertedType::DECIMAL, converted_decimal_metadata);
+  std::shared_ptr<const LogicalType> from_make = LogicalType::Decimal(10, 4);
+  ASSERT_EQ(from_converted_type->type(), from_make->type());
+  ASSERT_TRUE(from_converted_type->Equals(*from_make));
+  ASSERT_TRUE(from_converted_type->is_decimal());
+  ASSERT_TRUE(from_make->is_decimal());
+  ASSERT_TRUE(LogicalType::Decimal(16)->Equals(*LogicalType::Decimal(16, 0)));
 }
 
-static void confirmConvertedTypeCompatibility(
+static void ConfirmConvertedTypeCompatibility(
     const std::shared_ptr<const LogicalType>& original,
-    ConvertedType::type expectedConvertedType) {
-  ASSERT_TRUE(original->isValid())
-      << original->toString() << " logical type unexpectedly is not valid";
-  schema::DecimalMetadata convertedDecimalMetadata;
-  ConvertedType::type convertedType =
-      original->toConvertedType(&convertedDecimalMetadata);
-  ASSERT_EQ(convertedType, expectedConvertedType)
-      << original->toString()
+    ConvertedType::type expected_converted_type) {
+  ASSERT_TRUE(original->is_valid())
+      << original->ToString() << " logical type unexpectedly is not valid";
+  schema::DecimalMetadata converted_decimal_metadata;
+  ConvertedType::type converted_type =
+      original->ToConvertedType(&converted_decimal_metadata);
+  ASSERT_EQ(converted_type, expected_converted_type)
+      << original->ToString()
       << " logical type unexpectedly returns incorrect converted type";
-  ASSERT_FALSE(convertedDecimalMetadata.isset)
-      << original->toString()
+  ASSERT_FALSE(converted_decimal_metadata.isset)
+      << original->ToString()
       << " logical type unexpectedly returns converted decimal metadata that is set";
-  ASSERT_TRUE(original->isCompatible(convertedType, convertedDecimalMetadata))
-      << original->toString()
+  ASSERT_TRUE(
+      original->is_compatible(converted_type, converted_decimal_metadata))
+      << original->ToString()
       << " logical type unexpectedly is incompatible with converted type and decimal "
          "metadata it returned";
-  ASSERT_FALSE(original->isCompatible(convertedType, {true, 1, 1}))
-      << original->toString()
+  ASSERT_FALSE(original->is_compatible(converted_type, {true, 1, 1}))
+      << original->ToString()
       << " logical type unexpectedly is compatible with converted decimal metadata that "
          "is "
          "set";
-  ASSERT_TRUE(original->isCompatible(convertedType))
-      << original->toString()
+  ASSERT_TRUE(original->is_compatible(converted_type))
+      << original->ToString()
       << " logical type unexpectedly is incompatible with converted type it returned";
   std::shared_ptr<const LogicalType> reconstructed =
-      LogicalType::fromConvertedType(convertedType, convertedDecimalMetadata);
-  ASSERT_TRUE(reconstructed->isValid())
-      << "Reconstructed " << reconstructed->toString()
+      LogicalType::FromConvertedType(
+          converted_type, converted_decimal_metadata);
+  ASSERT_TRUE(reconstructed->is_valid())
+      << "Reconstructed " << reconstructed->ToString()
       << " logical type unexpectedly is not valid";
-  ASSERT_TRUE(reconstructed->equals(*original))
-      << "Reconstructed logical type (" << reconstructed->toString()
+  ASSERT_TRUE(reconstructed->Equals(*original))
+      << "Reconstructed logical type (" << reconstructed->ToString()
       << ") unexpectedly not equivalent to original logical type ("
-      << original->toString() << ")";
+      << original->ToString() << ")";
   return;
 }
 
 TEST(TestLogicalTypeConstruction, ConvertedTypeCompatibility) {
-  // For each legacy converted type, ensure that the equivalent logical type.
-  // Emits correct, compatible converted type information and that the emitted.
-  // Information can be used to reconstruct another equivalent logical type.
+  // For each legacy converted type, ensure that the equivalent logical type
+  // emits correct, compatible converted type information and that the emitted
+  // information can be used to reconstruct another equivalent logical type.
 
   struct ExpectedConvertedType {
-    std::shared_ptr<const LogicalType> logicalType;
-    ConvertedType::type convertedType;
+    std::shared_ptr<const LogicalType> logical_type;
+    ConvertedType::type converted_type;
   };
 
   std::vector<ExpectedConvertedType> cases = {
-      {LogicalType::string(), ConvertedType::kUtf8},
-      {LogicalType::map(), ConvertedType::kMap},
-      {LogicalType::list(), ConvertedType::kList},
-      {LogicalType::enumType(), ConvertedType::kEnum},
-      {LogicalType::date(), ConvertedType::kDate},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMillis),
-       ConvertedType::kTimeMillis},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMicros),
-       ConvertedType::kTimeMicros},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMillis),
-       ConvertedType::kTimestampMillis},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMicros),
-       ConvertedType::kTimestampMicros},
-      {LogicalType::intType(8, false), ConvertedType::kUint8},
-      {LogicalType::intType(16, false), ConvertedType::kUint16},
-      {LogicalType::intType(32, false), ConvertedType::kUint32},
-      {LogicalType::intType(64, false), ConvertedType::kUint64},
-      {LogicalType::intType(8, true), ConvertedType::kInt8},
-      {LogicalType::intType(16, true), ConvertedType::kInt16},
-      {LogicalType::intType(32, true), ConvertedType::kInt32},
-      {LogicalType::intType(64, true), ConvertedType::kInt64},
-      {LogicalType::json(), ConvertedType::kJson},
-      {LogicalType::bson(), ConvertedType::kBson},
-      {LogicalType::interval(), ConvertedType::kInterval},
-      {LogicalType::none(), ConvertedType::kNone}};
+      {LogicalType::String(), ConvertedType::UTF8},
+      {LogicalType::Map(), ConvertedType::MAP},
+      {LogicalType::List(), ConvertedType::LIST},
+      {LogicalType::Enum(), ConvertedType::ENUM},
+      {LogicalType::Date(), ConvertedType::DATE},
+      {LogicalType::Time(true, LogicalType::TimeUnit::MILLIS),
+       ConvertedType::TIME_MILLIS},
+      {LogicalType::Time(true, LogicalType::TimeUnit::MICROS),
+       ConvertedType::TIME_MICROS},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MILLIS),
+       ConvertedType::TIMESTAMP_MILLIS},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MICROS),
+       ConvertedType::TIMESTAMP_MICROS},
+      {LogicalType::Int(8, false), ConvertedType::UINT_8},
+      {LogicalType::Int(16, false), ConvertedType::UINT_16},
+      {LogicalType::Int(32, false), ConvertedType::UINT_32},
+      {LogicalType::Int(64, false), ConvertedType::UINT_64},
+      {LogicalType::Int(8, true), ConvertedType::INT_8},
+      {LogicalType::Int(16, true), ConvertedType::INT_16},
+      {LogicalType::Int(32, true), ConvertedType::INT_32},
+      {LogicalType::Int(64, true), ConvertedType::INT_64},
+      {LogicalType::JSON(), ConvertedType::JSON},
+      {LogicalType::BSON(), ConvertedType::BSON},
+      {LogicalType::Interval(), ConvertedType::INTERVAL},
+      {LogicalType::None(), ConvertedType::NONE}};
 
   for (const ExpectedConvertedType& c : cases) {
-    confirmConvertedTypeCompatibility(c.logicalType, c.convertedType);
+    ConfirmConvertedTypeCompatibility(c.logical_type, c.converted_type);
   }
 
   // Special cases ...
 
   std::shared_ptr<const LogicalType> original;
-  ConvertedType::type convertedType;
-  schema::DecimalMetadata convertedDecimalMetadata;
+  ConvertedType::type converted_type;
+  schema::DecimalMetadata converted_decimal_metadata;
   std::shared_ptr<const LogicalType> reconstructed;
 
-  // DECIMAL.
+  // DECIMAL
   std::memset(
-      &convertedDecimalMetadata, 0x00, sizeof(convertedDecimalMetadata));
-  original = LogicalType::decimal(6, 2);
-  ASSERT_TRUE(original->isValid());
-  convertedType = original->toConvertedType(&convertedDecimalMetadata);
-  ASSERT_EQ(convertedType, ConvertedType::kDecimal);
-  ASSERT_TRUE(convertedDecimalMetadata.isset);
-  ASSERT_EQ(convertedDecimalMetadata.precision, 6);
-  ASSERT_EQ(convertedDecimalMetadata.scale, 2);
-  ASSERT_TRUE(original->isCompatible(convertedType, convertedDecimalMetadata));
-  reconstructed =
-      LogicalType::fromConvertedType(convertedType, convertedDecimalMetadata);
-  ASSERT_TRUE(reconstructed->isValid());
-  ASSERT_TRUE(reconstructed->equals(*original));
+      &converted_decimal_metadata, 0x00, sizeof(converted_decimal_metadata));
+  original = LogicalType::Decimal(6, 2);
+  ASSERT_TRUE(original->is_valid());
+  converted_type = original->ToConvertedType(&converted_decimal_metadata);
+  ASSERT_EQ(converted_type, ConvertedType::DECIMAL);
+  ASSERT_TRUE(converted_decimal_metadata.isset);
+  ASSERT_EQ(converted_decimal_metadata.precision, 6);
+  ASSERT_EQ(converted_decimal_metadata.scale, 2);
+  ASSERT_TRUE(
+      original->is_compatible(converted_type, converted_decimal_metadata));
+  reconstructed = LogicalType::FromConvertedType(
+      converted_type, converted_decimal_metadata);
+  ASSERT_TRUE(reconstructed->is_valid());
+  ASSERT_TRUE(reconstructed->Equals(*original));
 
-  // Undefined.
-  original = UndefinedLogicalType::make();
-  ASSERT_TRUE(original->isInvalid());
-  ASSERT_FALSE(original->isValid());
-  convertedType = original->toConvertedType(&convertedDecimalMetadata);
-  ASSERT_EQ(convertedType, ConvertedType::kUndefined);
-  ASSERT_FALSE(convertedDecimalMetadata.isset);
-  ASSERT_TRUE(original->isCompatible(convertedType, convertedDecimalMetadata));
-  ASSERT_TRUE(original->isCompatible(convertedType));
-  reconstructed =
-      LogicalType::fromConvertedType(convertedType, convertedDecimalMetadata);
-  ASSERT_TRUE(reconstructed->isInvalid());
-  ASSERT_TRUE(reconstructed->equals(*original));
+  // Undefined
+  original = UndefinedLogicalType::Make();
+  ASSERT_TRUE(original->is_invalid());
+  ASSERT_FALSE(original->is_valid());
+  converted_type = original->ToConvertedType(&converted_decimal_metadata);
+  ASSERT_EQ(converted_type, ConvertedType::UNDEFINED);
+  ASSERT_FALSE(converted_decimal_metadata.isset);
+  ASSERT_TRUE(
+      original->is_compatible(converted_type, converted_decimal_metadata));
+  ASSERT_TRUE(original->is_compatible(converted_type));
+  reconstructed = LogicalType::FromConvertedType(
+      converted_type, converted_decimal_metadata);
+  ASSERT_TRUE(reconstructed->is_invalid());
+  ASSERT_TRUE(reconstructed->Equals(*original));
 }
 
-static void confirmNewTypeIncompatibility(
-    const std::shared_ptr<const LogicalType>& logicalType,
+static void ConfirmNewTypeIncompatibility(
+    const std::shared_ptr<const LogicalType>& logical_type,
     std::function<bool(const std::shared_ptr<const LogicalType>&)>
-        checkIsType) {
-  ASSERT_TRUE(logicalType->isValid())
-      << logicalType->toString() << " logical type unexpectedly is not valid";
-  ASSERT_TRUE(checkIsType(logicalType))
-      << logicalType->toString()
+        check_is_type) {
+  ASSERT_TRUE(logical_type->is_valid())
+      << logical_type->ToString() << " logical type unexpectedly is not valid";
+  ASSERT_TRUE(check_is_type(logical_type))
+      << logical_type->ToString()
       << " logical type is not expected logical type";
-  schema::DecimalMetadata convertedDecimalMetadata;
-  ConvertedType::type convertedType =
-      logicalType->toConvertedType(&convertedDecimalMetadata);
-  ASSERT_EQ(convertedType, ConvertedType::kNone)
-      << logicalType->toString()
+  schema::DecimalMetadata converted_decimal_metadata;
+  ConvertedType::type converted_type =
+      logical_type->ToConvertedType(&converted_decimal_metadata);
+  ASSERT_EQ(converted_type, ConvertedType::NONE)
+      << logical_type->ToString()
       << " logical type converted type unexpectedly is not NONE";
-  ASSERT_FALSE(convertedDecimalMetadata.isset)
-      << logicalType->toString()
+  ASSERT_FALSE(converted_decimal_metadata.isset)
+      << logical_type->ToString()
       << " logical type converted decimal metadata unexpectedly is set";
   return;
 }
 
 TEST(TestLogicalTypeConstruction, NewTypeIncompatibility) {
-  // For each new logical type, ensure that the type.
-  // Correctly reports that it has no legacy equivalent.
+  // For each new logical type, ensure that the type
+  // correctly reports that it has no legacy equivalent
 
   struct ConfirmNewTypeIncompatibilityArguments {
-    std::shared_ptr<const LogicalType> logicalType;
-    std::function<bool(const std::shared_ptr<const LogicalType>&)> checkIsType;
+    std::shared_ptr<const LogicalType> logical_type;
+    std::function<bool(const std::shared_ptr<const LogicalType>&)>
+        check_is_type;
   };
 
-  auto checkIsUuid = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isUuid();
-  };
-  auto checkIsNull = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isNull();
-  };
-  auto checkIsTime = [](const std::shared_ptr<const LogicalType>& logicalType) {
-    return logicalType->isTime();
-  };
-  auto checkIsTimestamp =
-      [](const std::shared_ptr<const LogicalType>& logicalType) {
-        return logicalType->isTimestamp();
+  auto check_is_UUID =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_UUID();
+      };
+  auto check_is_null =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_null();
+      };
+  auto check_is_time =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_time();
+      };
+  auto check_is_timestamp =
+      [](const std::shared_ptr<const LogicalType>& logical_type) {
+        return logical_type->is_timestamp();
       };
 
   std::vector<ConfirmNewTypeIncompatibilityArguments> cases = {
-      {LogicalType::uuid(), checkIsUuid},
-      {LogicalType::nullType(), checkIsNull},
-      {LogicalType::time(false, LogicalType::TimeUnit::kMillis), checkIsTime},
-      {LogicalType::time(false, LogicalType::TimeUnit::kMicros), checkIsTime},
-      {LogicalType::time(false, LogicalType::TimeUnit::kNanos), checkIsTime},
-      {LogicalType::time(true, LogicalType::TimeUnit::kNanos), checkIsTime},
-      {LogicalType::timestamp(false, LogicalType::TimeUnit::kNanos),
-       checkIsTimestamp},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kNanos),
-       checkIsTimestamp},
+      {LogicalType::UUID(), check_is_UUID},
+      {LogicalType::Null(), check_is_null},
+      {LogicalType::Time(false, LogicalType::TimeUnit::MILLIS), check_is_time},
+      {LogicalType::Time(false, LogicalType::TimeUnit::MICROS), check_is_time},
+      {LogicalType::Time(false, LogicalType::TimeUnit::NANOS), check_is_time},
+      {LogicalType::Time(true, LogicalType::TimeUnit::NANOS), check_is_time},
+      {LogicalType::Timestamp(false, LogicalType::TimeUnit::NANOS),
+       check_is_timestamp},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::NANOS),
+       check_is_timestamp},
   };
 
   for (const ConfirmNewTypeIncompatibilityArguments& c : cases) {
-    confirmNewTypeIncompatibility(c.logicalType, c.checkIsType);
+    ConfirmNewTypeIncompatibility(c.logical_type, c.check_is_type);
   }
 }
 
 TEST(TestLogicalTypeConstruction, FactoryExceptions) {
-  // Ensure that logical type construction catches invalid arguments.
+  // Ensure that logical type construction catches invalid arguments
 
   std::vector<std::function<void()>> cases = {
       []() {
-        TimeLogicalType::make(true, LogicalType::TimeUnit::kUnknown);
+        TimeLogicalType::Make(true, LogicalType::TimeUnit::UNKNOWN);
       }, // Invalid TimeUnit
       []() {
-        TimestampLogicalType::make(true, LogicalType::TimeUnit::kUnknown);
+        TimestampLogicalType::Make(true, LogicalType::TimeUnit::UNKNOWN);
       }, // Invalid TimeUnit
-      []() { IntLogicalType::make(-1, false); }, // Invalid bit width
-      []() { IntLogicalType::make(0, false); }, // Invalid bit width
-      []() { IntLogicalType::make(1, false); }, // Invalid bit width
-      []() { IntLogicalType::make(65, false); }, // Invalid bit width
-      []() { DecimalLogicalType::make(-1); }, // Invalid precision
-      []() { DecimalLogicalType::make(0); }, // Invalid precision
-      []() { DecimalLogicalType::make(0, 0); }, // Invalid precision
-      []() { DecimalLogicalType::make(10, -1); }, // Invalid scale
-      []() { DecimalLogicalType::make(10, 11); } // Invalid scale
+      []() { IntLogicalType::Make(-1, false); }, // Invalid bit width
+      []() { IntLogicalType::Make(0, false); }, // Invalid bit width
+      []() { IntLogicalType::Make(1, false); }, // Invalid bit width
+      []() { IntLogicalType::Make(65, false); }, // Invalid bit width
+      []() { DecimalLogicalType::Make(-1); }, // Invalid precision
+      []() { DecimalLogicalType::Make(0); }, // Invalid precision
+      []() { DecimalLogicalType::Make(0, 0); }, // Invalid precision
+      []() { DecimalLogicalType::Make(10, -1); }, // Invalid scale
+      []() { DecimalLogicalType::Make(10, 11); } // Invalid scale
   };
 
   for (auto f : cases) {
@@ -1416,248 +1456,247 @@ TEST(TestLogicalTypeConstruction, FactoryExceptions) {
   }
 }
 
-static void confirmLogicalTypeProperties(
-    const std::shared_ptr<const LogicalType>& logicalType,
+static void ConfirmLogicalTypeProperties(
+    const std::shared_ptr<const LogicalType>& logical_type,
     bool nested,
     bool serialized,
     bool valid) {
-  ASSERT_TRUE(logicalType->isNested() == nested)
-      << logicalType->toString()
+  ASSERT_TRUE(logical_type->is_nested() == nested)
+      << logical_type->ToString()
       << " logical type has incorrect nested() property";
-  ASSERT_TRUE(logicalType->isSerialized() == serialized)
-      << logicalType->toString()
+  ASSERT_TRUE(logical_type->is_serialized() == serialized)
+      << logical_type->ToString()
       << " logical type has incorrect serialized() property";
-  ASSERT_TRUE(logicalType->isValid() == valid)
-      << logicalType->toString()
+  ASSERT_TRUE(logical_type->is_valid() == valid)
+      << logical_type->ToString()
       << " logical type has incorrect valid() property";
-  ASSERT_TRUE(logicalType->isNonnested() != nested)
-      << logicalType->toString()
+  ASSERT_TRUE(logical_type->is_nonnested() != nested)
+      << logical_type->ToString()
       << " logical type has incorrect nonnested() property";
-  ASSERT_TRUE(logicalType->isInvalid() != valid)
-      << logicalType->toString()
+  ASSERT_TRUE(logical_type->is_invalid() != valid)
+      << logical_type->ToString()
       << " logical type has incorrect invalid() property";
   return;
 }
 
 TEST(TestLogicalTypeOperation, LogicalTypeProperties) {
-  // For each logical type, ensure that the correct general properties are.
-  // Reported.
+  // For each logical type, ensure that the correct general properties are
+  // reported
 
   struct ExpectedProperties {
-    std::shared_ptr<const LogicalType> logicalType;
+    std::shared_ptr<const LogicalType> logical_type;
     bool nested;
     bool serialized;
     bool valid;
   };
 
   std::vector<ExpectedProperties> cases = {
-      {StringLogicalType::make(), false, true, true},
-      {MapLogicalType::make(), true, true, true},
-      {ListLogicalType::make(), true, true, true},
-      {EnumLogicalType::make(), false, true, true},
-      {DecimalLogicalType::make(16, 6), false, true, true},
-      {DateLogicalType::make(), false, true, true},
-      {TimeLogicalType::make(true, LogicalType::TimeUnit::kMicros),
+      {StringLogicalType::Make(), false, true, true},
+      {MapLogicalType::Make(), true, true, true},
+      {ListLogicalType::Make(), true, true, true},
+      {EnumLogicalType::Make(), false, true, true},
+      {DecimalLogicalType::Make(16, 6), false, true, true},
+      {DateLogicalType::Make(), false, true, true},
+      {TimeLogicalType::Make(true, LogicalType::TimeUnit::MICROS),
        false,
        true,
        true},
-      {TimestampLogicalType::make(true, LogicalType::TimeUnit::kMicros),
+      {TimestampLogicalType::Make(true, LogicalType::TimeUnit::MICROS),
        false,
        true,
        true},
-      {IntervalLogicalType::make(), false, true, true},
-      {IntLogicalType::make(8, false), false, true, true},
-      {IntLogicalType::make(64, true), false, true, true},
-      {NullLogicalType::make(), false, true, true},
-      {JsonLogicalType::make(), false, true, true},
-      {BsonLogicalType::make(), false, true, true},
-      {UuidLogicalType::make(), false, true, true},
-      {NoLogicalType::make(), false, false, true},
+      {IntervalLogicalType::Make(), false, true, true},
+      {IntLogicalType::Make(8, false), false, true, true},
+      {IntLogicalType::Make(64, true), false, true, true},
+      {NullLogicalType::Make(), false, true, true},
+      {JSONLogicalType::Make(), false, true, true},
+      {BSONLogicalType::Make(), false, true, true},
+      {UUIDLogicalType::Make(), false, true, true},
+      {NoLogicalType::Make(), false, false, true},
   };
 
   for (const ExpectedProperties& c : cases) {
-    confirmLogicalTypeProperties(
-        c.logicalType, c.nested, c.serialized, c.valid);
+    ConfirmLogicalTypeProperties(
+        c.logical_type, c.nested, c.serialized, c.valid);
   }
 }
 
 static constexpr int PHYSICAL_TYPE_COUNT = 8;
 
-static Type::type physicalType[PHYSICAL_TYPE_COUNT] = {
-    Type::kBoolean,
-    Type::kInt32,
-    Type::kInt64,
-    Type::kInt96,
-    Type::kFloat,
-    Type::kDouble,
-    Type::kByteArray,
-    Type::kFixedLenByteArray};
+static Type::type physical_type[PHYSICAL_TYPE_COUNT] = {
+    Type::BOOLEAN,
+    Type::INT32,
+    Type::INT64,
+    Type::INT96,
+    Type::FLOAT,
+    Type::DOUBLE,
+    Type::BYTE_ARRAY,
+    Type::FIXED_LEN_BYTE_ARRAY};
 
-static void confirmSinglePrimitiveTypeApplicability(
-    const std::shared_ptr<const LogicalType>& logicalType,
-    Type::type applicableType) {
+static void ConfirmSinglePrimitiveTypeApplicability(
+    const std::shared_ptr<const LogicalType>& logical_type,
+    Type::type applicable_type) {
   for (int i = 0; i < PHYSICAL_TYPE_COUNT; ++i) {
-    if (physicalType[i] == applicableType) {
-      ASSERT_TRUE(logicalType->isApplicable(physicalType[i]))
-          << logicalType->toString()
+    if (physical_type[i] == applicable_type) {
+      ASSERT_TRUE(logical_type->is_applicable(physical_type[i]))
+          << logical_type->ToString()
           << " logical type unexpectedly inapplicable to physical type "
-          << typeToString(physicalType[i]);
+          << TypeToString(physical_type[i]);
     } else {
-      ASSERT_FALSE(logicalType->isApplicable(physicalType[i]))
-          << logicalType->toString()
+      ASSERT_FALSE(logical_type->is_applicable(physical_type[i]))
+          << logical_type->ToString()
           << " logical type unexpectedly applicable to physical type "
-          << typeToString(physicalType[i]);
+          << TypeToString(physical_type[i]);
     }
   }
   return;
 }
 
-static void confirmAnyPrimitiveTypeApplicability(
-    const std::shared_ptr<const LogicalType>& logicalType) {
+static void ConfirmAnyPrimitiveTypeApplicability(
+    const std::shared_ptr<const LogicalType>& logical_type) {
   for (int i = 0; i < PHYSICAL_TYPE_COUNT; ++i) {
-    ASSERT_TRUE(logicalType->isApplicable(physicalType[i]))
-        << logicalType->toString()
+    ASSERT_TRUE(logical_type->is_applicable(physical_type[i]))
+        << logical_type->ToString()
         << " logical type unexpectedly inapplicable to physical type "
-        << typeToString(physicalType[i]);
+        << TypeToString(physical_type[i]);
   }
   return;
 }
 
-static void confirmNoPrimitiveTypeApplicability(
-    const std::shared_ptr<const LogicalType>& logicalType) {
+static void ConfirmNoPrimitiveTypeApplicability(
+    const std::shared_ptr<const LogicalType>& logical_type) {
   for (int i = 0; i < PHYSICAL_TYPE_COUNT; ++i) {
-    ASSERT_FALSE(logicalType->isApplicable(physicalType[i]))
-        << logicalType->toString()
+    ASSERT_FALSE(logical_type->is_applicable(physical_type[i]))
+        << logical_type->ToString()
         << " logical type unexpectedly applicable to physical type "
-        << typeToString(physicalType[i]);
+        << TypeToString(physical_type[i]);
   }
   return;
 }
 
 TEST(TestLogicalTypeOperation, LogicalTypeApplicability) {
-  // Check that each logical type correctly reports which.
-  // Underlying primitive type(s) it can be applied to.
+  // Check that each logical type correctly reports which
+  // underlying primitive type(s) it can be applied to
 
   struct ExpectedApplicability {
-    std::shared_ptr<const LogicalType> logicalType;
-    Type::type applicableType;
+    std::shared_ptr<const LogicalType> logical_type;
+    Type::type applicable_type;
   };
 
-  std::vector<ExpectedApplicability> singleTypeCases = {
-      {LogicalType::string(), Type::kByteArray},
-      {LogicalType::enumType(), Type::kByteArray},
-      {LogicalType::date(), Type::kInt32},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMillis), Type::kInt32},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMicros), Type::kInt64},
-      {LogicalType::time(true, LogicalType::TimeUnit::kNanos), Type::kInt64},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMillis),
-       Type::kInt64},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMicros),
-       Type::kInt64},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kNanos),
-       Type::kInt64},
-      {LogicalType::intType(8, false), Type::kInt32},
-      {LogicalType::intType(16, false), Type::kInt32},
-      {LogicalType::intType(32, false), Type::kInt32},
-      {LogicalType::intType(64, false), Type::kInt64},
-      {LogicalType::intType(8, true), Type::kInt32},
-      {LogicalType::intType(16, true), Type::kInt32},
-      {LogicalType::intType(32, true), Type::kInt32},
-      {LogicalType::intType(64, true), Type::kInt64},
-      {LogicalType::json(), Type::kByteArray},
-      {LogicalType::bson(), Type::kByteArray}};
+  std::vector<ExpectedApplicability> single_type_cases = {
+      {LogicalType::String(), Type::BYTE_ARRAY},
+      {LogicalType::Enum(), Type::BYTE_ARRAY},
+      {LogicalType::Date(), Type::INT32},
+      {LogicalType::Time(true, LogicalType::TimeUnit::MILLIS), Type::INT32},
+      {LogicalType::Time(true, LogicalType::TimeUnit::MICROS), Type::INT64},
+      {LogicalType::Time(true, LogicalType::TimeUnit::NANOS), Type::INT64},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MILLIS),
+       Type::INT64},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MICROS),
+       Type::INT64},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::NANOS), Type::INT64},
+      {LogicalType::Int(8, false), Type::INT32},
+      {LogicalType::Int(16, false), Type::INT32},
+      {LogicalType::Int(32, false), Type::INT32},
+      {LogicalType::Int(64, false), Type::INT64},
+      {LogicalType::Int(8, true), Type::INT32},
+      {LogicalType::Int(16, true), Type::INT32},
+      {LogicalType::Int(32, true), Type::INT32},
+      {LogicalType::Int(64, true), Type::INT64},
+      {LogicalType::JSON(), Type::BYTE_ARRAY},
+      {LogicalType::BSON(), Type::BYTE_ARRAY}};
 
-  for (const ExpectedApplicability& c : singleTypeCases) {
-    confirmSinglePrimitiveTypeApplicability(c.logicalType, c.applicableType);
+  for (const ExpectedApplicability& c : single_type_cases) {
+    ConfirmSinglePrimitiveTypeApplicability(c.logical_type, c.applicable_type);
   }
 
-  std::vector<std::shared_ptr<const LogicalType>> noTypeCases = {
-      LogicalType::map(), LogicalType::list()};
+  std::vector<std::shared_ptr<const LogicalType>> no_type_cases = {
+      LogicalType::Map(), LogicalType::List()};
 
-  for (auto c : noTypeCases) {
-    confirmNoPrimitiveTypeApplicability(c);
+  for (auto c : no_type_cases) {
+    ConfirmNoPrimitiveTypeApplicability(c);
   }
 
-  std::vector<std::shared_ptr<const LogicalType>> anyTypeCases = {
-      LogicalType::nullType(),
-      LogicalType::none(),
-      UndefinedLogicalType::make()};
+  std::vector<std::shared_ptr<const LogicalType>> any_type_cases = {
+      LogicalType::Null(), LogicalType::None(), UndefinedLogicalType::Make()};
 
-  for (auto c : anyTypeCases) {
-    confirmAnyPrimitiveTypeApplicability(c);
+  for (auto c : any_type_cases) {
+    ConfirmAnyPrimitiveTypeApplicability(c);
   }
 
   // Fixed binary, exact length cases ...
 
   struct InapplicableType {
-    Type::type physicalType;
-    int physicalLength;
+    Type::type physical_type;
+    int physical_length;
   };
 
-  std::vector<InapplicableType> inapplicableTypes = {
-      {Type::kFixedLenByteArray, 8},
-      {Type::kFixedLenByteArray, 20},
-      {Type::kBoolean, -1},
-      {Type::kInt32, -1},
-      {Type::kInt64, -1},
-      {Type::kInt96, -1},
-      {Type::kFloat, -1},
-      {Type::kDouble, -1},
-      {Type::kByteArray, -1}};
+  std::vector<InapplicableType> inapplicable_types = {
+      {Type::FIXED_LEN_BYTE_ARRAY, 8},
+      {Type::FIXED_LEN_BYTE_ARRAY, 20},
+      {Type::BOOLEAN, -1},
+      {Type::INT32, -1},
+      {Type::INT64, -1},
+      {Type::INT96, -1},
+      {Type::FLOAT, -1},
+      {Type::DOUBLE, -1},
+      {Type::BYTE_ARRAY, -1}};
 
-  std::shared_ptr<const LogicalType> logicalType;
+  std::shared_ptr<const LogicalType> logical_type;
 
-  logicalType = LogicalType::interval();
-  ASSERT_TRUE(logicalType->isApplicable(Type::kFixedLenByteArray, 12));
-  for (const InapplicableType& t : inapplicableTypes) {
-    ASSERT_FALSE(logicalType->isApplicable(t.physicalType, t.physicalLength));
+  logical_type = LogicalType::Interval();
+  ASSERT_TRUE(logical_type->is_applicable(Type::FIXED_LEN_BYTE_ARRAY, 12));
+  for (const InapplicableType& t : inapplicable_types) {
+    ASSERT_FALSE(
+        logical_type->is_applicable(t.physical_type, t.physical_length));
   }
 
-  logicalType = LogicalType::uuid();
-  ASSERT_TRUE(logicalType->isApplicable(Type::kFixedLenByteArray, 16));
-  for (const InapplicableType& t : inapplicableTypes) {
-    ASSERT_FALSE(logicalType->isApplicable(t.physicalType, t.physicalLength));
+  logical_type = LogicalType::UUID();
+  ASSERT_TRUE(logical_type->is_applicable(Type::FIXED_LEN_BYTE_ARRAY, 16));
+  for (const InapplicableType& t : inapplicable_types) {
+    ASSERT_FALSE(
+        logical_type->is_applicable(t.physical_type, t.physical_length));
   }
 }
 
 TEST(TestLogicalTypeOperation, DecimalLogicalTypeApplicability) {
-  // Check that the decimal logical type correctly reports which.
-  // Underlying primitive type(s) it can be applied to.
+  // Check that the decimal logical type correctly reports which
+  // underlying primitive type(s) it can be applied to
 
-  std::shared_ptr<const LogicalType> logicalType;
+  std::shared_ptr<const LogicalType> logical_type;
 
   for (int32_t precision = 1; precision <= 9; ++precision) {
-    logicalType = DecimalLogicalType::make(precision, 0);
-    ASSERT_TRUE(logicalType->isApplicable(Type::kInt32))
-        << logicalType->toString()
+    logical_type = DecimalLogicalType::Make(precision, 0);
+    ASSERT_TRUE(logical_type->is_applicable(Type::INT32))
+        << logical_type->ToString()
         << " unexpectedly inapplicable to physical type INT32";
   }
-  logicalType = DecimalLogicalType::make(10, 0);
-  ASSERT_FALSE(logicalType->isApplicable(Type::kInt32))
-      << logicalType->toString()
+  logical_type = DecimalLogicalType::Make(10, 0);
+  ASSERT_FALSE(logical_type->is_applicable(Type::INT32))
+      << logical_type->ToString()
       << " unexpectedly applicable to physical type INT32";
 
   for (int32_t precision = 1; precision <= 18; ++precision) {
-    logicalType = DecimalLogicalType::make(precision, 0);
-    ASSERT_TRUE(logicalType->isApplicable(Type::kInt64))
-        << logicalType->toString()
+    logical_type = DecimalLogicalType::Make(precision, 0);
+    ASSERT_TRUE(logical_type->is_applicable(Type::INT64))
+        << logical_type->ToString()
         << " unexpectedly inapplicable to physical type INT64";
   }
-  logicalType = DecimalLogicalType::make(19, 0);
-  ASSERT_FALSE(logicalType->isApplicable(Type::kInt64))
-      << logicalType->toString()
+  logical_type = DecimalLogicalType::Make(19, 0);
+  ASSERT_FALSE(logical_type->is_applicable(Type::INT64))
+      << logical_type->ToString()
       << " unexpectedly applicable to physical type INT64";
 
   for (int32_t precision = 1; precision <= 36; ++precision) {
-    logicalType = DecimalLogicalType::make(precision, 0);
-    ASSERT_TRUE(logicalType->isApplicable(Type::kByteArray))
-        << logicalType->toString()
+    logical_type = DecimalLogicalType::Make(precision, 0);
+    ASSERT_TRUE(logical_type->is_applicable(Type::BYTE_ARRAY))
+        << logical_type->ToString()
         << " unexpectedly inapplicable to physical type BYTE_ARRAY";
   }
 
   struct PrecisionLimits {
-    int32_t physicalLength;
-    int32_t precisionLimit;
+    int32_t physical_length;
+    int32_t precision_limit;
   };
 
   std::vector<PrecisionLimits> cases = {
@@ -1673,645 +1712,621 @@ TEST(TestLogicalTypeOperation, DecimalLogicalTypeApplicability) {
 
   for (const PrecisionLimits& c : cases) {
     int32_t precision;
-    for (precision = 1; precision <= c.precisionLimit; ++precision) {
-      logicalType = DecimalLogicalType::make(precision, 0);
-      ASSERT_TRUE(
-          logicalType->isApplicable(Type::kFixedLenByteArray, c.physicalLength))
-          << logicalType->toString()
+    for (precision = 1; precision <= c.precision_limit; ++precision) {
+      logical_type = DecimalLogicalType::Make(precision, 0);
+      ASSERT_TRUE(logical_type->is_applicable(
+          Type::FIXED_LEN_BYTE_ARRAY, c.physical_length))
+          << logical_type->ToString()
           << " unexpectedly inapplicable to physical type FIXED_LEN_BYTE_ARRAY with "
              "length "
-          << c.physicalLength;
+          << c.physical_length;
     }
-    logicalType = DecimalLogicalType::make(precision, 0);
-    ASSERT_FALSE(
-        logicalType->isApplicable(Type::kFixedLenByteArray, c.physicalLength))
-        << logicalType->toString()
+    logical_type = DecimalLogicalType::Make(precision, 0);
+    ASSERT_FALSE(logical_type->is_applicable(
+        Type::FIXED_LEN_BYTE_ARRAY, c.physical_length))
+        << logical_type->ToString()
         << " unexpectedly applicable to physical type FIXED_LEN_BYTE_ARRAY with length "
-        << c.physicalLength;
+        << c.physical_length;
   }
 
-  ASSERT_FALSE((DecimalLogicalType::make(16, 6))->isApplicable(Type::kBoolean));
-  ASSERT_FALSE((DecimalLogicalType::make(16, 6))->isApplicable(Type::kFloat));
-  ASSERT_FALSE((DecimalLogicalType::make(16, 6))->isApplicable(Type::kDouble));
+  ASSERT_FALSE((DecimalLogicalType::Make(16, 6))->is_applicable(Type::BOOLEAN));
+  ASSERT_FALSE((DecimalLogicalType::Make(16, 6))->is_applicable(Type::FLOAT));
+  ASSERT_FALSE((DecimalLogicalType::Make(16, 6))->is_applicable(Type::DOUBLE));
 }
 
 TEST(TestLogicalTypeOperation, LogicalTypeRepresentation) {
-  // Ensure that each logical type prints a correct string and.
-  // JSON representation.
+  // Ensure that each logical type prints a correct string and
+  // JSON representation
 
   struct ExpectedRepresentation {
-    std::shared_ptr<const LogicalType> logicalType;
-    const char* stringRepresentation;
-    const char* jsonRepresentation;
+    std::shared_ptr<const LogicalType> logical_type;
+    const char* string_representation;
+    const char* JSON_representation;
   };
 
   std::vector<ExpectedRepresentation> cases = {
-      {UndefinedLogicalType::make(), "Undefined", R"({"Type": "Undefined"})"},
-      {LogicalType::string(), "String", R"({"Type": "String"})"},
-      {LogicalType::map(), "Map", R"({"Type": "Map"})"},
-      {LogicalType::list(), "List", R"({"Type": "List"})"},
-      {LogicalType::enumType(), "Enum", R"({"Type": "Enum"})"},
-      {LogicalType::decimal(10, 4),
+      {UndefinedLogicalType::Make(), "Undefined", R"({"Type": "Undefined"})"},
+      {LogicalType::String(), "String", R"({"Type": "String"})"},
+      {LogicalType::Map(), "Map", R"({"Type": "Map"})"},
+      {LogicalType::List(), "List", R"({"Type": "List"})"},
+      {LogicalType::Enum(), "Enum", R"({"Type": "Enum"})"},
+      {LogicalType::Decimal(10, 4),
        "Decimal(precision=10, scale=4)",
        R"({"Type": "Decimal", "precision": 10, "scale": 4})"},
-      {LogicalType::decimal(10),
+      {LogicalType::Decimal(10),
        "Decimal(precision=10, scale=0)",
        R"({"Type": "Decimal", "precision": 10, "scale": 0})"},
-      {LogicalType::date(), "Date", R"({"Type": "Date"})"},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMillis),
+      {LogicalType::Date(), "Date", R"({"Type": "Date"})"},
+      {LogicalType::Time(true, LogicalType::TimeUnit::MILLIS),
        "Time(isAdjustedToUTC=true, timeUnit=milliseconds)",
        R"({"Type": "Time", "isAdjustedToUTC": true, "timeUnit": "milliseconds"})"},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMicros),
+      {LogicalType::Time(true, LogicalType::TimeUnit::MICROS),
        "Time(isAdjustedToUTC=true, timeUnit=microseconds)",
        R"({"Type": "Time", "isAdjustedToUTC": true, "timeUnit": "microseconds"})"},
-      {LogicalType::time(true, LogicalType::TimeUnit::kNanos),
+      {LogicalType::Time(true, LogicalType::TimeUnit::NANOS),
        "Time(isAdjustedToUTC=true, timeUnit=nanoseconds)",
        R"({"Type": "Time", "isAdjustedToUTC": true, "timeUnit": "nanoseconds"})"},
-      {LogicalType::time(false, LogicalType::TimeUnit::kMillis),
+      {LogicalType::Time(false, LogicalType::TimeUnit::MILLIS),
        "Time(isAdjustedToUTC=false, timeUnit=milliseconds)",
        R"({"Type": "Time", "isAdjustedToUTC": false, "timeUnit": "milliseconds"})"},
-      {LogicalType::time(false, LogicalType::TimeUnit::kMicros),
+      {LogicalType::Time(false, LogicalType::TimeUnit::MICROS),
        "Time(isAdjustedToUTC=false, timeUnit=microseconds)",
        R"({"Type": "Time", "isAdjustedToUTC": false, "timeUnit": "microseconds"})"},
-      {LogicalType::time(false, LogicalType::TimeUnit::kNanos),
+      {LogicalType::Time(false, LogicalType::TimeUnit::NANOS),
        "Time(isAdjustedToUTC=false, timeUnit=nanoseconds)",
        R"({"Type": "Time", "isAdjustedToUTC": false, "timeUnit": "nanoseconds"})"},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMillis),
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MILLIS),
        "Timestamp(isAdjustedToUTC=true, timeUnit=milliseconds, "
        "is_from_converted_type=false, force_set_converted_type=false)",
        R"({"Type": "Timestamp", "isAdjustedToUTC": true, "timeUnit": "milliseconds", )"
-       R"("isFromConvertedType": false, "forceSetConvertedType": false})"},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMicros),
+       R"("is_from_converted_type": false, "force_set_converted_type": false})"},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MICROS),
        "Timestamp(isAdjustedToUTC=true, timeUnit=microseconds, "
        "is_from_converted_type=false, force_set_converted_type=false)",
        R"({"Type": "Timestamp", "isAdjustedToUTC": true, "timeUnit": "microseconds", )"
-       R"("isFromConvertedType": false, "forceSetConvertedType": false})"},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kNanos),
+       R"("is_from_converted_type": false, "force_set_converted_type": false})"},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::NANOS),
        "Timestamp(isAdjustedToUTC=true, timeUnit=nanoseconds, "
        "is_from_converted_type=false, force_set_converted_type=false)",
        R"({"Type": "Timestamp", "isAdjustedToUTC": true, "timeUnit": "nanoseconds", )"
-       R"("isFromConvertedType": false, "forceSetConvertedType": false})"},
-      {LogicalType::timestamp(
-           false, LogicalType::TimeUnit::kMillis, true, true),
+       R"("is_from_converted_type": false, "force_set_converted_type": false})"},
+      {LogicalType::Timestamp(false, LogicalType::TimeUnit::MILLIS, true, true),
        "Timestamp(isAdjustedToUTC=false, timeUnit=milliseconds, "
        "is_from_converted_type=true, force_set_converted_type=true)",
        R"({"Type": "Timestamp", "isAdjustedToUTC": false, "timeUnit": "milliseconds", )"
-       R"("isFromConvertedType": true, "forceSetConvertedType": true})"},
-      {LogicalType::timestamp(false, LogicalType::TimeUnit::kMicros),
+       R"("is_from_converted_type": true, "force_set_converted_type": true})"},
+      {LogicalType::Timestamp(false, LogicalType::TimeUnit::MICROS),
        "Timestamp(isAdjustedToUTC=false, timeUnit=microseconds, "
        "is_from_converted_type=false, force_set_converted_type=false)",
        R"({"Type": "Timestamp", "isAdjustedToUTC": false, "timeUnit": "microseconds", )"
-       R"("isFromConvertedType": false, "forceSetConvertedType": false})"},
-      {LogicalType::timestamp(false, LogicalType::TimeUnit::kNanos),
+       R"("is_from_converted_type": false, "force_set_converted_type": false})"},
+      {LogicalType::Timestamp(false, LogicalType::TimeUnit::NANOS),
        "Timestamp(isAdjustedToUTC=false, timeUnit=nanoseconds, "
        "is_from_converted_type=false, force_set_converted_type=false)",
        R"({"Type": "Timestamp", "isAdjustedToUTC": false, "timeUnit": "nanoseconds", )"
-       R"("isFromConvertedType": false, "forceSetConvertedType": false})"},
-      {LogicalType::interval(), "Interval", R"({"Type": "Interval"})"},
-      {LogicalType::intType(8, false),
+       R"("is_from_converted_type": false, "force_set_converted_type": false})"},
+      {LogicalType::Interval(), "Interval", R"({"Type": "Interval"})"},
+      {LogicalType::Int(8, false),
        "Int(bitWidth=8, isSigned=false)",
-       R"({"Type": "int", "bitWidth": 8, "isSigned": false})"},
-      {LogicalType::intType(16, false),
+       R"({"Type": "Int", "bitWidth": 8, "isSigned": false})"},
+      {LogicalType::Int(16, false),
        "Int(bitWidth=16, isSigned=false)",
-       R"({"Type": "int", "bitWidth": 16, "isSigned": false})"},
-      {LogicalType::intType(32, false),
+       R"({"Type": "Int", "bitWidth": 16, "isSigned": false})"},
+      {LogicalType::Int(32, false),
        "Int(bitWidth=32, isSigned=false)",
-       R"({"Type": "int", "bitWidth": 32, "isSigned": false})"},
-      {LogicalType::intType(64, false),
+       R"({"Type": "Int", "bitWidth": 32, "isSigned": false})"},
+      {LogicalType::Int(64, false),
        "Int(bitWidth=64, isSigned=false)",
-       R"({"Type": "int", "bitWidth": 64, "isSigned": false})"},
-      {LogicalType::intType(8, true),
+       R"({"Type": "Int", "bitWidth": 64, "isSigned": false})"},
+      {LogicalType::Int(8, true),
        "Int(bitWidth=8, isSigned=true)",
-       R"({"Type": "int", "bitWidth": 8, "isSigned": true})"},
-      {LogicalType::intType(16, true),
+       R"({"Type": "Int", "bitWidth": 8, "isSigned": true})"},
+      {LogicalType::Int(16, true),
        "Int(bitWidth=16, isSigned=true)",
-       R"({"Type": "int", "bitWidth": 16, "isSigned": true})"},
-      {LogicalType::intType(32, true),
+       R"({"Type": "Int", "bitWidth": 16, "isSigned": true})"},
+      {LogicalType::Int(32, true),
        "Int(bitWidth=32, isSigned=true)",
-       R"({"Type": "int", "bitWidth": 32, "isSigned": true})"},
-      {LogicalType::intType(64, true),
+       R"({"Type": "Int", "bitWidth": 32, "isSigned": true})"},
+      {LogicalType::Int(64, true),
        "Int(bitWidth=64, isSigned=true)",
-       R"({"Type": "int", "bitWidth": 64, "isSigned": true})"},
-      {LogicalType::nullType(), "Null", R"({"Type": "Null"})"},
-      {LogicalType::json(), "JSON", R"({"Type": "JSON"})"},
-      {LogicalType::bson(), "BSON", R"({"Type": "BSON"})"},
-      {LogicalType::uuid(), "UUID", R"({"Type": "UUID"})"},
-      {LogicalType::none(), "None", R"({"Type": "None"})"},
+       R"({"Type": "Int", "bitWidth": 64, "isSigned": true})"},
+      {LogicalType::Null(), "Null", R"({"Type": "Null"})"},
+      {LogicalType::JSON(), "JSON", R"({"Type": "JSON"})"},
+      {LogicalType::BSON(), "BSON", R"({"Type": "BSON"})"},
+      {LogicalType::UUID(), "UUID", R"({"Type": "UUID"})"},
+      {LogicalType::None(), "None", R"({"Type": "None"})"},
   };
 
   for (const ExpectedRepresentation& c : cases) {
-    ASSERT_STREQ(c.logicalType->toString().c_str(), c.stringRepresentation);
-    ASSERT_STREQ(c.logicalType->toJson().c_str(), c.jsonRepresentation);
+    ASSERT_STREQ(c.logical_type->ToString().c_str(), c.string_representation);
+    ASSERT_STREQ(c.logical_type->ToJSON().c_str(), c.JSON_representation);
   }
 }
 
 TEST(TestLogicalTypeOperation, LogicalTypeSortOrder) {
-  // Ensure that each logical type reports the correct sort order.
+  // Ensure that each logical type reports the correct sort order
 
   struct ExpectedSortOrder {
-    std::shared_ptr<const LogicalType> logicalType;
-    SortOrder::type sortOrder;
+    std::shared_ptr<const LogicalType> logical_type;
+    SortOrder::type sort_order;
   };
 
   std::vector<ExpectedSortOrder> cases = {
-      {LogicalType::string(), SortOrder::kUnsigned},
-      {LogicalType::map(), SortOrder::kUnknown},
-      {LogicalType::list(), SortOrder::kUnknown},
-      {LogicalType::enumType(), SortOrder::kUnsigned},
-      {LogicalType::decimal(8, 2), SortOrder::kSigned},
-      {LogicalType::date(), SortOrder::kSigned},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMillis),
-       SortOrder::kSigned},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMicros),
-       SortOrder::kSigned},
-      {LogicalType::time(true, LogicalType::TimeUnit::kNanos),
-       SortOrder::kSigned},
-      {LogicalType::time(false, LogicalType::TimeUnit::kMillis),
-       SortOrder::kSigned},
-      {LogicalType::time(false, LogicalType::TimeUnit::kMicros),
-       SortOrder::kSigned},
-      {LogicalType::time(false, LogicalType::TimeUnit::kNanos),
-       SortOrder::kSigned},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMillis),
-       SortOrder::kSigned},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMicros),
-       SortOrder::kSigned},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kNanos),
-       SortOrder::kSigned},
-      {LogicalType::timestamp(false, LogicalType::TimeUnit::kMillis),
-       SortOrder::kSigned},
-      {LogicalType::timestamp(false, LogicalType::TimeUnit::kMicros),
-       SortOrder::kSigned},
-      {LogicalType::timestamp(false, LogicalType::TimeUnit::kNanos),
-       SortOrder::kSigned},
-      {LogicalType::interval(), SortOrder::kUnknown},
-      {LogicalType::intType(8, false), SortOrder::kUnsigned},
-      {LogicalType::intType(16, false), SortOrder::kUnsigned},
-      {LogicalType::intType(32, false), SortOrder::kUnsigned},
-      {LogicalType::intType(64, false), SortOrder::kUnsigned},
-      {LogicalType::intType(8, true), SortOrder::kSigned},
-      {LogicalType::intType(16, true), SortOrder::kSigned},
-      {LogicalType::intType(32, true), SortOrder::kSigned},
-      {LogicalType::intType(64, true), SortOrder::kSigned},
-      {LogicalType::nullType(), SortOrder::kUnknown},
-      {LogicalType::json(), SortOrder::kUnsigned},
-      {LogicalType::bson(), SortOrder::kUnsigned},
-      {LogicalType::uuid(), SortOrder::kUnsigned},
-      {LogicalType::none(), SortOrder::kUnknown}};
+      {LogicalType::String(), SortOrder::UNSIGNED},
+      {LogicalType::Map(), SortOrder::UNKNOWN},
+      {LogicalType::List(), SortOrder::UNKNOWN},
+      {LogicalType::Enum(), SortOrder::UNSIGNED},
+      {LogicalType::Decimal(8, 2), SortOrder::SIGNED},
+      {LogicalType::Date(), SortOrder::SIGNED},
+      {LogicalType::Time(true, LogicalType::TimeUnit::MILLIS),
+       SortOrder::SIGNED},
+      {LogicalType::Time(true, LogicalType::TimeUnit::MICROS),
+       SortOrder::SIGNED},
+      {LogicalType::Time(true, LogicalType::TimeUnit::NANOS),
+       SortOrder::SIGNED},
+      {LogicalType::Time(false, LogicalType::TimeUnit::MILLIS),
+       SortOrder::SIGNED},
+      {LogicalType::Time(false, LogicalType::TimeUnit::MICROS),
+       SortOrder::SIGNED},
+      {LogicalType::Time(false, LogicalType::TimeUnit::NANOS),
+       SortOrder::SIGNED},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MILLIS),
+       SortOrder::SIGNED},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MICROS),
+       SortOrder::SIGNED},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::NANOS),
+       SortOrder::SIGNED},
+      {LogicalType::Timestamp(false, LogicalType::TimeUnit::MILLIS),
+       SortOrder::SIGNED},
+      {LogicalType::Timestamp(false, LogicalType::TimeUnit::MICROS),
+       SortOrder::SIGNED},
+      {LogicalType::Timestamp(false, LogicalType::TimeUnit::NANOS),
+       SortOrder::SIGNED},
+      {LogicalType::Interval(), SortOrder::UNKNOWN},
+      {LogicalType::Int(8, false), SortOrder::UNSIGNED},
+      {LogicalType::Int(16, false), SortOrder::UNSIGNED},
+      {LogicalType::Int(32, false), SortOrder::UNSIGNED},
+      {LogicalType::Int(64, false), SortOrder::UNSIGNED},
+      {LogicalType::Int(8, true), SortOrder::SIGNED},
+      {LogicalType::Int(16, true), SortOrder::SIGNED},
+      {LogicalType::Int(32, true), SortOrder::SIGNED},
+      {LogicalType::Int(64, true), SortOrder::SIGNED},
+      {LogicalType::Null(), SortOrder::UNKNOWN},
+      {LogicalType::JSON(), SortOrder::UNSIGNED},
+      {LogicalType::BSON(), SortOrder::UNSIGNED},
+      {LogicalType::UUID(), SortOrder::UNSIGNED},
+      {LogicalType::None(), SortOrder::UNKNOWN}};
 
   for (const ExpectedSortOrder& c : cases) {
-    ASSERT_EQ(c.logicalType->sortOrder(), c.sortOrder)
-        << c.logicalType->toString()
+    ASSERT_EQ(c.logical_type->sort_order(), c.sort_order)
+        << c.logical_type->ToString()
         << " logical type has incorrect sort order";
   }
 }
 
-static void confirmPrimitiveNodeFactoryEquivalence(
-    const std::shared_ptr<const LogicalType>& logicalType,
-    ConvertedType::type convertedType,
-    Type::type physicalType,
-    int physicalLength,
+static void ConfirmPrimitiveNodeFactoryEquivalence(
+    const std::shared_ptr<const LogicalType>& logical_type,
+    ConvertedType::type converted_type,
+    Type::type physical_type,
+    int physical_length,
     int precision,
     int scale) {
   std::string name = "something";
-  Repetition::type repetition = Repetition::kRequired;
-  NodePtr fromConvertedType = PrimitiveNode::make(
+  Repetition::type repetition = Repetition::REQUIRED;
+  NodePtr from_converted_type = PrimitiveNode::Make(
       name,
       repetition,
-      physicalType,
-      convertedType,
-      physicalLength,
+      physical_type,
+      converted_type,
+      physical_length,
       precision,
       scale);
-  NodePtr fromLogicalType = PrimitiveNode::make(
-      name, repetition, logicalType, physicalType, physicalLength);
-  ASSERT_TRUE(fromConvertedType->equals(fromLogicalType.get()))
+  NodePtr from_logical_type = PrimitiveNode::Make(
+      name, repetition, logical_type, physical_type, physical_length);
+  ASSERT_TRUE(from_converted_type->Equals(from_logical_type.get()))
       << "Primitive node constructed with converted type "
-      << convertedTypeToString(convertedType)
+      << ConvertedTypeToString(converted_type)
       << " unexpectedly not equivalent to primitive node constructed with logical "
          "type "
-      << logicalType->toString();
+      << logical_type->ToString();
   return;
 }
 
-static void confirmGroupNodeFactoryEquivalence(
+static void ConfirmGroupNodeFactoryEquivalence(
     std::string name,
-    const std::shared_ptr<const LogicalType>& logicalType,
-    ConvertedType::type convertedType) {
-  Repetition::type repetition = Repetition::kOptional;
-  NodePtr fromConvertedType =
-      GroupNode::make(name, repetition, {}, convertedType);
-  NodePtr fromLogicalType = GroupNode::make(name, repetition, {}, logicalType);
-  ASSERT_TRUE(fromConvertedType->equals(fromLogicalType.get()))
+    const std::shared_ptr<const LogicalType>& logical_type,
+    ConvertedType::type converted_type) {
+  Repetition::type repetition = Repetition::OPTIONAL;
+  NodePtr from_converted_type =
+      GroupNode::Make(name, repetition, {}, converted_type);
+  NodePtr from_logical_type =
+      GroupNode::Make(name, repetition, {}, logical_type);
+  ASSERT_TRUE(from_converted_type->Equals(from_logical_type.get()))
       << "Group node constructed with converted type "
-      << convertedTypeToString(convertedType)
+      << ConvertedTypeToString(converted_type)
       << " unexpectedly not equivalent to group node constructed with logical type "
-      << logicalType->toString();
+      << logical_type->ToString();
   return;
 }
 
 TEST(TestSchemaNodeCreation, FactoryEquivalence) {
-  // Ensure that the Node factory methods produce equivalent results regardless.
-  // Of whether they are given a converted type or a logical type.
+  // Ensure that the Node factory methods produce equivalent results regardless
+  // of whether they are given a converted type or a logical type.
 
   // Primitive nodes ...
 
   struct PrimitiveNodeFactoryArguments {
-    std::shared_ptr<const LogicalType> logicalType;
-    ConvertedType::type convertedType;
-    Type::type physicalType;
-    int physicalLength;
+    std::shared_ptr<const LogicalType> logical_type;
+    ConvertedType::type converted_type;
+    Type::type physical_type;
+    int physical_length;
     int precision;
     int scale;
   };
 
   std::vector<PrimitiveNodeFactoryArguments> cases = {
-      {LogicalType::string(),
-       ConvertedType::kUtf8,
-       Type::kByteArray,
+      {LogicalType::String(),
+       ConvertedType::UTF8,
+       Type::BYTE_ARRAY,
        -1,
        -1,
        -1},
-      {LogicalType::enumType(),
-       ConvertedType::kEnum,
-       Type::kByteArray,
-       -1,
-       -1,
-       -1},
-      {LogicalType::decimal(16, 6),
-       ConvertedType::kDecimal,
-       Type::kInt64,
+      {LogicalType::Enum(), ConvertedType::ENUM, Type::BYTE_ARRAY, -1, -1, -1},
+      {LogicalType::Decimal(16, 6),
+       ConvertedType::DECIMAL,
+       Type::INT64,
        -1,
        16,
        6},
-      {LogicalType::date(), ConvertedType::kDate, Type::kInt32, -1, -1, -1},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMillis),
-       ConvertedType::kTimeMillis,
-       Type::kInt32,
+      {LogicalType::Date(), ConvertedType::DATE, Type::INT32, -1, -1, -1},
+      {LogicalType::Time(true, LogicalType::TimeUnit::MILLIS),
+       ConvertedType::TIME_MILLIS,
+       Type::INT32,
        -1,
        -1,
        -1},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMicros),
-       ConvertedType::kTimeMicros,
-       Type::kInt64,
+      {LogicalType::Time(true, LogicalType::TimeUnit::MICROS),
+       ConvertedType::TIME_MICROS,
+       Type::INT64,
        -1,
        -1,
        -1},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMillis),
-       ConvertedType::kTimestampMillis,
-       Type::kInt64,
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MILLIS),
+       ConvertedType::TIMESTAMP_MILLIS,
+       Type::INT64,
        -1,
        -1,
        -1},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMicros),
-       ConvertedType::kTimestampMicros,
-       Type::kInt64,
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MICROS),
+       ConvertedType::TIMESTAMP_MICROS,
+       Type::INT64,
        -1,
        -1,
        -1},
-      {LogicalType::interval(),
-       ConvertedType::kInterval,
-       Type::kFixedLenByteArray,
+      {LogicalType::Interval(),
+       ConvertedType::INTERVAL,
+       Type::FIXED_LEN_BYTE_ARRAY,
        12,
        -1,
        -1},
-      {LogicalType::intType(8, false),
-       ConvertedType::kUint8,
-       Type::kInt32,
+      {LogicalType::Int(8, false),
+       ConvertedType::UINT_8,
+       Type::INT32,
        -1,
        -1,
        -1},
-      {LogicalType::intType(8, true),
-       ConvertedType::kInt8,
-       Type::kInt32,
+      {LogicalType::Int(8, true),
+       ConvertedType::INT_8,
+       Type::INT32,
        -1,
        -1,
        -1},
-      {LogicalType::intType(16, false),
-       ConvertedType::kUint16,
-       Type::kInt32,
+      {LogicalType::Int(16, false),
+       ConvertedType::UINT_16,
+       Type::INT32,
        -1,
        -1,
        -1},
-      {LogicalType::intType(16, true),
-       ConvertedType::kInt16,
-       Type::kInt32,
+      {LogicalType::Int(16, true),
+       ConvertedType::INT_16,
+       Type::INT32,
        -1,
        -1,
        -1},
-      {LogicalType::intType(32, false),
-       ConvertedType::kUint32,
-       Type::kInt32,
+      {LogicalType::Int(32, false),
+       ConvertedType::UINT_32,
+       Type::INT32,
        -1,
        -1,
        -1},
-      {LogicalType::intType(32, true),
-       ConvertedType::kInt32,
-       Type::kInt32,
+      {LogicalType::Int(32, true),
+       ConvertedType::INT_32,
+       Type::INT32,
        -1,
        -1,
        -1},
-      {LogicalType::intType(64, false),
-       ConvertedType::kUint64,
-       Type::kInt64,
+      {LogicalType::Int(64, false),
+       ConvertedType::UINT_64,
+       Type::INT64,
        -1,
        -1,
        -1},
-      {LogicalType::intType(64, true),
-       ConvertedType::kInt64,
-       Type::kInt64,
+      {LogicalType::Int(64, true),
+       ConvertedType::INT_64,
+       Type::INT64,
        -1,
        -1,
        -1},
-      {LogicalType::json(), ConvertedType::kJson, Type::kByteArray, -1, -1, -1},
-      {LogicalType::bson(), ConvertedType::kBson, Type::kByteArray, -1, -1, -1},
-      {LogicalType::none(), ConvertedType::kNone, Type::kInt64, -1, -1, -1}};
+      {LogicalType::JSON(), ConvertedType::JSON, Type::BYTE_ARRAY, -1, -1, -1},
+      {LogicalType::BSON(), ConvertedType::BSON, Type::BYTE_ARRAY, -1, -1, -1},
+      {LogicalType::None(), ConvertedType::NONE, Type::INT64, -1, -1, -1}};
 
   for (const PrimitiveNodeFactoryArguments& c : cases) {
-    confirmPrimitiveNodeFactoryEquivalence(
-        c.logicalType,
-        c.convertedType,
-        c.physicalType,
-        c.physicalLength,
+    ConfirmPrimitiveNodeFactoryEquivalence(
+        c.logical_type,
+        c.converted_type,
+        c.physical_type,
+        c.physical_length,
         c.precision,
         c.scale);
   }
 
   // Group nodes ...
-  confirmGroupNodeFactoryEquivalence(
-      "map", LogicalType::map(), ConvertedType::kMap);
-  confirmGroupNodeFactoryEquivalence(
-      "list", LogicalType::list(), ConvertedType::kList);
+  ConfirmGroupNodeFactoryEquivalence(
+      "map", LogicalType::Map(), ConvertedType::MAP);
+  ConfirmGroupNodeFactoryEquivalence(
+      "list", LogicalType::List(), ConvertedType::LIST);
 }
 
 TEST(TestSchemaNodeCreation, FactoryExceptions) {
-  // Ensure that the Node factory method that accepts a logical type refuses to.
-  // Create an object if compatibility conditions are not met.
+  // Ensure that the Node factory method that accepts a logical type refuses to
+  // create an object if compatibility conditions are not met
 
   // Nested logical type on non-group node ...
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
-          "map", Repetition::kRequired, MapLogicalType::make(), Type::kInt64));
+      PrimitiveNode::Make(
+          "map", Repetition::REQUIRED, MapLogicalType::Make(), Type::INT64));
   // Incompatible primitive type ...
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "string",
-          Repetition::kRequired,
-          StringLogicalType::make(),
-          Type::kBoolean));
+          Repetition::REQUIRED,
+          StringLogicalType::Make(),
+          Type::BOOLEAN));
   // Incompatible primitive length ...
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "interval",
-          Repetition::kRequired,
-          IntervalLogicalType::make(),
-          Type::kFixedLenByteArray,
+          Repetition::REQUIRED,
+          IntervalLogicalType::Make(),
+          Type::FIXED_LEN_BYTE_ARRAY,
           11));
   // Scale is greater than precision.
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "decimal",
-          Repetition::kRequired,
-          DecimalLogicalType::make(10, 11),
-          Type::kInt64));
+          Repetition::REQUIRED,
+          DecimalLogicalType::Make(10, 11),
+          Type::INT64));
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "decimal",
-          Repetition::kRequired,
-          DecimalLogicalType::make(17, 18),
-          Type::kInt64));
+          Repetition::REQUIRED,
+          DecimalLogicalType::Make(17, 18),
+          Type::INT64));
   // Primitive too small for given precision ...
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "decimal",
-          Repetition::kRequired,
-          DecimalLogicalType::make(16, 6),
-          Type::kInt32));
+          Repetition::REQUIRED,
+          DecimalLogicalType::Make(16, 6),
+          Type::INT32));
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "decimal",
-          Repetition::kRequired,
-          DecimalLogicalType::make(10, 9),
-          Type::kInt32));
+          Repetition::REQUIRED,
+          DecimalLogicalType::Make(10, 9),
+          Type::INT32));
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "decimal",
-          Repetition::kRequired,
-          DecimalLogicalType::make(19, 17),
-          Type::kInt64));
+          Repetition::REQUIRED,
+          DecimalLogicalType::Make(19, 17),
+          Type::INT64));
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "decimal",
-          Repetition::kRequired,
-          DecimalLogicalType::make(308, 6),
-          Type::kFixedLenByteArray,
+          Repetition::REQUIRED,
+          DecimalLogicalType::Make(308, 6),
+          Type::FIXED_LEN_BYTE_ARRAY,
           128));
-  // Length is too long.
+  // Length is too long
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "decimal",
-          Repetition::kRequired,
-          DecimalLogicalType::make(10, 6),
-          Type::kFixedLenByteArray,
+          Repetition::REQUIRED,
+          DecimalLogicalType::Make(10, 6),
+          Type::FIXED_LEN_BYTE_ARRAY,
           891723283));
 
   // Incompatible primitive length ...
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "uuid",
-          Repetition::kRequired,
-          UuidLogicalType::make(),
-          Type::kFixedLenByteArray,
+          Repetition::REQUIRED,
+          UUIDLogicalType::Make(),
+          Type::FIXED_LEN_BYTE_ARRAY,
           64));
   // Non-positive length argument for fixed length binary ...
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "negative_length",
-          Repetition::kRequired,
-          NoLogicalType::make(),
-          Type::kFixedLenByteArray,
+          Repetition::REQUIRED,
+          NoLogicalType::Make(),
+          Type::FIXED_LEN_BYTE_ARRAY,
           -16));
   // Non-positive length argument for fixed length binary ...
   ASSERT_ANY_THROW(
-      PrimitiveNode::make(
+      PrimitiveNode::Make(
           "zero_length",
-          Repetition::kRequired,
-          NoLogicalType::make(),
-          Type::kFixedLenByteArray,
+          Repetition::REQUIRED,
+          NoLogicalType::Make(),
+          Type::FIXED_LEN_BYTE_ARRAY,
           0));
   // Non-nested logical type on group node ...
   ASSERT_ANY_THROW(
-      GroupNode::make(
-          "list", Repetition::kRepeated, {}, JsonLogicalType::make()));
+      GroupNode::Make(
+          "list", Repetition::REPEATED, {}, JSONLogicalType::Make()));
 
-  // Nullptr logical type arguments convert to
-  // NoLogicalType/ConvertedType::kNone.
+  // nullptr logical type arguments convert to NoLogicalType/ConvertedType::NONE
   std::shared_ptr<const LogicalType> empty;
-  NodePtr Node;
+  NodePtr node;
   ASSERT_NO_THROW(
-      Node = PrimitiveNode::make(
-          "value", Repetition::kRequired, empty, Type::kDouble));
-  ASSERT_TRUE(Node->logicalType()->isNone());
-  ASSERT_EQ(Node->convertedType(), ConvertedType::kNone);
+      node = PrimitiveNode::Make(
+          "value", Repetition::REQUIRED, empty, Type::DOUBLE));
+  ASSERT_TRUE(node->logical_type()->is_none());
+  ASSERT_EQ(node->converted_type(), ConvertedType::NONE);
   ASSERT_NO_THROW(
-      Node = GroupNode::make("items", Repetition::kRepeated, {}, empty));
-  ASSERT_TRUE(Node->logicalType()->isNone());
-  ASSERT_EQ(Node->convertedType(), ConvertedType::kNone);
+      node = GroupNode::Make("items", Repetition::REPEATED, {}, empty));
+  ASSERT_TRUE(node->logical_type()->is_none());
+  ASSERT_EQ(node->converted_type(), ConvertedType::NONE);
 
   // Invalid ConvertedType in deserialized element ...
-  Node = PrimitiveNode::make(
+  node = PrimitiveNode::Make(
       "string",
-      Repetition::kRequired,
-      StringLogicalType::make(),
-      Type::kByteArray);
-  ASSERT_EQ(Node->logicalType()->type(), LogicalType::Type::kString);
-  ASSERT_TRUE(Node->logicalType()->isValid());
-  ASSERT_TRUE(Node->logicalType()->isSerialized());
-  facebook::velox::parquet::thrift::SchemaElement stringIntermediary;
-  Node->toParquet(&stringIntermediary);
-  // ... Corrupt the Thrift intermediary ....
-  stringIntermediary.logicalType.__isset.STRING = false;
-  ASSERT_ANY_THROW(Node = PrimitiveNode::fromParquet(&stringIntermediary));
+      Repetition::REQUIRED,
+      StringLogicalType::Make(),
+      Type::BYTE_ARRAY);
+  ASSERT_EQ(node->logical_type()->type(), LogicalType::Type::STRING);
+  ASSERT_TRUE(node->logical_type()->is_valid());
+  ASSERT_TRUE(node->logical_type()->is_serialized());
+  facebook::velox::parquet::thrift::SchemaElement string_intermediary;
+  node->ToParquet(&string_intermediary);
+  // ... corrupt the Thrift intermediary ....
+  string_intermediary.logicalType.__isset.STRING = false;
+  ASSERT_ANY_THROW(node = PrimitiveNode::FromParquet(&string_intermediary));
 
   // Invalid TimeUnit in deserialized TimeLogicalType ...
-  Node = PrimitiveNode::make(
+  node = PrimitiveNode::Make(
       "time",
-      Repetition::kRequired,
-      TimeLogicalType::make(true, LogicalType::TimeUnit::kNanos),
-      Type::kInt64);
-  facebook::velox::parquet::thrift::SchemaElement timeIntermediary;
-  Node->toParquet(&timeIntermediary);
-  // ... Corrupt the Thrift intermediary ....
-  timeIntermediary.logicalType.TIME.unit.__isset.NANOS = false;
-  ASSERT_ANY_THROW(PrimitiveNode::fromParquet(&timeIntermediary));
+      Repetition::REQUIRED,
+      TimeLogicalType::Make(true, LogicalType::TimeUnit::NANOS),
+      Type::INT64);
+  facebook::velox::parquet::thrift::SchemaElement time_intermediary;
+  node->ToParquet(&time_intermediary);
+  // ... corrupt the Thrift intermediary ....
+  time_intermediary.logicalType.TIME.unit.__isset.NANOS = false;
+  ASSERT_ANY_THROW(PrimitiveNode::FromParquet(&time_intermediary));
 
   // Invalid TimeUnit in deserialized TimestampLogicalType ...
-  Node = PrimitiveNode::make(
+  node = PrimitiveNode::Make(
       "timestamp",
-      Repetition::kRequired,
-      TimestampLogicalType::make(true, LogicalType::TimeUnit::kNanos),
-      Type::kInt64);
-  facebook::velox::parquet::thrift::SchemaElement timestampIntermediary;
-  Node->toParquet(&timestampIntermediary);
-  // ... Corrupt the Thrift intermediary ....
-  timestampIntermediary.logicalType.TIMESTAMP.unit.__isset.NANOS = false;
-  ASSERT_ANY_THROW(PrimitiveNode::fromParquet(&timestampIntermediary));
+      Repetition::REQUIRED,
+      TimestampLogicalType::Make(true, LogicalType::TimeUnit::NANOS),
+      Type::INT64);
+  facebook::velox::parquet::thrift::SchemaElement timestamp_intermediary;
+  node->ToParquet(&timestamp_intermediary);
+  // ... corrupt the Thrift intermediary ....
+  timestamp_intermediary.logicalType.TIMESTAMP.unit.__isset.NANOS = false;
+  ASSERT_ANY_THROW(PrimitiveNode::FromParquet(&timestamp_intermediary));
 }
 
 struct SchemaElementConstructionArguments {
-  SchemaElementConstructionArguments(
-      std::string name,
-      std::shared_ptr<const LogicalType> logicalType,
-      Type::type physicalType,
-      int physicalLength,
-      bool expectConvertedType,
-      ConvertedType::type convertedType,
-      bool expectLogicaltype,
-      std::function<bool()> checkLogicaltype)
-      : name(std::move(name)),
-        logicalType(std::move(logicalType)),
-        physicalType(physicalType),
-        physicalLength(physicalLength),
-        expectConvertedType(expectConvertedType),
-        convertedType(convertedType),
-        expectLogicaltype(expectLogicaltype),
-        checkLogicaltype(std::move(checkLogicaltype)) {}
-
   std::string name;
-  std::shared_ptr<const LogicalType> logicalType;
-  Type::type physicalType;
-  int physicalLength;
-  bool expectConvertedType;
-  ConvertedType::type convertedType;
-  bool expectLogicaltype;
-  std::function<bool()> checkLogicaltype;
+  std::shared_ptr<const LogicalType> logical_type;
+  Type::type physical_type;
+  int physical_length;
+  bool expect_converted_type;
+  ConvertedType::type converted_type;
+  bool expect_logicalType;
+  std::function<bool()> check_logicalType;
 };
 
 struct LegacySchemaElementConstructionArguments {
   std::string name;
-  Type::type physicalType;
-  int physicalLength;
-  bool expectConvertedType;
-  ConvertedType::type convertedType;
-  bool expectLogicaltype;
-  std::function<bool()> checkLogicaltype;
+  Type::type physical_type;
+  int physical_length;
+  bool expect_converted_type;
+  ConvertedType::type converted_type;
+  bool expect_logicalType;
+  std::function<bool()> check_logicalType;
 };
 
 class TestSchemaElementConstruction : public ::testing::Test {
  public:
-  TestSchemaElementConstruction* reconstruct(
+  TestSchemaElementConstruction* Reconstruct(
       const SchemaElementConstructionArguments& c) {
     // Make node, create serializable Thrift object from it ...
-    node_ = PrimitiveNode::make(
+    node_ = PrimitiveNode::Make(
         c.name,
-        Repetition::kRequired,
-        c.logicalType,
-        c.physicalType,
-        c.physicalLength);
+        Repetition::REQUIRED,
+        c.logical_type,
+        c.physical_type,
+        c.physical_length);
     element_.reset(new facebook::velox::parquet::thrift::SchemaElement);
-    node_->toParquet(element_.get());
+    node_->ToParquet(element_.get());
 
-    // ... Then set aside some values for later inspection.
+    // ... then set aside some values for later inspection.
     name_ = c.name;
-    expectConvertedType_ = c.expectConvertedType;
-    convertedType_ = c.convertedType;
-    expectLogicaltype_ = c.expectLogicaltype;
-    checkLogicaltype_ = c.checkLogicaltype;
+    expect_converted_type_ = c.expect_converted_type;
+    converted_type_ = c.converted_type;
+    expect_logicalType_ = c.expect_logicalType;
+    check_logicalType_ = c.check_logicalType;
     return this;
   }
 
-  TestSchemaElementConstruction* legacyReconstruct(
+  TestSchemaElementConstruction* LegacyReconstruct(
       const LegacySchemaElementConstructionArguments& c) {
     // Make node, create serializable Thrift object from it ...
-    node_ = PrimitiveNode::make(
+    node_ = PrimitiveNode::Make(
         c.name,
-        Repetition::kRequired,
-        c.physicalType,
-        c.convertedType,
-        c.physicalLength);
+        Repetition::REQUIRED,
+        c.physical_type,
+        c.converted_type,
+        c.physical_length);
     element_.reset(new facebook::velox::parquet::thrift::SchemaElement);
-    node_->toParquet(element_.get());
+    node_->ToParquet(element_.get());
 
-    // ... Then set aside some values for later inspection.
+    // ... then set aside some values for later inspection.
     name_ = c.name;
-    expectConvertedType_ = c.expectConvertedType;
-    convertedType_ = c.convertedType;
-    expectLogicaltype_ = c.expectLogicaltype;
-    checkLogicaltype_ = c.checkLogicaltype;
+    expect_converted_type_ = c.expect_converted_type;
+    converted_type_ = c.converted_type;
+    expect_logicalType_ = c.expect_logicalType;
+    check_logicalType_ = c.check_logicalType;
     return this;
   }
 
-  void inspect() {
+  void Inspect() {
     ASSERT_EQ(element_->name, name_);
-    if (expectConvertedType_) {
+    if (expect_converted_type_) {
       ASSERT_TRUE(element_->__isset.converted_type)
-          << node_->logicalType()->toString()
+          << node_->logical_type()->ToString()
           << " logical type unexpectedly failed to generate a converted type in the "
              "Thrift "
              "intermediate object";
-      ASSERT_EQ(element_->converted_type, toThrift(convertedType_))
-          << node_->logicalType()->toString()
+      ASSERT_EQ(element_->converted_type, ToThrift(converted_type_))
+          << node_->logical_type()->ToString()
           << " logical type unexpectedly failed to generate correct converted type in "
              "the "
              "Thrift intermediate object";
     } else {
       ASSERT_FALSE(element_->__isset.converted_type)
-          << node_->logicalType()->toString()
+          << node_->logical_type()->ToString()
           << " logical type unexpectedly generated a converted type in the Thrift "
              "intermediate object";
     }
-    if (expectLogicaltype_) {
+    if (expect_logicalType_) {
       ASSERT_TRUE(element_->__isset.logicalType)
-          << node_->logicalType()->toString()
+          << node_->logical_type()->ToString()
           << " logical type unexpectedly failed to genverate a logicalType in the Thrift "
              "intermediate object";
-      ASSERT_TRUE(checkLogicaltype_())
-          << node_->logicalType()->toString()
+      ASSERT_TRUE(check_logicalType_())
+          << node_->logical_type()->ToString()
           << " logical type generated incorrect logicalType "
              "settings in the Thrift intermediate object";
     } else {
       ASSERT_FALSE(element_->__isset.logicalType)
-          << node_->logicalType()->toString()
+          << node_->logical_type()->ToString()
           << " logical type unexpectedly generated a logicalType in the Thrift "
              "intermediate object";
     }
@@ -2322,13 +2337,13 @@ class TestSchemaElementConstruction : public ::testing::Test {
   NodePtr node_;
   std::unique_ptr<facebook::velox::parquet::thrift::SchemaElement> element_;
   std::string name_;
-  bool expectConvertedType_;
+  bool expect_converted_type_;
   ConvertedType::type
-      convertedType_; // expected converted type in Thrift object
-  bool expectLogicaltype_;
+      converted_type_; // expected converted type in Thrift object
+  bool expect_logicalType_;
   std::function<bool()>
-      checkLogicaltype_; // specialized (by logical type)
-                         // LogicalType check for Thrift object.
+      check_logicalType_; // specialized (by logical type)
+                          // logicalType check for Thrift object
 };
 
 /*
@@ -2339,125 +2354,125 @@ class TestSchemaElementConstruction : public ::testing::Test {
  */
 
 TEST_F(TestSchemaElementConstruction, SimpleCases) {
-  auto checkNothing = []() {
+  auto check_nothing = []() {
     return true;
   }; // used for logical types that don't expect a logicalType to be set
 
   std::vector<SchemaElementConstructionArguments> cases = {
       {"string",
-       LogicalType::string(),
-       Type::kByteArray,
+       LogicalType::String(),
+       Type::BYTE_ARRAY,
        -1,
        true,
-       ConvertedType::kUtf8,
+       ConvertedType::UTF8,
        true,
        [this]() { return element_->logicalType.__isset.STRING; }},
       {"enum",
-       LogicalType::enumType(),
-       Type::kByteArray,
+       LogicalType::Enum(),
+       Type::BYTE_ARRAY,
        -1,
        true,
-       ConvertedType::kEnum,
+       ConvertedType::ENUM,
        true,
        [this]() { return element_->logicalType.__isset.ENUM; }},
       {"date",
-       LogicalType::date(),
-       Type::kInt32,
+       LogicalType::Date(),
+       Type::INT32,
        -1,
        true,
-       ConvertedType::kDate,
+       ConvertedType::DATE,
        true,
        [this]() { return element_->logicalType.__isset.DATE; }},
       {"interval",
-       LogicalType::interval(),
-       Type::kFixedLenByteArray,
+       LogicalType::Interval(),
+       Type::FIXED_LEN_BYTE_ARRAY,
        12,
        true,
-       ConvertedType::kInterval,
+       ConvertedType::INTERVAL,
        false,
-       checkNothing},
+       check_nothing},
       {"null",
-       LogicalType::nullType(),
-       Type::kDouble,
+       LogicalType::Null(),
+       Type::DOUBLE,
        -1,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        true,
        [this]() { return element_->logicalType.__isset.UNKNOWN; }},
       {"json",
-       LogicalType::json(),
-       Type::kByteArray,
+       LogicalType::JSON(),
+       Type::BYTE_ARRAY,
        -1,
        true,
-       ConvertedType::kJson,
+       ConvertedType::JSON,
        true,
        [this]() { return element_->logicalType.__isset.JSON; }},
       {"bson",
-       LogicalType::bson(),
-       Type::kByteArray,
+       LogicalType::BSON(),
+       Type::BYTE_ARRAY,
        -1,
        true,
-       ConvertedType::kBson,
+       ConvertedType::BSON,
        true,
        [this]() { return element_->logicalType.__isset.BSON; }},
       {"uuid",
-       LogicalType::uuid(),
-       Type::kFixedLenByteArray,
+       LogicalType::UUID(),
+       Type::FIXED_LEN_BYTE_ARRAY,
        16,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        true,
        [this]() { return element_->logicalType.__isset.UUID; }},
       {"none",
-       LogicalType::none(),
-       Type::kInt64,
+       LogicalType::None(),
+       Type::INT64,
        -1,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        false,
-       checkNothing}};
+       check_nothing}};
 
   for (const SchemaElementConstructionArguments& c : cases) {
-    this->reconstruct(c)->inspect();
+    this->Reconstruct(c)->Inspect();
   }
 
-  std::vector<LegacySchemaElementConstructionArguments> legacyCases = {
+  std::vector<LegacySchemaElementConstructionArguments> legacy_cases = {
       {"timestamp_ms",
-       Type::kInt64,
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kTimestampMillis,
+       ConvertedType::TIMESTAMP_MILLIS,
        false,
-       checkNothing},
+       check_nothing},
       {"timestamp_us",
-       Type::kInt64,
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kTimestampMicros,
+       ConvertedType::TIMESTAMP_MICROS,
        false,
-       checkNothing},
+       check_nothing},
   };
 
-  for (const LegacySchemaElementConstructionArguments& c : legacyCases) {
-    this->legacyReconstruct(c)->inspect();
+  for (const LegacySchemaElementConstructionArguments& c : legacy_cases) {
+    this->LegacyReconstruct(c)->Inspect();
   }
 }
 
 class TestDecimalSchemaElementConstruction
     : public TestSchemaElementConstruction {
  public:
-  TestDecimalSchemaElementConstruction* reconstruct(
+  TestDecimalSchemaElementConstruction* Reconstruct(
       const SchemaElementConstructionArguments& c) {
-    TestSchemaElementConstruction::reconstruct(c);
-    const auto& decimalLogicalType =
-        checked_cast<const DecimalLogicalType&>(*c.logicalType);
-    precision_ = decimalLogicalType.precision();
-    scale_ = decimalLogicalType.scale();
+    TestSchemaElementConstruction::Reconstruct(c);
+    const auto& decimal_logical_type =
+        checked_cast<const DecimalLogicalType&>(*c.logical_type);
+    precision_ = decimal_logical_type.precision();
+    scale_ = decimal_logical_type.scale();
     return this;
   }
 
-  void inspect() {
-    TestSchemaElementConstruction::inspect();
+  void Inspect() {
+    TestSchemaElementConstruction::Inspect();
     ASSERT_EQ(element_->precision, precision_);
     ASSERT_EQ(element_->scale, scale_);
     ASSERT_EQ(element_->logicalType.DECIMAL.precision, precision_);
@@ -2471,87 +2486,87 @@ class TestDecimalSchemaElementConstruction
 };
 
 TEST_F(TestDecimalSchemaElementConstruction, DecimalCases) {
-  auto checkDecimal = [this]() {
+  auto check_DECIMAL = [this]() {
     return element_->logicalType.__isset.DECIMAL;
   };
 
   std::vector<SchemaElementConstructionArguments> cases = {
       {"decimal",
-       LogicalType::decimal(16, 6),
-       Type::kInt64,
+       LogicalType::Decimal(16, 6),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kDecimal,
+       ConvertedType::DECIMAL,
        true,
-       checkDecimal},
+       check_DECIMAL},
       {"decimal",
-       LogicalType::decimal(1, 0),
-       Type::kInt32,
+       LogicalType::Decimal(1, 0),
+       Type::INT32,
        -1,
        true,
-       ConvertedType::kDecimal,
+       ConvertedType::DECIMAL,
        true,
-       checkDecimal},
+       check_DECIMAL},
       {"decimal",
-       LogicalType::decimal(10),
-       Type::kInt64,
+       LogicalType::Decimal(10),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kDecimal,
+       ConvertedType::DECIMAL,
        true,
-       checkDecimal},
+       check_DECIMAL},
       {"decimal",
-       LogicalType::decimal(11, 11),
-       Type::kInt64,
+       LogicalType::Decimal(11, 11),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kDecimal,
+       ConvertedType::DECIMAL,
        true,
-       checkDecimal},
+       check_DECIMAL},
       {"decimal",
-       LogicalType::decimal(9, 9),
-       Type::kInt32,
+       LogicalType::Decimal(9, 9),
+       Type::INT32,
        -1,
        true,
-       ConvertedType::kDecimal,
+       ConvertedType::DECIMAL,
        true,
-       checkDecimal},
+       check_DECIMAL},
       {"decimal",
-       LogicalType::decimal(18, 18),
-       Type::kInt64,
+       LogicalType::Decimal(18, 18),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kDecimal,
+       ConvertedType::DECIMAL,
        true,
-       checkDecimal},
+       check_DECIMAL},
       {"decimal",
-       LogicalType::decimal(307, 7),
-       Type::kFixedLenByteArray,
+       LogicalType::Decimal(307, 7),
+       Type::FIXED_LEN_BYTE_ARRAY,
        128,
        true,
-       ConvertedType::kDecimal,
+       ConvertedType::DECIMAL,
        true,
-       checkDecimal},
+       check_DECIMAL},
       {"decimal",
-       LogicalType::decimal(310, 32),
-       Type::kFixedLenByteArray,
+       LogicalType::Decimal(310, 32),
+       Type::FIXED_LEN_BYTE_ARRAY,
        129,
        true,
-       ConvertedType::kDecimal,
+       ConvertedType::DECIMAL,
        true,
-       checkDecimal},
+       check_DECIMAL},
       {"decimal",
-       LogicalType::decimal(2147483645, 2147483645),
-       Type::kFixedLenByteArray,
+       LogicalType::Decimal(2147483645, 2147483645),
+       Type::FIXED_LEN_BYTE_ARRAY,
        891723282,
        true,
-       ConvertedType::kDecimal,
+       ConvertedType::DECIMAL,
        true,
-       checkDecimal},
+       check_DECIMAL},
   };
 
   for (const SchemaElementConstructionArguments& c : cases) {
-    this->reconstruct(c)->inspect();
+    this->Reconstruct(c)->Inspect();
   }
 }
 
@@ -2559,42 +2574,42 @@ class TestTemporalSchemaElementConstruction
     : public TestSchemaElementConstruction {
  public:
   template <typename T>
-  TestTemporalSchemaElementConstruction* reconstruct(
+  TestTemporalSchemaElementConstruction* Reconstruct(
       const SchemaElementConstructionArguments& c) {
-    TestSchemaElementConstruction::reconstruct(c);
-    const auto& t = checked_cast<const T&>(*c.logicalType);
-    adjusted_ = t.isAdjustedToUtc();
-    unit_ = t.timeUnit();
+    TestSchemaElementConstruction::Reconstruct(c);
+    const auto& t = checked_cast<const T&>(*c.logical_type);
+    adjusted_ = t.is_adjusted_to_utc();
+    unit_ = t.time_unit();
     return this;
   }
 
   template <typename T>
-  void inspect() {
+  void Inspect() {
     FAIL() << "Invalid typename specified in test suite";
     return;
   }
 
  protected:
   bool adjusted_;
-  LogicalType::TimeUnit::Unit unit_;
+  LogicalType::TimeUnit::unit unit_;
 };
 
 template <>
-void TestTemporalSchemaElementConstruction::inspect<
+void TestTemporalSchemaElementConstruction::Inspect<
     facebook::velox::parquet::thrift::TimeType>() {
-  TestSchemaElementConstruction::inspect();
+  TestSchemaElementConstruction::Inspect();
   ASSERT_EQ(element_->logicalType.TIME.isAdjustedToUTC, adjusted_);
   switch (unit_) {
-    case LogicalType::TimeUnit::kMillis:
+    case LogicalType::TimeUnit::MILLIS:
       ASSERT_TRUE(element_->logicalType.TIME.unit.__isset.MILLIS);
       break;
-    case LogicalType::TimeUnit::kMicros:
+    case LogicalType::TimeUnit::MICROS:
       ASSERT_TRUE(element_->logicalType.TIME.unit.__isset.MICROS);
       break;
-    case LogicalType::TimeUnit::kNanos:
+    case LogicalType::TimeUnit::NANOS:
       ASSERT_TRUE(element_->logicalType.TIME.unit.__isset.NANOS);
       break;
-    case LogicalType::TimeUnit::kUnknown:
+    case LogicalType::TimeUnit::UNKNOWN:
     default:
       FAIL() << "Invalid time unit in test case";
   }
@@ -2602,21 +2617,21 @@ void TestTemporalSchemaElementConstruction::inspect<
 }
 
 template <>
-void TestTemporalSchemaElementConstruction::inspect<
+void TestTemporalSchemaElementConstruction::Inspect<
     facebook::velox::parquet::thrift::TimestampType>() {
-  TestSchemaElementConstruction::inspect();
+  TestSchemaElementConstruction::Inspect();
   ASSERT_EQ(element_->logicalType.TIMESTAMP.isAdjustedToUTC, adjusted_);
   switch (unit_) {
-    case LogicalType::TimeUnit::kMillis:
+    case LogicalType::TimeUnit::MILLIS:
       ASSERT_TRUE(element_->logicalType.TIMESTAMP.unit.__isset.MILLIS);
       break;
-    case LogicalType::TimeUnit::kMicros:
+    case LogicalType::TimeUnit::MICROS:
       ASSERT_TRUE(element_->logicalType.TIMESTAMP.unit.__isset.MICROS);
       break;
-    case LogicalType::TimeUnit::kNanos:
+    case LogicalType::TimeUnit::NANOS:
       ASSERT_TRUE(element_->logicalType.TIMESTAMP.unit.__isset.NANOS);
       break;
-    case LogicalType::TimeUnit::kUnknown:
+    case LogicalType::TimeUnit::UNKNOWN:
     default:
       FAIL() << "Invalid time unit in test case";
   }
@@ -2624,158 +2639,164 @@ void TestTemporalSchemaElementConstruction::inspect<
 }
 
 TEST_F(TestTemporalSchemaElementConstruction, TemporalCases) {
-  auto checkTime = [this]() { return element_->logicalType.__isset.TIME; };
+  auto check_TIME = [this]() { return element_->logicalType.__isset.TIME; };
 
-  std::vector<SchemaElementConstructionArguments> timeCases = {
+  std::vector<SchemaElementConstructionArguments> time_cases = {
       {"time_T_ms",
-       LogicalType::time(true, LogicalType::TimeUnit::kMillis),
-       Type::kInt32,
+       LogicalType::Time(true, LogicalType::TimeUnit::MILLIS),
+       Type::INT32,
        -1,
        true,
-       ConvertedType::kTimeMillis,
+       ConvertedType::TIME_MILLIS,
        true,
-       checkTime},
+       check_TIME},
       {"time_F_ms",
-       LogicalType::time(false, LogicalType::TimeUnit::kMillis),
-       Type::kInt32,
+       LogicalType::Time(false, LogicalType::TimeUnit::MILLIS),
+       Type::INT32,
        -1,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        true,
-       checkTime},
+       check_TIME},
       {"time_T_us",
-       LogicalType::time(true, LogicalType::TimeUnit::kMicros),
-       Type::kInt64,
+       LogicalType::Time(true, LogicalType::TimeUnit::MICROS),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kTimeMicros,
+       ConvertedType::TIME_MICROS,
        true,
-       checkTime},
+       check_TIME},
       {"time_F_us",
-       LogicalType::time(false, LogicalType::TimeUnit::kMicros),
-       Type::kInt64,
+       LogicalType::Time(false, LogicalType::TimeUnit::MICROS),
+       Type::INT64,
        -1,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        true,
-       checkTime},
+       check_TIME},
       {"time_T_ns",
-       LogicalType::time(true, LogicalType::TimeUnit::kNanos),
-       Type::kInt64,
+       LogicalType::Time(true, LogicalType::TimeUnit::NANOS),
+       Type::INT64,
        -1,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        true,
-       checkTime},
+       check_TIME},
       {"time_F_ns",
-       LogicalType::time(false, LogicalType::TimeUnit::kNanos),
-       Type::kInt64,
+       LogicalType::Time(false, LogicalType::TimeUnit::NANOS),
+       Type::INT64,
        -1,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        true,
-       checkTime},
+       check_TIME},
   };
 
-  for (const SchemaElementConstructionArguments& c : timeCases) {
-    this->reconstruct<TimeLogicalType>(c)
-        ->inspect<facebook::velox::parquet::thrift::TimeType>();
+  for (const SchemaElementConstructionArguments& c : time_cases) {
+    this->Reconstruct<TimeLogicalType>(c)
+        ->Inspect<facebook::velox::parquet::thrift::TimeType>();
   }
 
-  auto checkTimestamp = [this]() {
+  auto check_TIMESTAMP = [this]() {
     return element_->logicalType.__isset.TIMESTAMP;
   };
 
-  std::vector<SchemaElementConstructionArguments> timestampCases = {
+  std::vector<SchemaElementConstructionArguments> timestamp_cases = {
       {"timestamp_T_ms",
-       LogicalType::timestamp(true, LogicalType::TimeUnit::kMillis),
-       Type::kInt64,
+       LogicalType::Timestamp(true, LogicalType::TimeUnit::MILLIS),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kTimestampMillis,
+       ConvertedType::TIMESTAMP_MILLIS,
        true,
-       checkTimestamp},
+       check_TIMESTAMP},
       {"timestamp_F_ms",
-       LogicalType::timestamp(false, LogicalType::TimeUnit::kMillis),
-       Type::kInt64,
+       LogicalType::Timestamp(false, LogicalType::TimeUnit::MILLIS),
+       Type::INT64,
        -1,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        true,
-       checkTimestamp},
+       check_TIMESTAMP},
       {"timestamp_F_ms_force",
-       LogicalType::timestamp(
-           false, LogicalType::TimeUnit::kMillis, false, true),
-       Type::kInt64,
+       LogicalType::Timestamp(
+           false,
+           LogicalType::TimeUnit::MILLIS,
+           /*is_from_converted_type=*/false,
+           /*force_set_converted_type=*/true),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kTimestampMillis,
+       ConvertedType::TIMESTAMP_MILLIS,
        true,
-       checkTimestamp},
+       check_TIMESTAMP},
       {"timestamp_T_us",
-       LogicalType::timestamp(true, LogicalType::TimeUnit::kMicros),
-       Type::kInt64,
+       LogicalType::Timestamp(true, LogicalType::TimeUnit::MICROS),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kTimestampMicros,
+       ConvertedType::TIMESTAMP_MICROS,
        true,
-       checkTimestamp},
+       check_TIMESTAMP},
       {"timestamp_F_us",
-       LogicalType::timestamp(false, LogicalType::TimeUnit::kMicros),
-       Type::kInt64,
+       LogicalType::Timestamp(false, LogicalType::TimeUnit::MICROS),
+       Type::INT64,
        -1,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        true,
-       checkTimestamp},
+       check_TIMESTAMP},
       {"timestamp_F_us_force",
-       LogicalType::timestamp(
-           false, LogicalType::TimeUnit::kMillis, false, true),
-       Type::kInt64,
+       LogicalType::Timestamp(
+           false,
+           LogicalType::TimeUnit::MILLIS,
+           /*is_from_converted_type=*/false,
+           /*force_set_converted_type=*/true),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kTimestampMillis,
+       ConvertedType::TIMESTAMP_MILLIS,
        true,
-       checkTimestamp},
+       check_TIMESTAMP},
       {"timestamp_T_ns",
-       LogicalType::timestamp(true, LogicalType::TimeUnit::kNanos),
-       Type::kInt64,
+       LogicalType::Timestamp(true, LogicalType::TimeUnit::NANOS),
+       Type::INT64,
        -1,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        true,
-       checkTimestamp},
+       check_TIMESTAMP},
       {"timestamp_F_ns",
-       LogicalType::timestamp(false, LogicalType::TimeUnit::kNanos),
-       Type::kInt64,
+       LogicalType::Timestamp(false, LogicalType::TimeUnit::NANOS),
+       Type::INT64,
        -1,
        false,
-       ConvertedType::kNa,
+       ConvertedType::NA,
        true,
-       checkTimestamp},
+       check_TIMESTAMP},
   };
 
-  for (const SchemaElementConstructionArguments& c : timestampCases) {
-    this->reconstruct<TimestampLogicalType>(c)
-        ->inspect<facebook::velox::parquet::thrift::TimestampType>();
+  for (const SchemaElementConstructionArguments& c : timestamp_cases) {
+    this->Reconstruct<TimestampLogicalType>(c)
+        ->Inspect<facebook::velox::parquet::thrift::TimestampType>();
   }
 }
 
 class TestIntegerSchemaElementConstruction
     : public TestSchemaElementConstruction {
  public:
-  TestIntegerSchemaElementConstruction* reconstruct(
+  TestIntegerSchemaElementConstruction* Reconstruct(
       const SchemaElementConstructionArguments& c) {
-    TestSchemaElementConstruction::reconstruct(c);
-    const auto& intLogicalType =
-        checked_cast<const IntLogicalType&>(*c.logicalType);
-    width_ = intLogicalType.bitWidth();
-    signed_ = intLogicalType.isSigned();
+    TestSchemaElementConstruction::Reconstruct(c);
+    const auto& int_logical_type =
+        checked_cast<const IntLogicalType&>(*c.logical_type);
+    width_ = int_logical_type.bit_width();
+    signed_ = int_logical_type.is_signed();
     return this;
   }
 
-  void inspect() {
-    TestSchemaElementConstruction::inspect();
+  void Inspect() {
+    TestSchemaElementConstruction::Inspect();
     ASSERT_EQ(element_->logicalType.INTEGER.bitWidth, width_);
     ASSERT_EQ(element_->logicalType.INTEGER.isSigned, signed_);
     return;
@@ -2787,229 +2808,221 @@ class TestIntegerSchemaElementConstruction
 };
 
 TEST_F(TestIntegerSchemaElementConstruction, IntegerCases) {
-  auto checkInteger = [this]() {
+  auto check_INTEGER = [this]() {
     return element_->logicalType.__isset.INTEGER;
   };
 
   std::vector<SchemaElementConstructionArguments> cases = {
       {"uint8",
-       LogicalType::intType(8, false),
-       Type::kInt32,
+       LogicalType::Int(8, false),
+       Type::INT32,
        -1,
        true,
-       ConvertedType::kUint8,
+       ConvertedType::UINT_8,
        true,
-       checkInteger},
+       check_INTEGER},
       {"uint16",
-       LogicalType::intType(16, false),
-       Type::kInt32,
+       LogicalType::Int(16, false),
+       Type::INT32,
        -1,
        true,
-       ConvertedType::kUint16,
+       ConvertedType::UINT_16,
        true,
-       checkInteger},
+       check_INTEGER},
       {"uint32",
-       LogicalType::intType(32, false),
-       Type::kInt32,
+       LogicalType::Int(32, false),
+       Type::INT32,
        -1,
        true,
-       ConvertedType::kUint32,
+       ConvertedType::UINT_32,
        true,
-       checkInteger},
+       check_INTEGER},
       {"uint64",
-       LogicalType::intType(64, false),
-       Type::kInt64,
+       LogicalType::Int(64, false),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kUint64,
+       ConvertedType::UINT_64,
        true,
-       checkInteger},
+       check_INTEGER},
       {"int8",
-       LogicalType::intType(8, true),
-       Type::kInt32,
+       LogicalType::Int(8, true),
+       Type::INT32,
        -1,
        true,
-       ConvertedType::kInt8,
+       ConvertedType::INT_8,
        true,
-       checkInteger},
+       check_INTEGER},
       {"int16",
-       LogicalType::intType(16, true),
-       Type::kInt32,
+       LogicalType::Int(16, true),
+       Type::INT32,
        -1,
        true,
-       ConvertedType::kInt16,
+       ConvertedType::INT_16,
        true,
-       checkInteger},
+       check_INTEGER},
       {"int32",
-       LogicalType::intType(32, true),
-       Type::kInt32,
+       LogicalType::Int(32, true),
+       Type::INT32,
        -1,
        true,
-       ConvertedType::kInt32,
+       ConvertedType::INT_32,
        true,
-       checkInteger},
+       check_INTEGER},
       {"int64",
-       LogicalType::intType(64, true),
-       Type::kInt64,
+       LogicalType::Int(64, true),
+       Type::INT64,
        -1,
        true,
-       ConvertedType::kInt64,
+       ConvertedType::INT_64,
        true,
-       checkInteger},
+       check_INTEGER},
   };
 
   for (const SchemaElementConstructionArguments& c : cases) {
-    this->reconstruct(c)->inspect();
+    this->Reconstruct(c)->Inspect();
   }
 }
 
 TEST(TestLogicalTypeSerialization, SchemaElementNestedCases) {
-  // Confirm that the intermediate Thrift objects created during node.
-  // Serialization contain correct ConvertedType and ConvertedType information.
+  // Confirm that the intermediate Thrift objects created during node
+  // serialization contain correct ConvertedType and ConvertedType information
 
-  NodePtr stringNode = PrimitiveNode::make(
+  NodePtr string_node = PrimitiveNode::Make(
       "string",
-      Repetition::kRequired,
-      StringLogicalType::make(),
-      Type::kByteArray);
-  NodePtr dateNode = PrimitiveNode::make(
-      "date", Repetition::kRequired, DateLogicalType::make(), Type::kInt32);
-  NodePtr jsonNode = PrimitiveNode::make(
-      "json", Repetition::kRequired, JsonLogicalType::make(), Type::kByteArray);
-  NodePtr uuidNode = PrimitiveNode::make(
+      Repetition::REQUIRED,
+      StringLogicalType::Make(),
+      Type::BYTE_ARRAY);
+  NodePtr date_node = PrimitiveNode::Make(
+      "date", Repetition::REQUIRED, DateLogicalType::Make(), Type::INT32);
+  NodePtr json_node = PrimitiveNode::Make(
+      "json", Repetition::REQUIRED, JSONLogicalType::Make(), Type::BYTE_ARRAY);
+  NodePtr uuid_node = PrimitiveNode::Make(
       "uuid",
-      Repetition::kRequired,
-      UuidLogicalType::make(),
-      Type::kFixedLenByteArray,
+      Repetition::REQUIRED,
+      UUIDLogicalType::Make(),
+      Type::FIXED_LEN_BYTE_ARRAY,
       16);
-  NodePtr timestampNode = PrimitiveNode::make(
+  NodePtr timestamp_node = PrimitiveNode::Make(
       "timestamp",
-      Repetition::kRequired,
-      TimestampLogicalType::make(false, LogicalType::TimeUnit::kNanos),
-      Type::kInt64);
-  NodePtr intNode = PrimitiveNode::make(
+      Repetition::REQUIRED,
+      TimestampLogicalType::Make(false, LogicalType::TimeUnit::NANOS),
+      Type::INT64);
+  NodePtr int_node = PrimitiveNode::Make(
       "int",
-      Repetition::kRequired,
-      IntLogicalType::make(64, false),
-      Type::kInt64);
-  NodePtr decimalNode = PrimitiveNode::make(
+      Repetition::REQUIRED,
+      IntLogicalType::Make(64, false),
+      Type::INT64);
+  NodePtr decimal_node = PrimitiveNode::Make(
       "decimal",
-      Repetition::kRequired,
-      DecimalLogicalType::make(16, 6),
-      Type::kInt64);
+      Repetition::REQUIRED,
+      DecimalLogicalType::Make(16, 6),
+      Type::INT64);
 
-  NodePtr listNode = GroupNode::make(
+  NodePtr list_node = GroupNode::Make(
       "list",
-      Repetition::kRepeated,
-      {stringNode,
-       dateNode,
-       jsonNode,
-       uuidNode,
-       timestampNode,
-       intNode,
-       decimalNode},
-      ListLogicalType::make());
-  std::vector<facebook::velox::parquet::thrift::SchemaElement> listElements;
-  toParquet(reinterpret_cast<GroupNode*>(listNode.get()), &listElements);
-  ASSERT_EQ(listElements[0].name, "list");
-  ASSERT_TRUE(listElements[0].__isset.converted_type);
-  ASSERT_TRUE(listElements[0].__isset.logicalType);
-  ASSERT_EQ(listElements[0].converted_type, toThrift(ConvertedType::kList));
-  ASSERT_TRUE(listElements[0].logicalType.__isset.LIST);
-  ASSERT_TRUE(listElements[1].logicalType.__isset.STRING);
-  ASSERT_TRUE(listElements[2].logicalType.__isset.DATE);
-  ASSERT_TRUE(listElements[3].logicalType.__isset.JSON);
-  ASSERT_TRUE(listElements[4].logicalType.__isset.UUID);
-  ASSERT_TRUE(listElements[5].logicalType.__isset.TIMESTAMP);
-  ASSERT_TRUE(listElements[6].logicalType.__isset.INTEGER);
-  ASSERT_TRUE(listElements[7].logicalType.__isset.DECIMAL);
+      Repetition::REPEATED,
+      {string_node,
+       date_node,
+       json_node,
+       uuid_node,
+       timestamp_node,
+       int_node,
+       decimal_node},
+      ListLogicalType::Make());
+  std::vector<facebook::velox::parquet::thrift::SchemaElement> list_elements;
+  ToParquet(reinterpret_cast<GroupNode*>(list_node.get()), &list_elements);
+  ASSERT_EQ(list_elements[0].name, "list");
+  ASSERT_TRUE(list_elements[0].__isset.converted_type);
+  ASSERT_TRUE(list_elements[0].__isset.logicalType);
+  ASSERT_EQ(list_elements[0].converted_type, ToThrift(ConvertedType::LIST));
+  ASSERT_TRUE(list_elements[0].logicalType.__isset.LIST);
+  ASSERT_TRUE(list_elements[1].logicalType.__isset.STRING);
+  ASSERT_TRUE(list_elements[2].logicalType.__isset.DATE);
+  ASSERT_TRUE(list_elements[3].logicalType.__isset.JSON);
+  ASSERT_TRUE(list_elements[4].logicalType.__isset.UUID);
+  ASSERT_TRUE(list_elements[5].logicalType.__isset.TIMESTAMP);
+  ASSERT_TRUE(list_elements[6].logicalType.__isset.INTEGER);
+  ASSERT_TRUE(list_elements[7].logicalType.__isset.DECIMAL);
 
-  NodePtr mapNode =
-      GroupNode::make("map", Repetition::kRequired, {}, MapLogicalType::make());
-  std::vector<facebook::velox::parquet::thrift::SchemaElement> mapElements;
-  toParquet(reinterpret_cast<GroupNode*>(mapNode.get()), &mapElements);
-  ASSERT_EQ(mapElements[0].name, "map");
-  ASSERT_TRUE(mapElements[0].__isset.converted_type);
-  ASSERT_TRUE(mapElements[0].__isset.logicalType);
-  ASSERT_EQ(mapElements[0].converted_type, toThrift(ConvertedType::kMap));
-  ASSERT_TRUE(mapElements[0].logicalType.__isset.MAP);
+  NodePtr map_node =
+      GroupNode::Make("map", Repetition::REQUIRED, {}, MapLogicalType::Make());
+  std::vector<facebook::velox::parquet::thrift::SchemaElement> map_elements;
+  ToParquet(reinterpret_cast<GroupNode*>(map_node.get()), &map_elements);
+  ASSERT_EQ(map_elements[0].name, "map");
+  ASSERT_TRUE(map_elements[0].__isset.converted_type);
+  ASSERT_TRUE(map_elements[0].__isset.logicalType);
+  ASSERT_EQ(map_elements[0].converted_type, ToThrift(ConvertedType::MAP));
+  ASSERT_TRUE(map_elements[0].logicalType.__isset.MAP);
 }
 
 TEST(TestLogicalTypeSerialization, Roundtrips) {
-  // Confirm that Thrift serialization-deserialization of nodes with logical.
-  // Types produces equivalent reconstituted nodes.
+  // Confirm that Thrift serialization-deserialization of nodes with logical
+  // types produces equivalent reconstituted nodes
 
   // Primitive nodes ...
   struct AnnotatedPrimitiveNodeFactoryArguments {
-    std::shared_ptr<const LogicalType> logicalType;
-    Type::type physicalType;
-    int physicalLength;
+    std::shared_ptr<const LogicalType> logical_type;
+    Type::type physical_type;
+    int physical_length;
   };
 
   std::vector<AnnotatedPrimitiveNodeFactoryArguments> cases = {
-      {LogicalType::string(), Type::kByteArray, -1},
-      {LogicalType::enumType(), Type::kByteArray, -1},
-      {LogicalType::decimal(16, 6), Type::kInt64, -1},
-      {LogicalType::date(), Type::kInt32, -1},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMillis),
-       Type::kInt32,
+      {LogicalType::String(), Type::BYTE_ARRAY, -1},
+      {LogicalType::Enum(), Type::BYTE_ARRAY, -1},
+      {LogicalType::Decimal(16, 6), Type::INT64, -1},
+      {LogicalType::Date(), Type::INT32, -1},
+      {LogicalType::Time(true, LogicalType::TimeUnit::MILLIS), Type::INT32, -1},
+      {LogicalType::Time(true, LogicalType::TimeUnit::MICROS), Type::INT64, -1},
+      {LogicalType::Time(true, LogicalType::TimeUnit::NANOS), Type::INT64, -1},
+      {LogicalType::Time(false, LogicalType::TimeUnit::MILLIS),
+       Type::INT32,
        -1},
-      {LogicalType::time(true, LogicalType::TimeUnit::kMicros),
-       Type::kInt64,
+      {LogicalType::Time(false, LogicalType::TimeUnit::MICROS),
+       Type::INT64,
        -1},
-      {LogicalType::time(true, LogicalType::TimeUnit::kNanos),
-       Type::kInt64,
+      {LogicalType::Time(false, LogicalType::TimeUnit::NANOS), Type::INT64, -1},
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MILLIS),
+       Type::INT64,
        -1},
-      {LogicalType::time(false, LogicalType::TimeUnit::kMillis),
-       Type::kInt32,
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::MICROS),
+       Type::INT64,
        -1},
-      {LogicalType::time(false, LogicalType::TimeUnit::kMicros),
-       Type::kInt64,
+      {LogicalType::Timestamp(true, LogicalType::TimeUnit::NANOS),
+       Type::INT64,
        -1},
-      {LogicalType::time(false, LogicalType::TimeUnit::kNanos),
-       Type::kInt64,
+      {LogicalType::Timestamp(false, LogicalType::TimeUnit::MILLIS),
+       Type::INT64,
        -1},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMillis),
-       Type::kInt64,
+      {LogicalType::Timestamp(false, LogicalType::TimeUnit::MICROS),
+       Type::INT64,
        -1},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kMicros),
-       Type::kInt64,
+      {LogicalType::Timestamp(false, LogicalType::TimeUnit::NANOS),
+       Type::INT64,
        -1},
-      {LogicalType::timestamp(true, LogicalType::TimeUnit::kNanos),
-       Type::kInt64,
-       -1},
-      {LogicalType::timestamp(false, LogicalType::TimeUnit::kMillis),
-       Type::kInt64,
-       -1},
-      {LogicalType::timestamp(false, LogicalType::TimeUnit::kMicros),
-       Type::kInt64,
-       -1},
-      {LogicalType::timestamp(false, LogicalType::TimeUnit::kNanos),
-       Type::kInt64,
-       -1},
-      {LogicalType::interval(), Type::kFixedLenByteArray, 12},
-      {LogicalType::intType(8, false), Type::kInt32, -1},
-      {LogicalType::intType(16, false), Type::kInt32, -1},
-      {LogicalType::intType(32, false), Type::kInt32, -1},
-      {LogicalType::intType(64, false), Type::kInt64, -1},
-      {LogicalType::intType(8, true), Type::kInt32, -1},
-      {LogicalType::intType(16, true), Type::kInt32, -1},
-      {LogicalType::intType(32, true), Type::kInt32, -1},
-      {LogicalType::intType(64, true), Type::kInt64, -1},
-      {LogicalType::nullType(), Type::kBoolean, -1},
-      {LogicalType::json(), Type::kByteArray, -1},
-      {LogicalType::bson(), Type::kByteArray, -1},
-      {LogicalType::uuid(), Type::kFixedLenByteArray, 16},
-      {LogicalType::none(), Type::kBoolean, -1}};
+      {LogicalType::Interval(), Type::FIXED_LEN_BYTE_ARRAY, 12},
+      {LogicalType::Int(8, false), Type::INT32, -1},
+      {LogicalType::Int(16, false), Type::INT32, -1},
+      {LogicalType::Int(32, false), Type::INT32, -1},
+      {LogicalType::Int(64, false), Type::INT64, -1},
+      {LogicalType::Int(8, true), Type::INT32, -1},
+      {LogicalType::Int(16, true), Type::INT32, -1},
+      {LogicalType::Int(32, true), Type::INT32, -1},
+      {LogicalType::Int(64, true), Type::INT64, -1},
+      {LogicalType::Null(), Type::BOOLEAN, -1},
+      {LogicalType::JSON(), Type::BYTE_ARRAY, -1},
+      {LogicalType::BSON(), Type::BYTE_ARRAY, -1},
+      {LogicalType::UUID(), Type::FIXED_LEN_BYTE_ARRAY, 16},
+      {LogicalType::None(), Type::BOOLEAN, -1}};
 
   for (const AnnotatedPrimitiveNodeFactoryArguments& c : cases) {
-    confirmPrimitiveNodeRoundtrip(
-        c.logicalType, c.physicalType, c.physicalLength);
+    ConfirmPrimitiveNodeRoundtrip(
+        c.logical_type, c.physical_type, c.physical_length);
   }
 
   // Group nodes ...
-  confirmGroupNodeRoundtrip("map", LogicalType::map());
-  confirmGroupNodeRoundtrip("list", LogicalType::list());
+  ConfirmGroupNodeRoundtrip("map", LogicalType::Map());
+  ConfirmGroupNodeRoundtrip("list", LogicalType::List());
 }
 
 } // namespace schema
