@@ -160,4 +160,9 @@ uint64_t HiveConfig::maxTargetFileSizeBytes(
       config::CapacityUnit::BYTE);
 }
 
+bool HiveConfig::fanoutEnabled(const config::ConfigBase* session) const {
+  return session->get<bool>(
+      kFanoutEnabledSession, config_->get<bool>(kFanoutEnabled, true));
+}
+
 } // namespace facebook::velox::connector::hive

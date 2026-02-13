@@ -48,6 +48,7 @@ class IcebergDwrfInsertTest : public test::IcebergTestBase {
     const auto vectors =
         createTestData(rowType, numBatches, vectorSize, nullRatio);
     const auto dataSink = createDataSinkAndAppendData(vectors, dataPath);
+    ASSERT_TRUE(dataSink->finish());
     const auto commitTasks = dataSink->close();
 
     auto splits = createSplitsForDirectory(dataPath);
@@ -90,6 +91,7 @@ TEST_F(IcebergDwrfInsertTest, commitMessageFormat) {
   auto rowType = ROW({"c1", "c2"}, {BIGINT(), VARCHAR()});
   const auto vectors = createTestData(rowType, 2, 100);
   const auto dataSink = createDataSinkAndAppendData(vectors, dataPath);
+  ASSERT_TRUE(dataSink->finish());
   const auto commitTasks = dataSink->close();
 
   ASSERT_GT(commitTasks.size(), 0);
@@ -128,6 +130,7 @@ TEST_F(IcebergDwrfInsertTest, partitioned) {
       {0, TransformType::kIdentity, std::nullopt}};
   const auto dataSink =
       createDataSinkAndAppendData(vectors, dataPath, partitionTransforms);
+  ASSERT_TRUE(dataSink->finish());
   const auto commitTasks = dataSink->close();
   ASSERT_GT(commitTasks.size(), 0);
 
@@ -163,6 +166,7 @@ TEST_F(IcebergDwrfInsertTest, ensureWriterNonPartitioned) {
   // No partitionFields => unpartitioned table, partitionIdGenerator_ stays
   // null inside the sink. appendData triggers ensureWriter().
   const auto dataSink = createDataSinkAndAppendData(vectors, dataPath);
+  ASSERT_TRUE(dataSink->finish());
   const auto commitTasks = dataSink->close();
 
   ASSERT_EQ(commitTasks.size(), 1);
