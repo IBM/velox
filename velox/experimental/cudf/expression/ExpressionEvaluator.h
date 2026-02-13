@@ -25,6 +25,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -96,24 +97,22 @@ class CudfExpression {
 using CudfExpressionPtr = std::shared_ptr<CudfExpression>;
 
 using CudfExpressionEvaluatorCanEvaluate =
+    std::function<bool(const velox::core::TypedExprPtr& expr)>;
+using CudfExpressionEvaluatorCanEvaluateExec =
     std::function<bool(std::shared_ptr<velox::exec::Expr> expr)>;
 using CudfExpressionEvaluatorCreate =
     std::function<std::shared_ptr<CudfExpression>(
         std::shared_ptr<velox::exec::Expr> expr,
         const RowTypePtr& inputRowSchema)>;
 
-// Register a CudfExpression evaluator.
-// - name: unique identifier (e.g., "ast", "function", "my_custom").
-// - priority: higher number = higher priority.
-// - canEvaluate: shallow check whether evaluator can handle current expr root.
-// - create: factory to build the evaluator node.
-// - overwrite: replace existing registration with the same name if true.
-bool registerCudfExpressionEvaluator(
-    const std::string& name,
-    int priority,
-    CudfExpressionEvaluatorCanEvaluate canEvaluate,
-    CudfExpressionEvaluatorCreate create,
-    bool overwrite = true);
+struct CudfExpressionEvaluatorEntry {
+  int priority;
+  CudfExpressionEvaluatorCanEvaluate canEvaluate;
+  CudfExpressionEvaluatorCanEvaluateExec canEvaluateExec;
+  CudfExpressionEvaluatorCreate create;
+};
+
+
 
 class FunctionExpression : public CudfExpression {
  public:
@@ -135,6 +134,8 @@ class FunctionExpression : public CudfExpression {
   // Check if this specific operation can be evaluated by FunctionExpression
   // (does not recursively check children)
   static bool canEvaluate(std::shared_ptr<velox::exec::Expr> expr);
+  
+  static bool canEvaluate(const velox::core::TypedExprPtr& expr);
 
  private:
   std::shared_ptr<velox::exec::Expr> expr_;
@@ -149,7 +150,8 @@ std::shared_ptr<CudfExpression> createCudfExpression(
     const RowTypePtr& inputRowSchema,
     std::optional<std::string> except = std::nullopt);
 
-/// Lightweight check if an expression tree is supported by any CUDF evaluator
+/// @deprecated: prefer canBeEvaluatedByCudf variant that uses core::TypedExprPtr.
+/// Checks if an expression tree is supported by any CUDF evaluator
 /// without initializing CudfExpression objects.
 /// \param expr Expression to check
 /// \param deep If true, recursively check all children in the expression tree;

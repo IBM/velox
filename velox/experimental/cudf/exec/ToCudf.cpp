@@ -17,6 +17,7 @@
 #include "velox/experimental/cudf/CudfConfig.h"
 #include "velox/experimental/cudf/connectors/hive/CudfHiveConnector.h"
 #include "velox/experimental/cudf/connectors/hive/CudfHiveDataSource.h"
+#include "velox/experimental/cudf/plan/CudfPlanNodeChecker.h"
 #include "velox/experimental/cudf/exec/CudfAssignUniqueId.h"
 #include "velox/experimental/cudf/exec/CudfConversion.h"
 #include "velox/experimental/cudf/exec/CudfFilterProject.h"
@@ -106,53 +107,21 @@ bool CompileState::compile(bool allowCpuFallback) {
     auto tableScanNode = std::dynamic_pointer_cast<const core::TableScanNode>(
         getPlanNode(op->planNodeId()));
     VELOX_CHECK(tableScanNode != nullptr);
-    auto const& connector = velox::connector::getConnector(
-        tableScanNode->tableHandle()->connectorId());
-    auto cudfHiveConnector = std::dynamic_pointer_cast<
-        facebook::velox::cudf_velox::connector::hive::CudfHiveConnector>(
-        connector);
-    if (!cudfHiveConnector) {
-      return false;
-    }
-    // TODO (dm): we need to ask CudfHiveConnector whether this table handle is
-    // supported by it. It may choose to produce a HiveDatasource.
-    return true;
+    return isTableScanNodeSupported(tableScanNode.get());
   };
 
-  auto isFilterProjectSupported = [getPlanNode, ctx](const exec::Operator* op) {
+  auto isFilterProjectSupported = [getPlanNode](const exec::Operator* op) {
     if (auto filterProjectOp = dynamic_cast<const exec::FilterProject*>(op)) {
       auto projectPlanNode = std::dynamic_pointer_cast<const core::ProjectNode>(
           getPlanNode(filterProjectOp->planNodeId()));
       auto filterNode = filterProjectOp->filterNode();
-      bool canBeEvaluated = true;
-      if (projectPlanNode) {
-        if (projectPlanNode->sources()[0]->outputType()->size() == 0 ||
-            projectPlanNode->outputType()->size() == 0) {
-          return false;
-        }
-      }
-
-      // Check filter separately.
-      if (filterNode) {
-        if (!canBeEvaluatedByCudf(
-                {filterNode->filter()}, ctx->task->queryCtx().get())) {
-          return false;
-        }
-      }
-
-      // Check projects separately.
-      if (projectPlanNode) {
-        if (!canBeEvaluatedByCudf(
-                projectPlanNode->projections(), ctx->task->queryCtx().get())) {
-          return false;
-        }
-      }
-      return true;
+      return isFilterNodeSupported(filterNode.get()) &&
+             isProjectNodeSupported(projectPlanNode.get());
     }
     return false;
   };
 
-  auto isAggregationSupported = [getPlanNode, ctx](const exec::Operator* op) {
+  auto isAggregationSupported = [getPlanNode](const exec::Operator* op) {
     if (!isAnyOf<exec::HashAggregation, exec::StreamingAggregation>(op)) {
       return false;
     }
@@ -160,45 +129,16 @@ bool CompileState::compile(bool allowCpuFallback) {
     auto aggregationPlanNode =
         std::dynamic_pointer_cast<const core::AggregationNode>(
             getPlanNode(op->planNodeId()));
-    if (!aggregationPlanNode) {
-      return false;
-    }
-
-    if (aggregationPlanNode->sources()[0]->outputType()->size() == 0) {
-      // We cannot hande RowVectors with a length but no data.
-      // This is the case with count(*) global (without groupby)
-      return false;
-    }
-
-    // Use aggregation-based canBeEvaluatedByCudf
-    return canBeEvaluatedByCudf(
-        *aggregationPlanNode, ctx->task->queryCtx().get());
+    return isAggregationNodeSupported(aggregationPlanNode.get());
   };
 
-  auto isJoinSupported = [getPlanNode, ctx](const exec::Operator* op) {
+  auto isJoinSupported = [getPlanNode](const exec::Operator* op) {
     if (!isAnyOf<exec::HashBuild, exec::HashProbe>(op)) {
       return false;
     }
     auto planNode = std::dynamic_pointer_cast<const core::HashJoinNode>(
         getPlanNode(op->planNodeId()));
-    if (!planNode) {
-      return false;
-    }
-    if (!CudfHashJoinProbe::isSupportedJoinType(planNode->joinType())) {
-      return false;
-    }
-    // disabling null-aware anti join with filter until we implement it right
-    if (planNode->joinType() == core::JoinType::kAnti and
-        planNode->isNullAware() and planNode->filter()) {
-      return false;
-    }
-    if (planNode->filter()) {
-      if (!canBeEvaluatedByCudf(
-              {planNode->filter()}, ctx->task->queryCtx().get())) {
-        return false;
-      }
-    }
-    return true;
+    return isHashJoinNodeSupported(planNode.get());
   };
 
   auto isSupportedGpuOperator =

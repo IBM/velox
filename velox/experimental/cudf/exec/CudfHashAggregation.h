@@ -17,6 +17,7 @@
 
 #include "velox/experimental/cudf/exec/NvtxHelper.h"
 #include "velox/experimental/cudf/vector/CudfVector.h"
+#include "velox/experimental/cudf/plan/CudfPlanNodeChecker.h"
 
 #include "velox/exec/Operator.h"
 #include "velox/expression/FunctionSignature.h"
@@ -184,10 +185,6 @@ bool canAggregationBeEvaluatedByCudf(
     const core::CallTypedExpr& call,
     core::AggregationNode::Step step,
     const std::vector<TypePtr>& rawInputTypes,
-    core::QueryCtx* queryCtx);
-
-bool canBeEvaluatedByCudf(
-    const core::AggregationNode& aggregationNode,
     core::QueryCtx* queryCtx);
 
 // Utility functions

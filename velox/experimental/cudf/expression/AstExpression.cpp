@@ -20,6 +20,7 @@
 #include "velox/experimental/cudf/expression/AstPrinter.h"
 #include "velox/experimental/cudf/expression/AstUtils.h"
 #include "velox/experimental/cudf/vector/TableViewPrinter.h"
+#include "velox/experimental/cudf/expression/ExpressionEvaluatorRegistry.h"
 
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/FieldReference.h"
@@ -137,6 +138,10 @@ ColumnOrView ASTExpression::eval(
   return result;
 }
 
+bool ASTExpression::canEvaluate(const velox::core::TypedExprPtr& expr) {
+  return expr->isFieldAccessKind() || detail::isAstExprSupported(expr);
+}
+
 bool ASTExpression::canEvaluate(std::shared_ptr<velox::exec::Expr> expr) {
   return std::dynamic_pointer_cast<velox::exec::FieldReference>(expr) !=
       nullptr ||
@@ -147,8 +152,9 @@ void registerAstEvaluator(int priority) {
   registerCudfExpressionEvaluator(
       kAstEvaluatorName,
       priority,
-      [](std::shared_ptr<velox::exec::Expr> expr) {
-        return ASTExpression::canEvaluate(expr);
+      [](const velox::core::TypedExprPtr& expr) { return ASTExpression::canEvaluate(expr); },
+      [](std::shared_ptr<velox::exec::Expr> expr) { 
+        return ASTExpression::canEvaluate(expr); 
       },
       [](std::shared_ptr<velox::exec::Expr> expr, const RowTypePtr& row) {
         return std::make_shared<ASTExpression>(std::move(expr), row);

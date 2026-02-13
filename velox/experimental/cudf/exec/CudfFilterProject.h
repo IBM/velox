@@ -18,6 +18,7 @@
 
 #include "velox/experimental/cudf/exec/NvtxHelper.h"
 #include "velox/experimental/cudf/expression/ExpressionEvaluator.h"
+#include "velox/experimental/cudf/plan/CudfPlanNodeChecker.h"
 
 #include "velox/core/Expressions.h"
 #include "velox/core/PlanNode.h"
@@ -85,8 +86,6 @@ class CudfFilterProject : public exec::Operator, public NvtxHelper {
   std::vector<velox::exec::IdentityProjection> identityProjections_;
 };
 
-bool canBeEvaluatedByCudf(
-    const std::vector<core::TypedExprPtr>& exprs,
-    core::QueryCtx* queryCtx);
+
 
 } // namespace facebook::velox::cudf_velox
