@@ -43,6 +43,10 @@ class TypeWithId : public velox::Tree<std::shared_ptr<const TypeWithId>> {
   /// Create TypeWithId node but leave all the unselected children as nullptr.
   /// The ids are set correctly even when some of the previous nodes are not
   /// selected.
+  /// @requiredExtraFieldIds is used to determine the ids of the fields should
+  /// be included. This is because some connectors may require extra fields to
+  /// be included in the TypeWithId and ScanSpec after the base ScanSpec is
+  /// created.
   static std::unique_ptr<TypeWithId> create(
       const RowTypePtr& type,
       const velox::common::ScanSpec& spec);
