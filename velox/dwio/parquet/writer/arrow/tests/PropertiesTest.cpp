@@ -34,63 +34,63 @@ namespace test {
 TEST(TestReaderProperties, Basics) {
   ReaderProperties props;
 
-  ASSERT_EQ(props.bufferSize(), kDefaultBufferSize);
-  ASSERT_FALSE(props.isBufferedStreamEnabled());
-  ASSERT_FALSE(props.pageChecksumVerification());
+  ASSERT_EQ(props.buffer_size(), kDefaultBufferSize);
+  ASSERT_FALSE(props.is_buffered_stream_enabled());
+  ASSERT_FALSE(props.page_checksum_verification());
 }
 
 TEST(TestWriterProperties, Basics) {
   std::shared_ptr<WriterProperties> props = WriterProperties::Builder().build();
 
-  ASSERT_EQ(kDefaultDataPageSize, props->dataPagesize());
+  ASSERT_EQ(kDefaultDataPageSize, props->data_pagesize());
   ASSERT_EQ(
-      DEFAULT_DICTIONARY_PAGE_SIZE_LIMIT, props->dictionaryPagesizeLimit());
+      DEFAULT_DICTIONARY_PAGE_SIZE_LIMIT, props->dictionary_pagesize_limit());
   ASSERT_EQ(ParquetVersion::PARQUET_2_6, props->version());
-  ASSERT_EQ(ParquetDataPageVersion::V1, props->dataPageVersion());
-  ASSERT_FALSE(props->pageChecksumEnabled());
+  ASSERT_EQ(ParquetDataPageVersion::V1, props->data_page_version());
+  ASSERT_FALSE(props->page_checksum_enabled());
 }
 
 TEST(TestWriterProperties, AdvancedHandling) {
-  WriterProperties::Builder Builder;
-  Builder.compression("gzip", Compression::GZIP);
-  Builder.compression("zstd", Compression::ZSTD);
-  Builder.compression(Compression::SNAPPY);
-  Builder.encoding(Encoding::kDeltaBinaryPacked);
-  Builder.encoding("delta-length", Encoding::kDeltaLengthByteArray);
-  Builder.dataPageVersion(ParquetDataPageVersion::V2);
-  std::shared_ptr<WriterProperties> props = Builder.build();
+  WriterProperties::Builder builder;
+  builder.compression("gzip", Compression::GZIP);
+  builder.compression("zstd", Compression::ZSTD);
+  builder.compression(Compression::SNAPPY);
+  builder.encoding(Encoding::DELTA_BINARY_PACKED);
+  builder.encoding("delta-length", Encoding::DELTA_LENGTH_BYTE_ARRAY);
+  builder.data_page_version(ParquetDataPageVersion::V2);
+  std::shared_ptr<WriterProperties> props = builder.build();
 
   ASSERT_EQ(
-      Compression::GZIP, props->compression(ColumnPath::fromDotString("gzip")));
+      Compression::GZIP, props->compression(ColumnPath::FromDotString("gzip")));
   ASSERT_EQ(
-      Compression::ZSTD, props->compression(ColumnPath::fromDotString("zstd")));
+      Compression::ZSTD, props->compression(ColumnPath::FromDotString("zstd")));
   ASSERT_EQ(
       Compression::SNAPPY,
-      props->compression(ColumnPath::fromDotString("delta-length")));
+      props->compression(ColumnPath::FromDotString("delta-length")));
   ASSERT_EQ(
-      Encoding::kDeltaBinaryPacked,
-      props->encoding(ColumnPath::fromDotString("gzip")));
+      Encoding::DELTA_BINARY_PACKED,
+      props->encoding(ColumnPath::FromDotString("gzip")));
   ASSERT_EQ(
-      Encoding::kDeltaLengthByteArray,
-      props->encoding(ColumnPath::fromDotString("delta-length")));
-  ASSERT_EQ(ParquetDataPageVersion::V2, props->dataPageVersion());
+      Encoding::DELTA_LENGTH_BYTE_ARRAY,
+      props->encoding(ColumnPath::FromDotString("delta-length")));
+  ASSERT_EQ(ParquetDataPageVersion::V2, props->data_page_version());
 }
 
 TEST(TestReaderProperties, GetStreamInsufficientData) {
-  // ARROW-6058.
+  // ARROW-6058
   std::string data = "shorter than expected";
   auto buf = std::make_shared<Buffer>(data);
   auto reader = std::make_shared<::arrow::io::BufferReader>(buf);
 
   ReaderProperties props;
   try {
-    ARROW_UNUSED(props.getStream(reader, 12, 15));
+    ARROW_UNUSED(props.GetStream(reader, 12, 15));
     FAIL() << "No exception raised";
   } catch (const ParquetException& e) {
-    std::string exWhat =
+    std::string ex_what =
         ("Tried reading 15 bytes starting at position 12"
          " from file but only got 9");
-    ASSERT_EQ(exWhat, e.what());
+    ASSERT_EQ(ex_what, e.what());
   }
 }
 

@@ -37,88 +37,88 @@ namespace {
 
 using ::arrow::Result;
 
-// ----------------------------------------------------------------------.
-// Snappy implementation.
+// ----------------------------------------------------------------------
+// Snappy implementation
 
 class SnappyCodec : public Codec {
  public:
-  Result<int64_t> decompress(
-      int64_t inputLen,
+  Result<int64_t> Decompress(
+      int64_t input_len,
       const uint8_t* input,
-      int64_t outputBufferLen,
-      uint8_t* outputBuffer) override {
-    size_t decompressedSize;
+      int64_t output_buffer_len,
+      uint8_t* output_buffer) override {
+    size_t decompressed_size;
     if (!snappy::GetUncompressedLength(
             reinterpret_cast<const char*>(input),
-            static_cast<size_t>(inputLen),
-            &decompressedSize)) {
+            static_cast<size_t>(input_len),
+            &decompressed_size)) {
       return Status::IOError("Corrupt snappy compressed data.");
     }
-    if (outputBufferLen < static_cast<int64_t>(decompressedSize)) {
+    if (output_buffer_len < static_cast<int64_t>(decompressed_size)) {
       return Status::Invalid(
           "Output buffer size (",
-          outputBufferLen,
+          output_buffer_len,
           ") must be ",
-          decompressedSize,
+          decompressed_size,
           " or larger.");
     }
     if (!snappy::RawUncompress(
             reinterpret_cast<const char*>(input),
-            static_cast<size_t>(inputLen),
-            reinterpret_cast<char*>(outputBuffer))) {
+            static_cast<size_t>(input_len),
+            reinterpret_cast<char*>(output_buffer))) {
       return Status::IOError("Corrupt snappy compressed data.");
     }
-    return static_cast<int64_t>(decompressedSize);
+    return static_cast<int64_t>(decompressed_size);
   }
 
-  int64_t maxCompressedLen(
-      int64_t inputLen,
+  int64_t MaxCompressedLen(
+      int64_t input_len,
       const uint8_t* ARROW_ARG_UNUSED(input)) override {
-    VELOX_DCHECK_GE(inputLen, 0);
-    return snappy::MaxCompressedLength(static_cast<size_t>(inputLen));
+    VELOX_DCHECK_GE(input_len, 0);
+    return snappy::MaxCompressedLength(static_cast<size_t>(input_len));
   }
 
-  Result<int64_t> compress(
-      int64_t inputLen,
+  Result<int64_t> Compress(
+      int64_t input_len,
       const uint8_t* input,
-      int64_t ARROW_ARG_UNUSED(outputBufferLen),
-      uint8_t* outputBuffer) override {
-    size_t outputSize;
+      int64_t ARROW_ARG_UNUSED(output_buffer_len),
+      uint8_t* output_buffer) override {
+    size_t output_size;
     snappy::RawCompress(
         reinterpret_cast<const char*>(input),
-        static_cast<size_t>(inputLen),
-        reinterpret_cast<char*>(outputBuffer),
-        &outputSize);
-    return static_cast<int64_t>(outputSize);
+        static_cast<size_t>(input_len),
+        reinterpret_cast<char*>(output_buffer),
+        &output_size);
+    return static_cast<int64_t>(output_size);
   }
 
-  Result<std::shared_ptr<Compressor>> makeCompressor() override {
+  Result<std::shared_ptr<Compressor>> MakeCompressor() override {
     return Status::NotImplemented(
         "Streaming compression unsupported with Snappy");
   }
 
-  Result<std::shared_ptr<Decompressor>> makeDecompressor() override {
+  Result<std::shared_ptr<Decompressor>> MakeDecompressor() override {
     return Status::NotImplemented(
         "Streaming decompression unsupported with Snappy");
   }
 
-  Compression::type compressionType() const override {
+  Compression::type compression_type() const override {
     return Compression::SNAPPY;
   }
-  int minimumCompressionLevel() const override {
+  int minimum_compression_level() const override {
     return kUseDefaultCompressionLevel;
   }
-  int maximumCompressionLevel() const override {
+  int maximum_compression_level() const override {
     return kUseDefaultCompressionLevel;
   }
-  int defaultCompressionLevel() const override {
+  int default_compression_level() const override {
     return kUseDefaultCompressionLevel;
   }
 };
 
 } // namespace
 
-std::unique_ptr<Codec> makeSnappyCodec() {
+std::unique_ptr<Codec> MakeSnappyCodec() {
   return std::make_unique<SnappyCodec>();
 }
 

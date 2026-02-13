@@ -30,216 +30,217 @@ using ::arrow::Result;
 using ::arrow::Status;
 using ::arrow::internal::checked_cast;
 
-Result<std::shared_ptr<ArrowType>> makeArrowDecimal(
-    const LogicalType& logicalType) {
-  const auto& decimal = checked_cast<const DecimalLogicalType&>(logicalType);
+Result<std::shared_ptr<ArrowType>> MakeArrowDecimal(
+    const LogicalType& logical_type) {
+  const auto& decimal = checked_cast<const DecimalLogicalType&>(logical_type);
   if (decimal.precision() <= ::arrow::Decimal128Type::kMaxPrecision) {
     return ::arrow::Decimal128Type::Make(decimal.precision(), decimal.scale());
   }
   return ::arrow::Decimal256Type::Make(decimal.precision(), decimal.scale());
 }
 
-Result<std::shared_ptr<ArrowType>> makeArrowInt(
-    const LogicalType& logicalType) {
-  const auto& integer = checked_cast<const IntLogicalType&>(logicalType);
-  switch (integer.bitWidth()) {
+Result<std::shared_ptr<ArrowType>> MakeArrowInt(
+    const LogicalType& logical_type) {
+  const auto& integer = checked_cast<const IntLogicalType&>(logical_type);
+  switch (integer.bit_width()) {
     case 8:
-      return integer.isSigned() ? ::arrow::int8() : ::arrow::uint8();
+      return integer.is_signed() ? ::arrow::int8() : ::arrow::uint8();
     case 16:
-      return integer.isSigned() ? ::arrow::int16() : ::arrow::uint16();
+      return integer.is_signed() ? ::arrow::int16() : ::arrow::uint16();
     case 32:
-      return integer.isSigned() ? ::arrow::int32() : ::arrow::uint32();
+      return integer.is_signed() ? ::arrow::int32() : ::arrow::uint32();
     default:
       return Status::TypeError(
-          logicalType.toString(), " can not annotate physical type Int32");
+          logical_type.ToString(), " can not annotate physical type Int32");
   }
 }
 
-Result<std::shared_ptr<ArrowType>> makeArrowInt64(
-    const LogicalType& logicalType) {
-  const auto& integer = checked_cast<const IntLogicalType&>(logicalType);
-  switch (integer.bitWidth()) {
+Result<std::shared_ptr<ArrowType>> MakeArrowInt64(
+    const LogicalType& logical_type) {
+  const auto& integer = checked_cast<const IntLogicalType&>(logical_type);
+  switch (integer.bit_width()) {
     case 64:
-      return integer.isSigned() ? ::arrow::int64() : ::arrow::uint64();
+      return integer.is_signed() ? ::arrow::int64() : ::arrow::uint64();
     default:
       return Status::TypeError(
-          logicalType.toString(), " can not annotate physical type Int64");
+          logical_type.ToString(), " can not annotate physical type Int64");
   }
 }
 
-Result<std::shared_ptr<ArrowType>> makeArrowTime32(
-    const LogicalType& logicalType) {
-  const auto& time = checked_cast<const TimeLogicalType&>(logicalType);
-  switch (time.timeUnit()) {
-    case LogicalType::TimeUnit::kMillis:
+Result<std::shared_ptr<ArrowType>> MakeArrowTime32(
+    const LogicalType& logical_type) {
+  const auto& time = checked_cast<const TimeLogicalType&>(logical_type);
+  switch (time.time_unit()) {
+    case LogicalType::TimeUnit::MILLIS:
       return ::arrow::time32(::arrow::TimeUnit::MILLI);
     default:
       return Status::TypeError(
-          logicalType.toString(), " can not annotate physical type Time32");
+          logical_type.ToString(), " can not annotate physical type Time32");
   }
 }
 
-Result<std::shared_ptr<ArrowType>> makeArrowTime64(
-    const LogicalType& logicalType) {
-  const auto& time = checked_cast<const TimeLogicalType&>(logicalType);
-  switch (time.timeUnit()) {
-    case LogicalType::TimeUnit::kMicros:
+Result<std::shared_ptr<ArrowType>> MakeArrowTime64(
+    const LogicalType& logical_type) {
+  const auto& time = checked_cast<const TimeLogicalType&>(logical_type);
+  switch (time.time_unit()) {
+    case LogicalType::TimeUnit::MICROS:
       return ::arrow::time64(::arrow::TimeUnit::MICRO);
-    case LogicalType::TimeUnit::kNanos:
+    case LogicalType::TimeUnit::NANOS:
       return ::arrow::time64(::arrow::TimeUnit::NANO);
     default:
       return Status::TypeError(
-          logicalType.toString(), " can not annotate physical type Time64");
+          logical_type.ToString(), " can not annotate physical type Time64");
   }
 }
 
-Result<std::shared_ptr<ArrowType>> makeArrowTimestamp(
-    const LogicalType& logicalType) {
+Result<std::shared_ptr<ArrowType>> MakeArrowTimestamp(
+    const LogicalType& logical_type) {
   const auto& timestamp =
-      checked_cast<const TimestampLogicalType&>(logicalType);
-  const bool utcNormalized =
-      timestamp.isFromConvertedType() ? false : timestamp.isAdjustedToUtc();
-  static const char* utcTimezone = "UTC";
-  switch (timestamp.timeUnit()) {
-    case LogicalType::TimeUnit::kMillis:
+      checked_cast<const TimestampLogicalType&>(logical_type);
+  const bool utc_normalized = timestamp.is_from_converted_type()
+      ? false
+      : timestamp.is_adjusted_to_utc();
+  static const char* utc_timezone = "UTC";
+  switch (timestamp.time_unit()) {
+    case LogicalType::TimeUnit::MILLIS:
       return (
-          utcNormalized
-              ? ::arrow::timestamp(::arrow::TimeUnit::MILLI, utcTimezone)
+          utc_normalized
+              ? ::arrow::timestamp(::arrow::TimeUnit::MILLI, utc_timezone)
               : ::arrow::timestamp(::arrow::TimeUnit::MILLI));
-    case LogicalType::TimeUnit::kMicros:
+    case LogicalType::TimeUnit::MICROS:
       return (
-          utcNormalized
-              ? ::arrow::timestamp(::arrow::TimeUnit::MICRO, utcTimezone)
+          utc_normalized
+              ? ::arrow::timestamp(::arrow::TimeUnit::MICRO, utc_timezone)
               : ::arrow::timestamp(::arrow::TimeUnit::MICRO));
-    case LogicalType::TimeUnit::kNanos:
+    case LogicalType::TimeUnit::NANOS:
       return (
-          utcNormalized
-              ? ::arrow::timestamp(::arrow::TimeUnit::NANO, utcTimezone)
+          utc_normalized
+              ? ::arrow::timestamp(::arrow::TimeUnit::NANO, utc_timezone)
               : ::arrow::timestamp(::arrow::TimeUnit::NANO));
     default:
       return Status::TypeError(
           "Unrecognized time unit in timestamp logical_type: ",
-          logicalType.toString());
+          logical_type.ToString());
   }
 }
 
-Result<std::shared_ptr<ArrowType>> fromByteArray(
-    const LogicalType& logicalType) {
-  switch (logicalType.type()) {
-    case LogicalType::Type::kString:
+Result<std::shared_ptr<ArrowType>> FromByteArray(
+    const LogicalType& logical_type) {
+  switch (logical_type.type()) {
+    case LogicalType::Type::STRING:
       return ::arrow::utf8();
-    case LogicalType::Type::kDecimal:
-      return makeArrowDecimal(logicalType);
-    case LogicalType::Type::kNone:
-    case LogicalType::Type::kEnum:
-    case LogicalType::Type::kJson:
-    case LogicalType::Type::kBson:
+    case LogicalType::Type::DECIMAL:
+      return MakeArrowDecimal(logical_type);
+    case LogicalType::Type::NONE:
+    case LogicalType::Type::ENUM:
+    case LogicalType::Type::JSON:
+    case LogicalType::Type::BSON:
       return ::arrow::binary();
     default:
       return Status::NotImplemented(
           "Unhandled logical logical_type ",
-          logicalType.toString(),
+          logical_type.ToString(),
           " for binary array");
   }
 }
 
-Result<std::shared_ptr<ArrowType>> fromFLBA(
-    const LogicalType& logicalType,
-    int32_t physicalLength) {
-  switch (logicalType.type()) {
-    case LogicalType::Type::kDecimal:
-      return makeArrowDecimal(logicalType);
-    case LogicalType::Type::kNone:
-    case LogicalType::Type::kInterval:
-    case LogicalType::Type::kUuid:
-      return ::arrow::fixed_size_binary(physicalLength);
+Result<std::shared_ptr<ArrowType>> FromFLBA(
+    const LogicalType& logical_type,
+    int32_t physical_length) {
+  switch (logical_type.type()) {
+    case LogicalType::Type::DECIMAL:
+      return MakeArrowDecimal(logical_type);
+    case LogicalType::Type::NONE:
+    case LogicalType::Type::INTERVAL:
+    case LogicalType::Type::UUID:
+      return ::arrow::fixed_size_binary(physical_length);
     default:
       return Status::NotImplemented(
           "Unhandled logical logical_type ",
-          logicalType.toString(),
+          logical_type.ToString(),
           " for fixed-length binary array");
   }
 }
 
-::arrow::Result<std::shared_ptr<ArrowType>> fromInt32(
-    const LogicalType& logicalType) {
-  switch (logicalType.type()) {
-    case LogicalType::Type::kInt:
-      return makeArrowInt(logicalType);
-    case LogicalType::Type::kDate:
+::arrow::Result<std::shared_ptr<ArrowType>> FromInt32(
+    const LogicalType& logical_type) {
+  switch (logical_type.type()) {
+    case LogicalType::Type::INT:
+      return MakeArrowInt(logical_type);
+    case LogicalType::Type::DATE:
       return ::arrow::date32();
-    case LogicalType::Type::kTime:
-      return makeArrowTime32(logicalType);
-    case LogicalType::Type::kDecimal:
-      return makeArrowDecimal(logicalType);
-    case LogicalType::Type::kNone:
+    case LogicalType::Type::TIME:
+      return MakeArrowTime32(logical_type);
+    case LogicalType::Type::DECIMAL:
+      return MakeArrowDecimal(logical_type);
+    case LogicalType::Type::NONE:
       return ::arrow::int32();
     default:
       return Status::NotImplemented(
-          "Unhandled logical type ", logicalType.toString(), " for INT32");
+          "Unhandled logical type ", logical_type.ToString(), " for INT32");
   }
 }
 
-Result<std::shared_ptr<ArrowType>> fromInt64(const LogicalType& logicalType) {
-  switch (logicalType.type()) {
-    case LogicalType::Type::kInt:
-      return makeArrowInt64(logicalType);
-    case LogicalType::Type::kDecimal:
-      return makeArrowDecimal(logicalType);
-    case LogicalType::Type::kTimestamp:
-      return makeArrowTimestamp(logicalType);
-    case LogicalType::Type::kTime:
-      return makeArrowTime64(logicalType);
-    case LogicalType::Type::kNone:
+Result<std::shared_ptr<ArrowType>> FromInt64(const LogicalType& logical_type) {
+  switch (logical_type.type()) {
+    case LogicalType::Type::INT:
+      return MakeArrowInt64(logical_type);
+    case LogicalType::Type::DECIMAL:
+      return MakeArrowDecimal(logical_type);
+    case LogicalType::Type::TIMESTAMP:
+      return MakeArrowTimestamp(logical_type);
+    case LogicalType::Type::TIME:
+      return MakeArrowTime64(logical_type);
+    case LogicalType::Type::NONE:
       return ::arrow::int64();
     default:
       return Status::NotImplemented(
-          "Unhandled logical type ", logicalType.toString(), " for INT64");
+          "Unhandled logical type ", logical_type.ToString(), " for INT64");
   }
 }
 
-Result<std::shared_ptr<ArrowType>> getArrowType(
-    Type::type physicalType,
-    const LogicalType& logicalType,
-    int typeLength,
-    const ::arrow::TimeUnit::type int96ArrowTimeUnit) {
-  if (logicalType.isInvalid() || logicalType.isNull()) {
+Result<std::shared_ptr<ArrowType>> GetArrowType(
+    Type::type physical_type,
+    const LogicalType& logical_type,
+    int type_length,
+    const ::arrow::TimeUnit::type int96_arrow_time_unit) {
+  if (logical_type.is_invalid() || logical_type.is_null()) {
     return ::arrow::null();
   }
 
-  switch (physicalType) {
-    case ParquetType::kBoolean:
+  switch (physical_type) {
+    case ParquetType::BOOLEAN:
       return ::arrow::boolean();
-    case ParquetType::kInt32:
-      return fromInt32(logicalType);
-    case ParquetType::kInt64:
-      return fromInt64(logicalType);
-    case ParquetType::kInt96:
-      return ::arrow::timestamp(int96ArrowTimeUnit);
-    case ParquetType::kFloat:
+    case ParquetType::INT32:
+      return FromInt32(logical_type);
+    case ParquetType::INT64:
+      return FromInt64(logical_type);
+    case ParquetType::INT96:
+      return ::arrow::timestamp(int96_arrow_time_unit);
+    case ParquetType::FLOAT:
       return ::arrow::float32();
-    case ParquetType::kDouble:
+    case ParquetType::DOUBLE:
       return ::arrow::float64();
-    case ParquetType::kByteArray:
-      return fromByteArray(logicalType);
-    case ParquetType::kFixedLenByteArray:
-      return fromFLBA(logicalType, typeLength);
+    case ParquetType::BYTE_ARRAY:
+      return FromByteArray(logical_type);
+    case ParquetType::FIXED_LEN_BYTE_ARRAY:
+      return FromFLBA(logical_type, type_length);
     default: {
-      // PARQUET-1565: This can occur if the file is corrupt.
+      // PARQUET-1565: This can occur if the file is corrupt
       return Status::IOError(
-          "Invalid physical column type: ", typeToString(physicalType));
+          "Invalid physical column type: ", TypeToString(physical_type));
     }
   }
 }
 
-Result<std::shared_ptr<ArrowType>> getArrowType(
+Result<std::shared_ptr<ArrowType>> GetArrowType(
     const schema::PrimitiveNode& primitive,
-    const ::arrow::TimeUnit::type int96ArrowTimeUnit) {
-  return getArrowType(
-      primitive.physicalType(),
-      *primitive.logicalType(),
-      primitive.typeLength(),
-      int96ArrowTimeUnit);
+    const ::arrow::TimeUnit::type int96_arrow_time_unit) {
+  return GetArrowType(
+      primitive.physical_type(),
+      *primitive.logical_type(),
+      primitive.type_length(),
+      int96_arrow_time_unit);
 }
 
 } // namespace facebook::velox::parquet::arrow::arrow
