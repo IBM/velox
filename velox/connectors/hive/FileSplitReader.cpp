@@ -98,6 +98,8 @@ std::unique_ptr<FileSplitReader> FileSplitReader::create(
     FileHandleFactory* fileHandleFactory,
     folly::Executor* ioExecutor,
     const std::shared_ptr<common::ScanSpec>& scanSpec,
+    core::ExpressionEvaluator* expressionEvaluator,
+    std::atomic<uint64_t>& totalRemainingFilterTime,
     const common::SubfieldFilters* subfieldFiltersForValidation) {
   return std::unique_ptr<FileSplitReader>(new FileSplitReader(
       fileSplit,
