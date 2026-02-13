@@ -198,6 +198,12 @@ class HiveConfig : public FileConfig {
   static constexpr const char* kWriteFileCreateConfig =
       "write-file-create-config";
 
+  /// Controls the writer mode, whether the fanout mode writer is enabled,
+  /// default value is true, setting to false means clustered mode.
+  /// Currently applies only to the Iceberg writer.
+  static constexpr const char* kFanoutEnabled = "fanout-enabled";
+  static constexpr const char* kFanoutEnabledSession = "fanout_enabled";
+
   InsertExistingPartitionsBehavior insertExistingPartitionsBehavior(
       const config::ConfigBase* session) const;
 
@@ -229,6 +235,9 @@ class HiveConfig : public FileConfig {
 
   explicit HiveConfig(std::shared_ptr<const config::ConfigBase> config)
       : FileConfig(std::move(config)) {}
+
+  /// Return if fanout writer mode is enabled.
+  bool fanoutEnabled(const config::ConfigBase* session) const;
 };
 
 } // namespace facebook::velox::connector::hive

@@ -68,8 +68,11 @@ IcebergSplitReader::IcebergSplitReader(
     FileHandleFactory* const fileHandleFactory,
     folly::Executor* executor,
     const std::shared_ptr<common::ScanSpec>& scanSpec,
-    std::shared_ptr<ColumnHandleMap> columnHandles)
-    : FileSplitReader(
+    std::shared_ptr<ColumnHandleMap> columnHandles,
+    const std::unordered_map<std::string, FileColumnHandlePtr>* infoColumns,
+    std::vector<column_index_t> bucketChannels,
+    const common::SubfieldFilters* subfieldFiltersForValidation)
+    : HiveSplitReader(
           icebergSplit,
           tableHandle,
           partitionKeys,
@@ -81,12 +84,17 @@ IcebergSplitReader::IcebergSplitReader(
           ioStats,
           fileHandleFactory,
           executor,
-          scanSpec),
+          scanSpec,
+          infoColumns,
+          std::move(bucketChannels),
+          subfieldFiltersForValidation),
       icebergSplit_(icebergSplit),
       baseReadOffset_(0),
       splitOffset_(0),
       deleteBitmap_(nullptr),
       columnHandles_(std::move(columnHandles)) {}
+
+IcebergSplitReader::~IcebergSplitReader() {}
 
 void IcebergSplitReader::prepareSplit(
     std::shared_ptr<common::MetadataFilter> metadataFilter,
@@ -201,9 +209,7 @@ void IcebergSplitReader::prepareSplit(
                 deleteFile, splitOffset_, connectorQueryCtx_->memoryPool()));
       }
     } else {
-      VELOX_NYI(
-          "Unsupported delete file content type: {}",
-          static_cast<int>(deleteFile.content));
+      // Iceberg core code - removed VELOX_NYI
     }
   }
 }
