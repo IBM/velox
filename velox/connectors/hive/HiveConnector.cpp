@@ -63,7 +63,7 @@ const config::ConfigProvider* HiveConnector::configProvider() const {
 std::unique_ptr<DataSource> HiveConnector::createDataSource(
     const RowTypePtr& outputType,
     const ConnectorTableHandlePtr& tableHandle,
-    const ColumnHandleMap& columnHandles,
+    const std::unordered_map<std::string, ColumnHandlePtr>& columnHandles,
     ConnectorQueryCtx* connectorQueryCtx) {
   return std::make_unique<HiveDataSource>(
       outputType,

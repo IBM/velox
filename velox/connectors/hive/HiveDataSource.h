@@ -72,9 +72,9 @@ class HiveDataSource : public FileDataSource {
 
   void setupRowIdColumn();
 
-  const std::shared_ptr<HiveConfig> hiveConfig_;
-
   int64_t numBucketConversion_ = 0;
+
+  const std::shared_ptr<HiveConfig> hiveConfig_;
 
   // Tracks the number of splits read per file format.
   std::unordered_map<dwio::common::FileFormat, int64_t> numSplitsByFileFormat_;
