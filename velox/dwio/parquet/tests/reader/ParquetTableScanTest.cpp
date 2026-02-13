@@ -1805,6 +1805,33 @@ TEST_F(ParquetTableScanTest, inFilter) {
           "SELECT name FROM tmp where name not in ('alex', 'leo', 'mary', null, 'victor')");
 }
 
+TEST_F(ParquetTableScanTest, test) {
+  const std::vector<std::string> outputNames = {
+      "l_quantity",
+      "l_extendedprice",
+      "l_discount",
+      "l_tax",
+      "l_returnflag",
+      "l_linestatus",
+      "l_shipdate",
+  };
+  const auto outputType =
+      ROW(outputNames,
+          {
+              DECIMAL(12, 2),
+              DECIMAL(12, 2),
+              DECIMAL(12, 2),
+              DECIMAL(12, 2),
+              VARCHAR(),
+              VARCHAR(),
+              DATE(),
+          });
+  const auto filePath = getExampleFilePath("lineitem.parquet");
+
+  const auto plan = PlanBuilder().tableScan(outputType).planNode();
+  AssertQueryBuilder(plan).split(makeSplit(filePath)).copyResults(pool());
+}
+
 int main(int argc, char** argv) {
   testing::InitGoogleTest(&argc, argv);
   folly::Init init{&argc, &argv, false};
