@@ -94,7 +94,7 @@ class EqualityDeleteFileReaderTest : public HiveConnectorTestBase {
         fileSize,
         std::unordered_map<std::string, std::optional<std::string>>{},
         std::nullopt,
-        std::unordered_map<std::string, std::string>{},
+        std::unordered_map<std::string, std::string>{{"table_format", "hive-iceberg"}},
         nullptr,
         /*cacheable=*/true,
         deleteFiles,
