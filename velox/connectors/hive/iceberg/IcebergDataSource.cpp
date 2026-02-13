@@ -53,7 +53,12 @@ std::unique_ptr<FileSplitReader> IcebergDataSource::createSplitReader() {
       ioStats_,
       fileHandleFactory_,
       ioExecutor_,
-      scanSpec_);
+      scanSpec_,
+      expressionEvaluator(),
+      totalRemainingFilterTime(),
+      infoColumns(),
+      bucketChannels(),
+      subfieldFiltersForValidation());
 
   return reader;
 }
