@@ -40,8 +40,8 @@ velox_add_library(
   HiveDataSink.cpp
   HiveDataSource.cpp
   HiveIndexSource.cpp
-  HivePartitionName.cpp
   HiveSplitReader.cpp
+  HivePartitionUtil.cpp
   PartitionIdGenerator.cpp
   TableHandle.cpp
   HEADERS
@@ -68,7 +68,6 @@ velox_add_library(
   HiveDataSource.h
   HiveIndexSource.h
   HivePartitionFunction.h
-  HivePartitionName.h
   HiveSplitReader.h
   IndexReader.h
   PartitionIdGenerator.h
@@ -84,6 +83,7 @@ velox_link_libraries(
     velox_exec
     velox_hive_partition_function
     velox_key_encoder
+  PUBLIC velox_hive_iceberg_splitreader
 )
 
 velox_add_library(velox_hive_partition_function HivePartitionFunction.cpp)
