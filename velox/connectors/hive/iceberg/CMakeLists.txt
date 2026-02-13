@@ -14,30 +14,13 @@
 
 velox_add_library(
   velox_hive_iceberg_splitreader
-  IcebergConfig.cpp
-  IcebergColumnHandle.cpp
-  IcebergConnector.cpp
   IcebergDataSink.cpp
-  IcebergDataSource.cpp
-  IcebergPartitionName.cpp
-  IcebergSplit.cpp
   IcebergSplitReader.cpp
-  PartitionSpec.cpp
+  IcebergSplit.cpp
   PositionalDeleteFileReader.cpp
-  TransformEvaluator.cpp
-  TransformExprBuilder.cpp
 )
 
-velox_link_libraries(
-  velox_hive_iceberg_splitreader
-  velox_connector
-  velox_functions_iceberg
-  Folly::folly
-)
-
-if(VELOX_ENABLE_PARQUET)
-  velox_link_libraries(velox_hive_iceberg_splitreader velox_dwio_parquet_field_id)
-endif()
+velox_link_libraries(velox_hive_iceberg_splitreader velox_connector Folly::folly)
 
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
