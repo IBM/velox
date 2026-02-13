@@ -31,8 +31,9 @@ struct HiveConnectorSplit;
 class HiveSplitReader : public FileSplitReader {
  public:
   /// Factory method to create the appropriate split reader based on split type.
-  /// For Iceberg splits (identified by customSplitInfo["table_format"] == "hive-iceberg"),
-  /// creates an IcebergSplitReader. Otherwise, creates a HiveSplitReader.
+  /// For Iceberg splits (identified by customSplitInfo["table_format"] ==
+  /// "hive-iceberg"), creates an IcebergSplitReader. Otherwise, creates a
+  /// HiveSplitReader.
   static std::unique_ptr<FileSplitReader> create(
       const std::shared_ptr<const HiveConnectorSplit>& hiveSplit,
       const FileTableHandlePtr& tableHandle,
