@@ -34,19 +34,19 @@
 namespace facebook::velox::parquet::arrow::util::internal {
 namespace {
 
-// ----------------------------------------------------------------------.
-// Gzip implementation.
+// ----------------------------------------------------------------------
+// gzip implementation
 
-// These are magic numbers from zlib.h.  Not clear why they are not defined.
-// There.
+// These are magic numbers from zlib.h.  Not clear why they are not defined
+// there.
 
-// Maximum window size.
+// Maximum window size
 constexpr int kGZipMaxWindowBits = 15;
 
-// Minimum window size.
+// Minimum window size
 constexpr int kGZipMinWindowBits = 9;
 
-// Default window size.
+// Default window size
 constexpr int kGZipDefaultWindowBits = 15;
 
 // Output Gzip.
@@ -58,41 +58,41 @@ constexpr int DETECT_CODEC = 32;
 constexpr int kGZipMinCompressionLevel = 1;
 constexpr int kGZipMaxCompressionLevel = 9;
 
-int compressionWindowBitsForFormat(GZipFormat format, int windowBits) {
+int CompressionWindowBitsForFormat(GZipFormat format, int window_bits) {
   switch (format) {
     case GZipFormat::DEFLATE:
-      windowBits = -windowBits;
+      window_bits = -window_bits;
       break;
     case GZipFormat::GZIP:
-      windowBits += GZIP_CODEC;
+      window_bits += GZIP_CODEC;
       break;
     case GZipFormat::ZLIB:
       break;
   }
-  return windowBits;
+  return window_bits;
 }
 
-int decompressionWindowBitsForFormat(GZipFormat format, int windowBits) {
+int DecompressionWindowBitsForFormat(GZipFormat format, int window_bits) {
   if (format == GZipFormat::DEFLATE) {
-    return -windowBits;
+    return -window_bits;
   } else {
     /* If not deflate, autodetect format from header */
-    return windowBits | DETECT_CODEC;
+    return window_bits | DETECT_CODEC;
   }
 }
 
-Status zlibErrorPrefix(const char* prefixMsg, const char* msg) {
-  return Status::IOError(prefixMsg, (msg) ? msg : "(unknown error)");
+Status ZlibErrorPrefix(const char* prefix_msg, const char* msg) {
+  return Status::IOError(prefix_msg, (msg) ? msg : "(unknown error)");
 }
 
-// ----------------------------------------------------------------------.
-// Gzip Decompressor implementation.
+// ----------------------------------------------------------------------
+// gzip decompressor implementation
 
 class GZipDecompressor : public Decompressor {
  public:
-  explicit GZipDecompressor(GZipFormat format, int windowBits)
+  explicit GZipDecompressor(GZipFormat format, int window_bits)
       : format_(format),
-        windowBits_(windowBits),
+        window_bits_(window_bits),
         initialized_(false),
         finished_(false) {}
 
@@ -102,88 +102,88 @@ class GZipDecompressor : public Decompressor {
     }
   }
 
-  Status init() {
+  Status Init() {
     VELOX_DCHECK(!initialized_);
     memset(&stream_, 0, sizeof(stream_));
     finished_ = false;
 
     int ret;
-    int windowBits = decompressionWindowBitsForFormat(format_, windowBits_);
-    if ((ret = inflateInit2(&stream_, windowBits)) != Z_OK) {
-      return zlibError("zlib inflateInit failed: ");
+    int window_bits = DecompressionWindowBitsForFormat(format_, window_bits_);
+    if ((ret = inflateInit2(&stream_, window_bits)) != Z_OK) {
+      return ZlibError("zlib inflateInit failed: ");
     } else {
       initialized_ = true;
       return Status::OK();
     }
   }
 
-  Status reset() override {
+  Status Reset() override {
     VELOX_DCHECK(initialized_);
     finished_ = false;
     int ret;
     if ((ret = inflateReset(&stream_)) != Z_OK) {
-      return zlibError("zlib inflateReset failed: ");
+      return ZlibError("zlib inflateReset failed: ");
     } else {
       return Status::OK();
     }
   }
 
-  Result<DecompressResult> decompress(
-      int64_t inputLen,
+  Result<DecompressResult> Decompress(
+      int64_t input_len,
       const uint8_t* input,
-      int64_t outputLen,
+      int64_t output_len,
       uint8_t* output) override {
-    static constexpr auto inputLimit =
+    static constexpr auto input_limit =
         static_cast<int64_t>(std::numeric_limits<uInt>::max());
     stream_.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(input));
-    stream_.avail_in = static_cast<uInt>(std::min(inputLen, inputLimit));
+    stream_.avail_in = static_cast<uInt>(std::min(input_len, input_limit));
     stream_.next_out = reinterpret_cast<Bytef*>(output);
-    stream_.avail_out = static_cast<uInt>(std::min(outputLen, inputLimit));
+    stream_.avail_out = static_cast<uInt>(std::min(output_len, input_limit));
     int ret;
 
     ret = inflate(&stream_, Z_SYNC_FLUSH);
     if (ret == Z_DATA_ERROR || ret == Z_STREAM_ERROR || ret == Z_MEM_ERROR) {
-      return zlibError("zlib inflate failed: ");
+      return ZlibError("zlib inflate failed: ");
     }
     if (ret == Z_NEED_DICT) {
-      return zlibError("zlib inflate failed (need preset dictionary): ");
+      return ZlibError("zlib inflate failed (need preset dictionary): ");
     }
     finished_ = (ret == Z_STREAM_END);
     if (ret == Z_BUF_ERROR) {
-      // No progress was possible.
+      // No progress was possible
       return DecompressResult{0, 0, true};
     } else {
       VELOX_DCHECK(ret == Z_OK || ret == Z_STREAM_END);
-      // Some progress has been made.
+      // Some progress has been made
       return DecompressResult{
-          inputLen - stream_.avail_in, outputLen - stream_.avail_out, false};
+          input_len - stream_.avail_in, output_len - stream_.avail_out, false};
     }
     return Status::OK();
   }
 
-  bool isFinished() override {
+  bool IsFinished() override {
     return finished_;
   }
 
  protected:
-  Status zlibError(const char* prefixMsg) {
-    return zlibErrorPrefix(prefixMsg, stream_.msg);
+  Status ZlibError(const char* prefix_msg) {
+    return ZlibErrorPrefix(prefix_msg, stream_.msg);
   }
 
   z_stream stream_;
   GZipFormat format_;
-  int windowBits_;
+  int window_bits_;
   bool initialized_;
   bool finished_;
 };
 
-// ----------------------------------------------------------------------.
-// Gzip Compressor implementation.
+// ----------------------------------------------------------------------
+// gzip compressor implementation
 
 class GZipCompressor : public Compressor {
  public:
-  explicit GZipCompressor(int compressionLevel)
-      : initialized_(false), compressionLevel_(compressionLevel) {}
+  explicit GZipCompressor(int compression_level)
+      : initialized_(false), compression_level_(compression_level) {}
 
   ~GZipCompressor() override {
     if (initialized_) {
@@ -191,377 +191,378 @@ class GZipCompressor : public Compressor {
     }
   }
 
-  Status init(GZipFormat format, int inputWindowBits) {
+  Status Init(GZipFormat format, int input_window_bits) {
     VELOX_DCHECK(!initialized_);
     memset(&stream_, 0, sizeof(stream_));
 
     int ret;
-    // Initialize to run specified format.
-    int windowBits = compressionWindowBitsForFormat(format, inputWindowBits);
+    // Initialize to run specified format
+    int window_bits = CompressionWindowBitsForFormat(format, input_window_bits);
     if ((ret = deflateInit2(
              &stream_,
              Z_DEFAULT_COMPRESSION,
              Z_DEFLATED,
-             windowBits,
-             compressionLevel_,
+             window_bits,
+             compression_level_,
              Z_DEFAULT_STRATEGY)) != Z_OK) {
-      return zlibError("zlib deflateInit failed: ");
+      return ZlibError("zlib deflateInit failed: ");
     } else {
       initialized_ = true;
       return Status::OK();
     }
   }
 
-  Result<CompressResult> compress(
-      int64_t inputLen,
+  Result<CompressResult> Compress(
+      int64_t input_len,
       const uint8_t* input,
-      int64_t outputLen,
+      int64_t output_len,
       uint8_t* output) override {
     VELOX_DCHECK(initialized_, "Called on non-initialized stream");
 
-    static constexpr auto inputLimit =
+    static constexpr auto input_limit =
         static_cast<int64_t>(std::numeric_limits<uInt>::max());
 
     stream_.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(input));
-    stream_.avail_in = static_cast<uInt>(std::min(inputLen, inputLimit));
+    stream_.avail_in = static_cast<uInt>(std::min(input_len, input_limit));
     stream_.next_out = reinterpret_cast<Bytef*>(output);
-    stream_.avail_out = static_cast<uInt>(std::min(outputLen, inputLimit));
+    stream_.avail_out = static_cast<uInt>(std::min(output_len, input_limit));
 
     int64_t ret = 0;
     ret = deflate(&stream_, Z_NO_FLUSH);
     if (ret == Z_STREAM_ERROR) {
-      return zlibError("zlib compress failed: ");
+      return ZlibError("zlib compress failed: ");
     }
     if (ret == Z_OK) {
-      // Some progress has been made.
+      // Some progress has been made
       return CompressResult{
-          inputLen - stream_.avail_in, outputLen - stream_.avail_out};
+          input_len - stream_.avail_in, output_len - stream_.avail_out};
     } else {
-      // No progress was possible.
+      // No progress was possible
       VELOX_DCHECK_EQ(ret, Z_BUF_ERROR);
       return CompressResult{0, 0};
     }
   }
 
-  Result<FlushResult> flush(int64_t outputLen, uint8_t* output) override {
+  Result<FlushResult> Flush(int64_t output_len, uint8_t* output) override {
     VELOX_DCHECK(initialized_, "Called on non-initialized stream");
 
-    static constexpr auto inputLimit =
+    static constexpr auto input_limit =
         static_cast<int64_t>(std::numeric_limits<uInt>::max());
 
     stream_.avail_in = 0;
     stream_.next_out = reinterpret_cast<Bytef*>(output);
-    stream_.avail_out = static_cast<uInt>(std::min(outputLen, inputLimit));
+    stream_.avail_out = static_cast<uInt>(std::min(output_len, input_limit));
 
     int64_t ret = 0;
     ret = deflate(&stream_, Z_SYNC_FLUSH);
     if (ret == Z_STREAM_ERROR) {
-      return zlibError("zlib flush failed: ");
+      return ZlibError("zlib flush failed: ");
     }
-    int64_t bytesWritten;
+    int64_t bytes_written;
     if (ret == Z_OK) {
-      bytesWritten = outputLen - stream_.avail_out;
+      bytes_written = output_len - stream_.avail_out;
     } else {
       VELOX_DCHECK_EQ(ret, Z_BUF_ERROR);
-      bytesWritten = 0;
+      bytes_written = 0;
     }
-    // "If deflate returns with avail_out == 0, this function must be called.
-    //  Again with the same value of the flush parameter and more output space.
-    //  (Updated avail_out), until the flush is complete (deflate returns.
-    //  With non-zero avail_out).".
-    // "Note that Z_BUF_ERROR is not fatal, and deflate() can be called again.
-    //  With more input and more output space to continue compressing.".
-    return FlushResult{bytesWritten, stream_.avail_out == 0};
+    // "If deflate returns with avail_out == 0, this function must be called
+    //  again with the same value of the flush parameter and more output space
+    //  (updated avail_out), until the flush is complete (deflate returns
+    //  with non-zero avail_out)."
+    // "Note that Z_BUF_ERROR is not fatal, and deflate() can be called again
+    //  with more input and more output space to continue compressing."
+    return FlushResult{bytes_written, stream_.avail_out == 0};
   }
 
-  Result<EndResult> end(int64_t outputLen, uint8_t* output) override {
+  Result<EndResult> End(int64_t output_len, uint8_t* output) override {
     VELOX_DCHECK(initialized_, "Called on non-initialized stream");
 
-    static constexpr auto inputLimit =
+    static constexpr auto input_limit =
         static_cast<int64_t>(std::numeric_limits<uInt>::max());
 
     stream_.avail_in = 0;
     stream_.next_out = reinterpret_cast<Bytef*>(output);
-    stream_.avail_out = static_cast<uInt>(std::min(outputLen, inputLimit));
+    stream_.avail_out = static_cast<uInt>(std::min(output_len, input_limit));
 
     int64_t ret = 0;
     ret = deflate(&stream_, Z_FINISH);
     if (ret == Z_STREAM_ERROR) {
-      return zlibError("zlib flush failed: ");
+      return ZlibError("zlib flush failed: ");
     }
-    int64_t bytesWritten = outputLen - stream_.avail_out;
+    int64_t bytes_written = output_len - stream_.avail_out;
     if (ret == Z_STREAM_END) {
-      // Flush complete, we can now end the stream.
+      // Flush complete, we can now end the stream
       initialized_ = false;
       ret = deflateEnd(&stream_);
       if (ret == Z_OK) {
-        return EndResult{bytesWritten, false};
+        return EndResult{bytes_written, false};
       } else {
-        return zlibError("zlib end failed: ");
+        return ZlibError("zlib end failed: ");
       }
     } else {
-      // Not everything could be flushed,.
-      return EndResult{bytesWritten, true};
+      // Not everything could be flushed,
+      return EndResult{bytes_written, true};
     }
   }
 
  protected:
-  Status zlibError(const char* prefixMsg) {
-    return zlibErrorPrefix(prefixMsg, stream_.msg);
+  Status ZlibError(const char* prefix_msg) {
+    return ZlibErrorPrefix(prefix_msg, stream_.msg);
   }
 
   z_stream stream_;
   bool initialized_;
-  int compressionLevel_;
+  int compression_level_;
 };
 
-// ----------------------------------------------------------------------.
-// Gzip codec implementation.
+// ----------------------------------------------------------------------
+// gzip codec implementation
 
 class GZipCodec : public Codec {
  public:
-  explicit GZipCodec(int compressionLevel, GZipFormat format, int windowBits)
+  explicit GZipCodec(int compression_level, GZipFormat format, int window_bits)
       : format_(format),
-        windowBits_(windowBits),
-        compressorInitialized_(false),
-        decompressorInitialized_(false) {
-    compressionLevel_ = compressionLevel == kUseDefaultCompressionLevel
+        window_bits_(window_bits),
+        compressor_initialized_(false),
+        decompressor_initialized_(false) {
+    compression_level_ = compression_level == kUseDefaultCompressionLevel
         ? kGZipDefaultCompressionLevel
-        : compressionLevel;
+        : compression_level;
   }
 
   ~GZipCodec() override {
-    endCompressor();
-    endDecompressor();
+    EndCompressor();
+    EndDecompressor();
   }
 
-  Result<std::shared_ptr<Compressor>> makeCompressor() override {
-    auto ptr = std::make_shared<GZipCompressor>(compressionLevel_);
-    RETURN_NOT_OK(ptr->init(format_, windowBits_));
+  Result<std::shared_ptr<Compressor>> MakeCompressor() override {
+    auto ptr = std::make_shared<GZipCompressor>(compression_level_);
+    RETURN_NOT_OK(ptr->Init(format_, window_bits_));
     return ptr;
   }
 
-  Result<std::shared_ptr<Decompressor>> makeDecompressor() override {
-    auto ptr = std::make_shared<GZipDecompressor>(format_, windowBits_);
-    RETURN_NOT_OK(ptr->init());
+  Result<std::shared_ptr<Decompressor>> MakeDecompressor() override {
+    auto ptr = std::make_shared<GZipDecompressor>(format_, window_bits_);
+    RETURN_NOT_OK(ptr->Init());
     return ptr;
   }
 
-  Status initCompressor() {
-    endDecompressor();
+  Status InitCompressor() {
+    EndDecompressor();
     memset(&stream_, 0, sizeof(stream_));
 
     int ret;
-    // Initialize to run specified format.
-    int windowBits = compressionWindowBitsForFormat(format_, windowBits_);
+    // Initialize to run specified format
+    int window_bits = CompressionWindowBitsForFormat(format_, window_bits_);
     if ((ret = deflateInit2(
              &stream_,
              Z_DEFAULT_COMPRESSION,
              Z_DEFLATED,
-             windowBits,
-             compressionLevel_,
+             window_bits,
+             compression_level_,
              Z_DEFAULT_STRATEGY)) != Z_OK) {
-      return zlibErrorPrefix("zlib deflateInit failed: ", stream_.msg);
+      return ZlibErrorPrefix("zlib deflateInit failed: ", stream_.msg);
     }
-    compressorInitialized_ = true;
+    compressor_initialized_ = true;
     return Status::OK();
   }
 
-  void endCompressor() {
-    if (compressorInitialized_) {
+  void EndCompressor() {
+    if (compressor_initialized_) {
       static_cast<void>(deflateEnd(&stream_));
     }
-    compressorInitialized_ = false;
+    compressor_initialized_ = false;
   }
 
-  Status initDecompressor() {
-    endCompressor();
+  Status InitDecompressor() {
+    EndCompressor();
     memset(&stream_, 0, sizeof(stream_));
     int ret;
 
-    // Initialize to run either deflate or zlib/gzip format.
-    int windowBits = decompressionWindowBitsForFormat(format_, windowBits_);
-    if ((ret = inflateInit2(&stream_, windowBits)) != Z_OK) {
-      return zlibErrorPrefix("zlib inflateInit failed: ", stream_.msg);
+    // Initialize to run either deflate or zlib/gzip format
+    int window_bits = DecompressionWindowBitsForFormat(format_, window_bits_);
+    if ((ret = inflateInit2(&stream_, window_bits)) != Z_OK) {
+      return ZlibErrorPrefix("zlib inflateInit failed: ", stream_.msg);
     }
-    decompressorInitialized_ = true;
+    decompressor_initialized_ = true;
     return Status::OK();
   }
 
-  void endDecompressor() {
-    if (decompressorInitialized_) {
+  void EndDecompressor() {
+    if (decompressor_initialized_) {
       static_cast<void>(inflateEnd(&stream_));
     }
-    decompressorInitialized_ = false;
+    decompressor_initialized_ = false;
   }
 
-  Result<int64_t> decompress(
-      int64_t inputLength,
+  Result<int64_t> Decompress(
+      int64_t input_length,
       const uint8_t* input,
-      int64_t outputBufferLength,
+      int64_t output_buffer_length,
       uint8_t* output) override {
-    if (!decompressorInitialized_) {
-      RETURN_NOT_OK(initDecompressor());
+    if (!decompressor_initialized_) {
+      RETURN_NOT_OK(InitDecompressor());
     }
-    if (outputBufferLength == 0) {
-      // The zlib library does not allow *output to be NULL, even when.
-      // Output_buffer_length is 0 (inflate() will return Z_STREAM_ERROR). We.
-      // Don't consider this an error, so bail early if no output is expected.
-      // Note that we don't signal an error if the input actually contains.
-      // Compressed data.
+    if (output_buffer_length == 0) {
+      // The zlib library does not allow *output to be NULL, even when
+      // output_buffer_length is 0 (inflate() will return Z_STREAM_ERROR). We
+      // don't consider this an error, so bail early if no output is expected.
+      // Note that we don't signal an error if the input actually contains
+      // compressed data.
       return 0;
     }
 
-    // Reset the stream for this block.
+    // Reset the stream for this block
     if (inflateReset(&stream_) != Z_OK) {
-      return zlibErrorPrefix("zlib inflateReset failed: ", stream_.msg);
+      return ZlibErrorPrefix("zlib inflateReset failed: ", stream_.msg);
     }
 
     int ret = 0;
-    // Gzip can run in streaming mode or non-streaming mode.  We only.
-    // Support the non-streaming use case where we present it the entire.
-    // Compressed input and a buffer big enough to contain the entire.
-    // Compressed output.  In the case where we don't know the output,.
-    // We just make a bigger buffer and try the non-streaming mode.
-    // From the beginning again.
+    // gzip can run in streaming mode or non-streaming mode.  We only
+    // support the non-streaming use case where we present it the entire
+    // compressed input and a buffer big enough to contain the entire
+    // compressed output.  In the case where we don't know the output,
+    // we just make a bigger buffer and try the non-streaming mode
+    // from the beginning again.
     while (ret != Z_STREAM_END) {
       stream_.next_in =
           const_cast<Bytef*>(reinterpret_cast<const Bytef*>(input));
-      stream_.avail_in = static_cast<uInt>(inputLength);
+      stream_.avail_in = static_cast<uInt>(input_length);
       stream_.next_out = reinterpret_cast<Bytef*>(output);
-      stream_.avail_out = static_cast<uInt>(outputBufferLength);
+      stream_.avail_out = static_cast<uInt>(output_buffer_length);
 
-      // We know the output size.  In this case, we can use Z_FINISH.
-      // Which is more efficient.
+      // We know the output size.  In this case, we can use Z_FINISH
+      // which is more efficient.
       ret = inflate(&stream_, Z_FINISH);
       if (ret == Z_STREAM_END || ret != Z_OK) {
         break;
       }
 
-      // Failure, buffer was too small.
+      // Failure, buffer was too small
       return Status::IOError(
           "Too small a buffer passed to GZipCodec. InputLength=",
-          inputLength,
+          input_length,
           " OutputLength=",
-          outputBufferLength);
+          output_buffer_length);
     }
 
-    // Failure for some other reason.
+    // Failure for some other reason
     if (ret != Z_STREAM_END) {
-      return zlibErrorPrefix("GZipCodec failed: ", stream_.msg);
+      return ZlibErrorPrefix("GZipCodec failed: ", stream_.msg);
     }
 
     return stream_.total_out;
   }
 
-  int64_t maxCompressedLen(
-      int64_t inputLength,
+  int64_t MaxCompressedLen(
+      int64_t input_length,
       const uint8_t* ARROW_ARG_UNUSED(input)) override {
-    // Must be in compression mode.
-    if (!compressorInitialized_) {
-      Status s = initCompressor();
+    // Must be in compression mode
+    if (!compressor_initialized_) {
+      Status s = InitCompressor();
       VELOX_DCHECK(s.ok(), s.ToString());
     }
-    int64_t maxLen = deflateBound(&stream_, static_cast<uLong>(inputLength));
-    // ARROW-3514: return a more pessimistic estimate to account for bugs.
-    // In old zlib versions.
-    return maxLen + 12;
+    int64_t max_len = deflateBound(&stream_, static_cast<uLong>(input_length));
+    // ARROW-3514: return a more pessimistic estimate to account for bugs
+    // in old zlib versions.
+    return max_len + 12;
   }
 
-  Result<int64_t> compress(
-      int64_t inputLength,
+  Result<int64_t> Compress(
+      int64_t input_length,
       const uint8_t* input,
-      int64_t outputBufferLen,
+      int64_t output_buffer_len,
       uint8_t* output) override {
-    if (!compressorInitialized_) {
-      RETURN_NOT_OK(initCompressor());
+    if (!compressor_initialized_) {
+      RETURN_NOT_OK(InitCompressor());
     }
     stream_.next_in = const_cast<Bytef*>(reinterpret_cast<const Bytef*>(input));
-    stream_.avail_in = static_cast<uInt>(inputLength);
+    stream_.avail_in = static_cast<uInt>(input_length);
     stream_.next_out = reinterpret_cast<Bytef*>(output);
-    stream_.avail_out = static_cast<uInt>(outputBufferLen);
+    stream_.avail_out = static_cast<uInt>(output_buffer_len);
 
     int64_t ret = 0;
     if ((ret = deflate(&stream_, Z_FINISH)) != Z_STREAM_END) {
       if (ret == Z_OK) {
-        // Will return Z_OK (and stream.msg NOT set) if stream.avail_out is too.
-        // Small.
+        // Will return Z_OK (and stream.msg NOT set) if stream.avail_out is too
+        // small
         return Status::IOError("zlib deflate failed, output buffer too small");
       }
 
-      return zlibErrorPrefix("zlib deflate failed: ", stream_.msg);
+      return ZlibErrorPrefix("zlib deflate failed: ", stream_.msg);
     }
 
     if (deflateReset(&stream_) != Z_OK) {
-      return zlibErrorPrefix("zlib deflateReset failed: ", stream_.msg);
+      return ZlibErrorPrefix("zlib deflateReset failed: ", stream_.msg);
     }
 
-    // Actual output length.
-    return outputBufferLen - stream_.avail_out;
+    // Actual output length
+    return output_buffer_len - stream_.avail_out;
   }
 
-  Status init() override {
-    if (windowBits_ < kGZipMinWindowBits || windowBits_ > kGZipMaxWindowBits) {
+  Status Init() override {
+    if (window_bits_ < kGZipMinWindowBits ||
+        window_bits_ > kGZipMaxWindowBits) {
       return Status::Invalid(
           "GZip window_bits should be between ",
           kGZipMinWindowBits,
           " and ",
           kGZipMaxWindowBits);
     }
-    const Status initCompressorStatus = initCompressor();
-    if (!initCompressorStatus.ok()) {
-      return initCompressorStatus;
+    const Status init_compressor_status = InitCompressor();
+    if (!init_compressor_status.ok()) {
+      return init_compressor_status;
     }
-    return initDecompressor();
+    return InitDecompressor();
   }
 
-  Compression::type compressionType() const override {
+  Compression::type compression_type() const override {
     return Compression::GZIP;
   }
 
-  int compressionLevel() const override {
-    return compressionLevel_;
+  int compression_level() const override {
+    return compression_level_;
   }
-  int minimumCompressionLevel() const override {
+  int minimum_compression_level() const override {
     return kGZipMinCompressionLevel;
   }
-  int maximumCompressionLevel() const override {
+  int maximum_compression_level() const override {
     return kGZipMaxCompressionLevel;
   }
-  int defaultCompressionLevel() const override {
+  int default_compression_level() const override {
     return kGZipDefaultCompressionLevel;
   }
 
  private:
-  // Zlib is stateful and the z_stream state variable must be initialized.
-  // Before.
+  // zlib is stateful and the z_stream state variable must be initialized
+  // before
   z_stream stream_;
 
-  // Realistically, this will always be GZIP, but we leave the option open to.
-  // Configure.
+  // Realistically, this will always be GZIP, but we leave the option open to
+  // configure
   GZipFormat format_;
 
-  // These variables are mutually exclusive. When the codec is in "Compressor".
-  // State, compressor_initialized_ is true while decompressor_initialized_ is.
-  // False. When it's decompressing, the opposite is true.
+  // These variables are mutually exclusive. When the codec is in "compressor"
+  // state, compressor_initialized_ is true while decompressor_initialized_ is
+  // false. When it's decompressing, the opposite is true.
   //
-  // Indeed, this is slightly hacky, but the alternative is having separate.
-  // Compressor and Decompressor classes. If this ever becomes an issue, we can.
-  // Perform the refactoring then.
-  int windowBits_;
-  bool compressorInitialized_;
-  bool decompressorInitialized_;
-  int compressionLevel_;
+  // Indeed, this is slightly hacky, but the alternative is having separate
+  // Compressor and Decompressor classes. If this ever becomes an issue, we can
+  // perform the refactoring then
+  int window_bits_;
+  bool compressor_initialized_;
+  bool decompressor_initialized_;
+  int compression_level_;
 };
 
 } // namespace
 
-std::unique_ptr<Codec> makeGZipCodec(
-    int compressionLevel,
+std::unique_ptr<Codec> MakeGZipCodec(
+    int compression_level,
     GZipFormat format,
-    std::optional<int> windowBits) {
+    std::optional<int> window_bits) {
   return std::make_unique<GZipCodec>(
-      compressionLevel, format, windowBits.value_or(kGZipDefaultWindowBits));
+      compression_level, format, window_bits.value_or(kGZipDefaultWindowBits));
 }
 
 } // namespace facebook::velox::parquet::arrow::util::internal

@@ -25,7 +25,7 @@
 #include "velox/dwio/common/Options.h"
 #include "velox/dwio/common/Writer.h"
 #include "velox/dwio/common/WriterFactory.h"
-#include "velox/dwio/parquet/ParquetFieldId.h"
+#include "velox/dwio/parquet/writer/ParquetFieldId.h"
 #include "velox/dwio/parquet/writer/arrow/Types.h"
 #include "velox/dwio/parquet/writer/arrow/util/Compression.h"
 #include "velox/vector/ComplexVector.h"
@@ -95,7 +95,7 @@ struct WriterOptions : public dwio::common::WriterOptions {
   // folly/FBVector(https://github.com/facebook/folly/blob/main/folly/docs/FBVector.md#memory-handling).
   double bufferGrowRatio = 1.5;
 
-  arrow::Encoding::type encoding = arrow::Encoding::kPlain;
+  arrow::Encoding::type encoding = arrow::Encoding::PLAIN;
 
   std::shared_ptr<CodecOptions> codecOptions;
   std::unordered_map<std::string, common::CompressionKind>
@@ -153,15 +153,6 @@ struct WriterOptions : public dwio::common::WriterOptions {
       "hive.parquet.writer.batch-size";
   static constexpr const char* kParquetHiveConnectorCreatedBy =
       "hive.parquet.writer.created-by";
-
-  // Serde parameter keys for timestamp settings. These can be set via
-  // serdeParameters map to override the default timestamp behavior.
-  // The timezone key accepts a timezone string or empty string to disable
-  // timezone conversion.
-  static constexpr const char* kParquetSerdeTimestampUnit =
-      "parquet.writer.timestamp.unit";
-  static constexpr const char* kParquetSerdeTimestampTimezone =
-      "parquet.writer.timestamp.timezone";
 
   // Process hive connector and session configs.
   void processConfigs(

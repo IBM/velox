@@ -36,7 +36,7 @@
 namespace facebook::velox::parquet::arrow {
 namespace test {
 
-const char* getDataDir() {
+const char* get_data_dir() {
   const auto result = std::getenv("PARQUET_TEST_DATA");
   if (!result || !result[0]) {
     throw ParquetTestException(
@@ -46,30 +46,30 @@ const char* getDataDir() {
   return result;
 }
 
-std::string getBadDataDir() {
-  // PARQUET_TEST_DATA should point to.
-  // ARROW_HOME/cpp/submodules/parquet-testing/data so need to reach one folder.
-  // Up to access the "bad_data" folder.
-  std::string dataDir(getDataDir());
+std::string get_bad_data_dir() {
+  // PARQUET_TEST_DATA should point to
+  // ARROW_HOME/cpp/submodules/parquet-testing/data so need to reach one folder
+  // up to access the "bad_data" folder.
+  std::string data_dir(get_data_dir());
   std::stringstream ss;
-  ss << dataDir << "/../bad_data";
+  ss << data_dir << "/../bad_data";
   return ss.str();
 }
 
-std::string getDataFile(const std::string& filename, bool isGood) {
+std::string get_data_file(const std::string& filename, bool is_good) {
   std::stringstream ss;
 
-  if (isGood) {
-    ss << getDataDir();
+  if (is_good) {
+    ss << get_data_dir();
   } else {
-    ss << getBadDataDir();
+    ss << get_bad_data_dir();
   }
 
   ss << "/" << filename;
   return ss.str();
 }
 
-void randomBytes(int n, uint32_t seed, std::vector<uint8_t>* out) {
+void random_bytes(int n, uint32_t seed, std::vector<uint8_t>* out) {
   std::default_random_engine gen(seed);
   std::uniform_int_distribution<int> d(0, 255);
 
@@ -79,7 +79,7 @@ void randomBytes(int n, uint32_t seed, std::vector<uint8_t>* out) {
   }
 }
 
-void randomBools(int n, double p, uint32_t seed, bool* out) {
+void random_bools(int n, double p, uint32_t seed, bool* out) {
   std::default_random_engine gen(seed);
   std::bernoulli_distribution d(p);
   for (int i = 0; i < n; ++i) {
@@ -87,14 +87,14 @@ void randomBools(int n, double p, uint32_t seed, bool* out) {
   }
 }
 
-void randomInt96Numbers(
+void random_Int96_numbers(
     int n,
     uint32_t seed,
-    int32_t minValue,
-    int32_t maxValue,
+    int32_t min_value,
+    int32_t max_value,
     Int96* out) {
   std::default_random_engine gen(seed);
-  std::uniform_int_distribution<int32_t> d(minValue, maxValue);
+  std::uniform_int_distribution<int32_t> d(min_value, max_value);
   for (int i = 0; i < n; ++i) {
     out[i].value[0] = d(gen);
     out[i].value[1] = d(gen);
@@ -102,7 +102,7 @@ void randomInt96Numbers(
   }
 }
 
-void randomFixedByteArray(
+void random_fixed_byte_array(
     int n,
     uint32_t seed,
     uint8_t* buf,
@@ -119,15 +119,15 @@ void randomFixedByteArray(
   }
 }
 
-void randomByteArray(
+void random_byte_array(
     int n,
     uint32_t seed,
     uint8_t* buf,
     ByteArray* out,
-    int minSize,
-    int maxSize) {
+    int min_size,
+    int max_size) {
   std::default_random_engine gen(seed);
-  std::uniform_int_distribution<int> d1(minSize, maxSize);
+  std::uniform_int_distribution<int> d1(min_size, max_size);
   std::uniform_int_distribution<int> d2(0, 255);
   for (int i = 0; i < n; ++i) {
     int len = d1(gen);
@@ -140,13 +140,13 @@ void randomByteArray(
   }
 }
 
-void randomByteArray(
+void random_byte_array(
     int n,
     uint32_t seed,
     uint8_t* buf,
     ByteArray* out,
-    int maxSize) {
-  randomByteArray(n, seed, buf, out, 0, maxSize);
+    int max_size) {
+  random_byte_array(n, seed, buf, out, 0, max_size);
 }
 
 } // namespace test

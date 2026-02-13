@@ -40,178 +40,178 @@ class RowGroupMetaData;
 
 class PARQUET_EXPORT RowGroupReader {
  public:
-  // Forward declare a virtual class 'Contents' to aid dependency injection and.
-  // More easily create test fixtures An implementation of the Contents class
-  // is. Defined in the .cc file.
+  // Forward declare a virtual class 'Contents' to aid dependency injection and
+  // more easily create test fixtures An implementation of the Contents class is
+  // defined in the .cc file
   struct Contents {
     virtual ~Contents() {}
-    virtual std::unique_ptr<PageReader> getColumnPageReader(int i) = 0;
+    virtual std::unique_ptr<PageReader> GetColumnPageReader(int i) = 0;
     virtual const RowGroupMetaData* metadata() const = 0;
     virtual const ReaderProperties* properties() const = 0;
   };
 
   explicit RowGroupReader(std::unique_ptr<Contents> contents);
 
-  // Returns the rowgroup metadata.
+  // Returns the rowgroup metadata
   const RowGroupMetaData* metadata() const;
 
-  // Construct a ColumnReader for the indicated row group-relative.
-  // Column. Ownership is shared with the RowGroupReader.
-  std::shared_ptr<ColumnReader> column(int i);
+  // Construct a ColumnReader for the indicated row group-relative
+  // column. Ownership is shared with the RowGroupReader.
+  std::shared_ptr<ColumnReader> Column(int i);
 
   // Construct a ColumnReader, trying to enable exposed encoding.
   //
-  // For dictionary encoding, currently we only support column chunks that are.
-  // Fully dictionary encoded, i.e., all data pages in the column chunk are.
-  // Dictionary encoded. If a column chunk uses dictionary encoding but then.
-  // Falls back to plain encoding, the encoding will not be exposed.
+  // For dictionary encoding, currently we only support column chunks that are
+  // fully dictionary encoded, i.e., all data pages in the column chunk are
+  // dictionary encoded. If a column chunk uses dictionary encoding but then
+  // falls back to plain encoding, the encoding will not be exposed.
   //
-  // The returned column reader provides an API GetExposedEncoding() for the.
-  // Users to check the exposed encoding and determine how to read the batches.
+  // The returned column reader provides an API GetExposedEncoding() for the
+  // users to check the exposed encoding and determine how to read the batches.
   //
-  // \note API EXPERIMENTAL.
-  std::shared_ptr<ColumnReader> columnWithExposeEncoding(
+  // \note API EXPERIMENTAL
+  std::shared_ptr<ColumnReader> ColumnWithExposeEncoding(
       int i,
-      ExposedEncoding encodingToExpose);
+      ExposedEncoding encoding_to_expose);
 
-  std::unique_ptr<PageReader> getColumnPageReader(int i);
+  std::unique_ptr<PageReader> GetColumnPageReader(int i);
 
  private:
-  // Holds a pointer to an instance of Contents implementation.
+  // Holds a pointer to an instance of Contents implementation
   std::unique_ptr<Contents> contents_;
 };
 
 class PARQUET_EXPORT ParquetFileReader {
  public:
-  // Declare a virtual class 'Contents' to aid dependency injection and more.
-  // Easily create test fixtures.
-  // An implementation of the Contents class is defined in the .cc file.
+  // Declare a virtual class 'Contents' to aid dependency injection and more
+  // easily create test fixtures
+  // An implementation of the Contents class is defined in the .cc file
   struct PARQUET_EXPORT Contents {
-    static std::unique_ptr<Contents> open(
+    static std::unique_ptr<Contents> Open(
         std::shared_ptr<::arrow::io::RandomAccessFile> source,
-        const ReaderProperties& props = defaultReaderProperties(),
+        const ReaderProperties& props = default_reader_properties(),
         std::shared_ptr<FileMetaData> metadata = NULLPTR);
 
-    static ::arrow::Future<std::unique_ptr<Contents>> openAsync(
+    static ::arrow::Future<std::unique_ptr<Contents>> OpenAsync(
         std::shared_ptr<::arrow::io::RandomAccessFile> source,
-        const ReaderProperties& props = defaultReaderProperties(),
+        const ReaderProperties& props = default_reader_properties(),
         std::shared_ptr<FileMetaData> metadata = NULLPTR);
 
     virtual ~Contents() = default;
-    // Perform any cleanup associated with the file contents.
-    virtual void close() = 0;
-    virtual std::shared_ptr<RowGroupReader> getRowGroup(int i) = 0;
+    // Perform any cleanup associated with the file contents
+    virtual void Close() = 0;
+    virtual std::shared_ptr<RowGroupReader> GetRowGroup(int i) = 0;
     virtual std::shared_ptr<FileMetaData> metadata() const = 0;
-    virtual std::shared_ptr<PageIndexReader> getPageIndexReader() = 0;
-    virtual BloomFilterReader& getBloomFilterReader() = 0;
+    virtual std::shared_ptr<PageIndexReader> GetPageIndexReader() = 0;
+    virtual BloomFilterReader& GetBloomFilterReader() = 0;
   };
 
   ParquetFileReader();
   ~ParquetFileReader();
 
-  // Create a file reader instance from an Arrow file object. Thread-safety is.
-  // The responsibility of the file implementation.
-  static std::unique_ptr<ParquetFileReader> open(
+  // Create a file reader instance from an Arrow file object. Thread-safety is
+  // the responsibility of the file implementation
+  static std::unique_ptr<ParquetFileReader> Open(
       std::shared_ptr<::arrow::io::RandomAccessFile> source,
-      const ReaderProperties& props = defaultReaderProperties(),
+      const ReaderProperties& props = default_reader_properties(),
       std::shared_ptr<FileMetaData> metadata = NULLPTR);
 
-  // API Convenience to open a serialized Parquet file on disk, using Arrow IO.
-  // Interfaces.
-  static std::unique_ptr<ParquetFileReader> openFile(
+  // API Convenience to open a serialized Parquet file on disk, using Arrow IO
+  // interfaces.
+  static std::unique_ptr<ParquetFileReader> OpenFile(
       const std::string& path,
-      bool memoryMap = false,
-      const ReaderProperties& props = defaultReaderProperties(),
+      bool memory_map = false,
+      const ReaderProperties& props = default_reader_properties(),
       std::shared_ptr<FileMetaData> metadata = NULLPTR);
 
   // Asynchronously open a file reader from an Arrow file object.
   // Does not throw - all errors are reported through the Future.
-  static ::arrow::Future<std::unique_ptr<ParquetFileReader>> openAsync(
+  static ::arrow::Future<std::unique_ptr<ParquetFileReader>> OpenAsync(
       std::shared_ptr<::arrow::io::RandomAccessFile> source,
-      const ReaderProperties& props = defaultReaderProperties(),
+      const ReaderProperties& props = default_reader_properties(),
       std::shared_ptr<FileMetaData> metadata = NULLPTR);
 
-  void open(std::unique_ptr<Contents> contents);
-  void close();
+  void Open(std::unique_ptr<Contents> contents);
+  void Close();
 
-  // The RowGroupReader is owned by the FileReader.
-  std::shared_ptr<RowGroupReader> rowGroup(int i);
+  // The RowGroupReader is owned by the FileReader
+  std::shared_ptr<RowGroupReader> RowGroup(int i);
 
-  // Returns the file metadata. Only one instance is ever created.
+  // Returns the file metadata. Only one instance is ever created
   std::shared_ptr<FileMetaData> metadata() const;
 
   /// Returns the PageIndexReader. Only one instance is ever created.
   ///
   /// If the file does not have the page index, nullptr may be returned.
-  /// Because it pays to check existence of page index in the file, it.
-  /// Is possible to return a non null value even if page index does.
-  /// Not exist. It is the caller's responsibility to check the return.
-  /// Value and follow-up calls to PageIndexReader.
+  /// Because it pays to check existence of page index in the file, it
+  /// is possible to return a non null value even if page index does
+  /// not exist. It is the caller's responsibility to check the return
+  /// value and follow-up calls to PageIndexReader.
   ///
-  /// WARNING: The returned PageIndexReader must not outlive the.
+  /// WARNING: The returned PageIndexReader must not outlive the
   /// ParquetFileReader. Initialize GetPageIndexReader() is not thread-safety.
-  std::shared_ptr<PageIndexReader> getPageIndexReader();
+  std::shared_ptr<PageIndexReader> GetPageIndexReader();
 
   /// Returns the BloomFilterReader. Only one instance is ever created.
   ///
-  /// WARNING: The returned BloomFilterReader must not outlive the.
+  /// WARNING: The returned BloomFilterReader must not outlive the
   /// ParquetFileReader. Initialize GetBloomFilterReader() is not thread-safety.
-  BloomFilterReader& getBloomFilterReader();
+  BloomFilterReader& GetBloomFilterReader();
 
   /// Pre-buffer the specified column indices in all row groups.
   ///
-  /// Readers can optionally call this to cache the necessary slices.
-  /// Of the file in-memory before deserialization. Arrow readers can.
-  /// Automatically do this via an option. This is intended to.
-  /// Increase performance when reading from high-latency filesystems.
-  /// (E.g. Amazon S3).
+  /// Readers can optionally call this to cache the necessary slices
+  /// of the file in-memory before deserialization. Arrow readers can
+  /// automatically do this via an option. This is intended to
+  /// increase performance when reading from high-latency filesystems
+  /// (e.g. Amazon S3).
   ///
-  /// After calling this, creating readers for row groups/column.
-  /// Indices that were not buffered may fail. Creating multiple.
-  /// Readers for the a subset of the buffered regions is.
-  /// Acceptable. This may be called again to buffer a different set.
-  /// Of row groups/columns.
+  /// After calling this, creating readers for row groups/column
+  /// indices that were not buffered may fail. Creating multiple
+  /// readers for the a subset of the buffered regions is
+  /// acceptable. This may be called again to buffer a different set
+  /// of row groups/columns.
   ///
-  /// If memory usage is a concern, note that data will remain.
-  /// Buffered in memory until either \a PreBuffer() is called again,.
-  /// Or the reader itself is destructed. Reading - and buffering -.
-  /// Only one row group at a time may be useful.
+  /// If memory usage is a concern, note that data will remain
+  /// buffered in memory until either \a PreBuffer() is called again,
+  /// or the reader itself is destructed. Reading - and buffering -
+  /// only one row group at a time may be useful.
   ///
   /// This method may throw.
-  void preBuffer(
-      const std::vector<int>& rowGroups,
-      const std::vector<int>& columnIndices,
+  void PreBuffer(
+      const std::vector<int>& row_groups,
+      const std::vector<int>& column_indices,
       const ::arrow::io::IOContext& ctx,
       const ::arrow::io::CacheOptions& options);
 
   /// Wait for the specified row groups and column indices to be pre-buffered.
   ///
-  /// After the returned Future completes, reading the specified row.
-  /// Groups/columns will not block.
+  /// After the returned Future completes, reading the specified row
+  /// groups/columns will not block.
   ///
   /// PreBuffer must be called first. This method does not throw.
-  ::arrow::Future<> whenBuffered(
-      const std::vector<int>& rowGroups,
-      const std::vector<int>& columnIndices) const;
+  ::arrow::Future<> WhenBuffered(
+      const std::vector<int>& row_groups,
+      const std::vector<int>& column_indices) const;
 
  private:
-  // Holds a pointer to an instance of Contents implementation.
+  // Holds a pointer to an instance of Contents implementation
   std::unique_ptr<Contents> contents_;
 };
 
-// Read only Parquet file metadata.
+// Read only Parquet file metadata
 std::shared_ptr<FileMetaData> PARQUET_EXPORT
-readMetaData(const std::shared_ptr<::arrow::io::RandomAccessFile>& source);
+ReadMetaData(const std::shared_ptr<::arrow::io::RandomAccessFile>& source);
 
-/// \brief Scan all values in file. Useful for performance testing.
-/// \param[in] columns the column numbers to scan. If empty scans all.
-/// \param[in] column_batch_size number of values to read at a time when.
-/// Scanning column \param[in] reader a ParquetFileReader instance \return.
-/// Number of semantic rows in file.
+/// \brief Scan all values in file. Useful for performance testing
+/// \param[in] columns the column numbers to scan. If empty scans all
+/// \param[in] column_batch_size number of values to read at a time when
+/// scanning column \param[in] reader a ParquetFileReader instance \return
+/// number of semantic rows in file
 PARQUET_EXPORT
-int64_t scanFileContents(
+int64_t ScanFileContents(
     std::vector<int> columns,
-    const int32_t columnBatchSize,
+    const int32_t column_batch_size,
     ParquetFileReader* reader);
 
 } // namespace facebook::velox::parquet::arrow

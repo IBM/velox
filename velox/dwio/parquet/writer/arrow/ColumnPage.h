@@ -35,11 +35,11 @@ namespace facebook::velox::parquet::arrow {
 
 // TODO: Parallel processing is not yet safe because of memory-ownership
 // semantics (the PageReader may or may not own the memory referenced by a
-// page).
+// page)
 //
 // TODO(wesm): In the future Parquet implementations may store the crc code
 // in facebook::velox::parquet::thrift::PageHeader. parquet-mr currently does
-// not, so we also skip it here, both on the read and write path.
+// not, so we also skip it here, both on the read and write path
 class Page {
  public:
   Page(const std::shared_ptr<::arrow::Buffer>& buffer, PageType::type type)
@@ -53,12 +53,12 @@ class Page {
     return buffer_;
   }
 
-  // @returns: A pointer to the page's data.
+  // @returns: a pointer to the page's data
   const uint8_t* data() const {
     return buffer_->data();
   }
 
-  // @returns: The total size in bytes of the page's data buffer.
+  // @returns: the total size in bytes of the page's data buffer
   int32_t size() const {
     return static_cast<int32_t>(buffer_->size());
   }
@@ -68,26 +68,26 @@ class Page {
   PageType::type type_;
 };
 
-/// \brief Base type for DataPageV1 and DataPageV2 including common attributes.
+/// \brief Base type for DataPageV1 and DataPageV2 including common attributes
 class DataPage : public Page {
  public:
-  int32_t numValues() const {
-    return numValues_;
+  int32_t num_values() const {
+    return num_values_;
   }
   Encoding::type encoding() const {
     return encoding_;
   }
-  int64_t uncompressedSize() const {
-    return uncompressedSize_;
+  int64_t uncompressed_size() const {
+    return uncompressed_size_;
   }
   const EncodedStatistics& statistics() const {
     return statistics_;
   }
   /// Return the row ordinal within the row group to the first row in the data
-  /// page. Currently it is only present from data pages created by
-  /// ColumnWriter in order to collect page index.
-  std::optional<int64_t> firstRowIndex() const {
-    return firstRowIndex_;
+  /// page. Currently it is only present from data pages created by ColumnWriter
+  /// in order to collect page index.
+  std::optional<int64_t> first_row_index() const {
+    return first_row_index_;
   }
 
   virtual ~DataPage() = default;
@@ -96,145 +96,145 @@ class DataPage : public Page {
   DataPage(
       PageType::type type,
       const std::shared_ptr<::arrow::Buffer>& buffer,
-      int32_t numValues,
+      int32_t num_values,
       Encoding::type encoding,
-      int64_t uncompressedSize,
+      int64_t uncompressed_size,
       const EncodedStatistics& statistics = EncodedStatistics(),
-      std::optional<int64_t> firstRowIndex = std::nullopt)
+      std::optional<int64_t> first_row_index = std::nullopt)
       : Page(buffer, type),
-        numValues_(numValues),
+        num_values_(num_values),
         encoding_(encoding),
-        uncompressedSize_(uncompressedSize),
+        uncompressed_size_(uncompressed_size),
         statistics_(statistics),
-        firstRowIndex_(std::move(firstRowIndex)) {}
+        first_row_index_(std::move(first_row_index)) {}
 
-  int32_t numValues_;
+  int32_t num_values_;
   Encoding::type encoding_;
-  int64_t uncompressedSize_;
+  int64_t uncompressed_size_;
   EncodedStatistics statistics_;
   /// Row ordinal within the row group to the first row in the data page.
-  std::optional<int64_t> firstRowIndex_;
+  std::optional<int64_t> first_row_index_;
 };
 
 class DataPageV1 : public DataPage {
  public:
   DataPageV1(
       const std::shared_ptr<::arrow::Buffer>& buffer,
-      int32_t numValues,
+      int32_t num_values,
       Encoding::type encoding,
-      Encoding::type definitionLevelEncoding,
-      Encoding::type repetitionLevelEncoding,
-      int64_t uncompressedSize,
+      Encoding::type definition_level_encoding,
+      Encoding::type repetition_level_encoding,
+      int64_t uncompressed_size,
       const EncodedStatistics& statistics = EncodedStatistics(),
-      std::optional<int64_t> firstRowIndex = std::nullopt)
+      std::optional<int64_t> first_row_index = std::nullopt)
       : DataPage(
-            PageType::kDataPage,
+            PageType::DATA_PAGE,
             buffer,
-            numValues,
+            num_values,
             encoding,
-            uncompressedSize,
+            uncompressed_size,
             statistics,
-            std::move(firstRowIndex)),
-        definitionLevelEncoding_(definitionLevelEncoding),
-        repetitionLevelEncoding_(repetitionLevelEncoding) {}
+            std::move(first_row_index)),
+        definition_level_encoding_(definition_level_encoding),
+        repetition_level_encoding_(repetition_level_encoding) {}
 
-  Encoding::type repetitionLevelEncoding() const {
-    return repetitionLevelEncoding_;
+  Encoding::type repetition_level_encoding() const {
+    return repetition_level_encoding_;
   }
 
-  Encoding::type definitionLevelEncoding() const {
-    return definitionLevelEncoding_;
+  Encoding::type definition_level_encoding() const {
+    return definition_level_encoding_;
   }
 
  private:
-  Encoding::type definitionLevelEncoding_;
-  Encoding::type repetitionLevelEncoding_;
+  Encoding::type definition_level_encoding_;
+  Encoding::type repetition_level_encoding_;
 };
 
 class DataPageV2 : public DataPage {
  public:
   DataPageV2(
       const std::shared_ptr<::arrow::Buffer>& buffer,
-      int32_t numValues,
-      int32_t numNulls,
-      int32_t numRows,
+      int32_t num_values,
+      int32_t num_nulls,
+      int32_t num_rows,
       Encoding::type encoding,
-      int32_t definitionLevelsByteLength,
-      int32_t repetitionLevelsByteLength,
-      int64_t uncompressedSize,
-      bool isCompressed = false,
+      int32_t definition_levels_byte_length,
+      int32_t repetition_levels_byte_length,
+      int64_t uncompressed_size,
+      bool is_compressed = false,
       const EncodedStatistics& statistics = EncodedStatistics(),
-      std::optional<int64_t> firstRowIndex = std::nullopt)
+      std::optional<int64_t> first_row_index = std::nullopt)
       : DataPage(
-            PageType::kDataPageV2,
+            PageType::DATA_PAGE_V2,
             buffer,
-            numValues,
+            num_values,
             encoding,
-            uncompressedSize,
+            uncompressed_size,
             statistics,
-            std::move(firstRowIndex)),
-        numNulls_(numNulls),
-        numRows_(numRows),
-        definitionLevelsByteLength_(definitionLevelsByteLength),
-        repetitionLevelsByteLength_(repetitionLevelsByteLength),
-        isCompressed_(isCompressed) {}
+            std::move(first_row_index)),
+        num_nulls_(num_nulls),
+        num_rows_(num_rows),
+        definition_levels_byte_length_(definition_levels_byte_length),
+        repetition_levels_byte_length_(repetition_levels_byte_length),
+        is_compressed_(is_compressed) {}
 
-  int32_t numNulls() const {
-    return numNulls_;
+  int32_t num_nulls() const {
+    return num_nulls_;
   }
 
-  int32_t numRows() const {
-    return numRows_;
+  int32_t num_rows() const {
+    return num_rows_;
   }
 
-  int32_t definitionLevelsByteLength() const {
-    return definitionLevelsByteLength_;
+  int32_t definition_levels_byte_length() const {
+    return definition_levels_byte_length_;
   }
 
-  int32_t repetitionLevelsByteLength() const {
-    return repetitionLevelsByteLength_;
+  int32_t repetition_levels_byte_length() const {
+    return repetition_levels_byte_length_;
   }
 
-  bool isCompressed() const {
-    return isCompressed_;
+  bool is_compressed() const {
+    return is_compressed_;
   }
 
  private:
-  int32_t numNulls_;
-  int32_t numRows_;
-  int32_t definitionLevelsByteLength_;
-  int32_t repetitionLevelsByteLength_;
-  bool isCompressed_;
+  int32_t num_nulls_;
+  int32_t num_rows_;
+  int32_t definition_levels_byte_length_;
+  int32_t repetition_levels_byte_length_;
+  bool is_compressed_;
 };
 
 class DictionaryPage : public Page {
  public:
   DictionaryPage(
       const std::shared_ptr<::arrow::Buffer>& buffer,
-      int32_t numValues,
+      int32_t num_values,
       Encoding::type encoding,
-      bool isSorted = false)
-      : Page(buffer, PageType::kDictionaryPage),
-        numValues_(numValues),
+      bool is_sorted = false)
+      : Page(buffer, PageType::DICTIONARY_PAGE),
+        num_values_(num_values),
         encoding_(encoding),
-        isSorted_(isSorted) {}
+        is_sorted_(is_sorted) {}
 
-  int32_t numValues() const {
-    return numValues_;
+  int32_t num_values() const {
+    return num_values_;
   }
 
   Encoding::type encoding() const {
     return encoding_;
   }
 
-  bool isSorted() const {
-    return isSorted_;
+  bool is_sorted() const {
+    return is_sorted_;
   }
 
  private:
-  int32_t numValues_;
+  int32_t num_values_;
   Encoding::type encoding_;
-  bool isSorted_;
+  bool is_sorted_;
 };
 
 } // namespace facebook::velox::parquet::arrow
