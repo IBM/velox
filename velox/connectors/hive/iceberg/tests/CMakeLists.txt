@@ -57,18 +57,7 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
     GTest::gtest_main
   )
 
-  add_executable(
-    velox_hive_iceberg_insert_test
-    IcebergConnectorTest.cpp
-    IcebergInsertTest.cpp
-    IcebergTestBase.cpp
-    Main.cpp
-    PartitionNameTest.cpp
-    PartitionSpecTest.cpp
-    PartitionValueFormatterTest.cpp
-    TransformE2ETest.cpp
-    TransformTest.cpp
-  )
+  add_executable(velox_hive_iceberg_insert_test IcebergInsertTest.cpp IcebergTestBase.cpp Main.cpp)
 
   add_test(velox_hive_iceberg_insert_test velox_hive_iceberg_insert_test)
 
@@ -79,7 +68,6 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
     velox_hive_iceberg_splitreader
     velox_vector_fuzzer
     GTest::gtest
-    GTest::gtest_main
   )
 
   if(VELOX_ENABLE_PARQUET)
