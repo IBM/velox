@@ -26,6 +26,7 @@
 #include "velox/type/StringView.h"
 #include "velox/type/Subfield.h"
 #include "velox/type/Type.h"
+#include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::common {
 
@@ -2500,7 +2501,7 @@ static inline bool applyFilter(TFilter& filter, StringView value) {
   return filter.testStringView(value);
 }
 
-/// Create a hash or bitmap based IN filter depending on value distribution.
+// Creates a hash or bitmap based IN filter depending on value distribution.
 std::unique_ptr<Filter> createBigintValues(
     const std::vector<int64_t>& values,
     bool nullAllowed);
