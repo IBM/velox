@@ -120,7 +120,7 @@ class SelectiveStructColumnReaderBase : public SelectiveColumnReader {
       FormatParams& params,
       velox::common::ScanSpec& scanSpec,
       bool isRoot = false,
-      bool generateLazyChildren = true)
+      bool generateLazyChildren = false)
       : SelectiveColumnReader(requestedType, fileType, params, scanSpec),
         columnReaderOptions_(columnReaderOptions),
         debugString_(
