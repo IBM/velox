@@ -1180,6 +1180,7 @@ void Task::initializePartitionOutput() {
           getInstanceRef();
       queueMgr->initializeTask(
           shared_from_this(),
+          partitionedOutputNode->kind(),
           partitionedOutputNode->numPartitions(),
           numOutputDrivers);
     }
@@ -2171,7 +2172,18 @@ bool Task::updateOutputBuffers(int numBuffers, bool noMoreBuffers) {
       noMoreOutputBuffers_ = true;
     }
   }
-  return bufferManager->updateOutputBuffers(taskId_, numBuffers, noMoreBuffers);
+  auto result =
+      bufferManager->updateOutputBuffers(taskId_, numBuffers, noMoreBuffers);
+#ifdef VELOX_ENABLE_CUDF
+  if (velox::cudf_velox::CudfConfig::getInstance().enabled &&
+      velox::cudf_velox::CudfConfig::getInstance().exchange) {
+    auto queueMgr =
+        facebook::velox::cudf_exchange::CudfOutputQueueManager::
+            getInstanceRef();
+    queueMgr->updateOutputBuffers(taskId_, numBuffers, noMoreBuffers);
+  }
+#endif
+  return result;
 }
 
 int Task::getOutputPipelineId() const {
