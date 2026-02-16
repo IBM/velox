@@ -42,7 +42,7 @@ void CudfDestinationQueue::Stats::recordDequeue(
 }
 
 void CudfDestinationQueue::enqueueBack(
-    std::unique_ptr<cudf::packed_columns> data) {
+    std::shared_ptr<cudf::packed_columns> data) {
   // drop duplicate end markers.
   if (data == nullptr && !queue_.empty() && queue_.back() == nullptr) {
     return;
@@ -55,7 +55,7 @@ void CudfDestinationQueue::enqueueBack(
 }
 
 void CudfDestinationQueue::enqueueFront(
-    std::unique_ptr<cudf::packed_columns> data) {
+    std::shared_ptr<cudf::packed_columns> data) {
   // ignore nullptr.
   if (data == nullptr) {
     return;
@@ -139,8 +139,9 @@ std::string CudfDestinationQueue::toString() {
 CudfOutputQueue::CudfOutputQueue(
     std::shared_ptr<exec::Task> task,
     uint32_t numDestinations,
-    uint32_t numDrivers)
-    : task_(task), numDrivers_(numDrivers) {
+    uint32_t numDrivers,
+    core::PartitionedOutputNode::Kind kind)
+    : task_(task), kind_(kind), numDrivers_(numDrivers) {
   if (task_) {
     maxSize_ = task_->queryCtx()->queryConfig().maxOutputBufferSize();
     continueSize_ = (maxSize_ * kContinuePct) / 100;
@@ -157,13 +158,15 @@ CudfOutputQueue::CudfOutputQueue(
 bool CudfOutputQueue::initialize(
     std::shared_ptr<exec::Task> task,
     uint32_t numDestinations,
-    uint32_t numDrivers) {
+    uint32_t numDrivers,
+    core::PartitionedOutputNode::Kind kind) {
   std::lock_guard<std::mutex> l(mutex_);
   if (task_) {
     // already initialized!
     return false;
   }
   task_ = task;
+  kind_ = kind;
   numDrivers_ = numDrivers;
   maxSize_ = task_->queryCtx()->queryConfig().maxOutputBufferSize();
   continueSize_ = (maxSize_ * kContinuePct) / 100;
@@ -201,14 +204,38 @@ void CudfOutputQueue::enqueue(
   std::vector<CudfDataAvailable> dataAvailableCallbacks;
   {
     std::lock_guard<std::mutex> l(mutex_);
-    VELOX_CHECK_LT(destination, queues_.size());
-
-    // TODO: Support other output modes as well. This is only for partitioned.
     auto numBytes = data->gpu_data->size();
-    if (enqueuePartitionedOutputLocked(
-            destination, std::move(data), dataAvailableCallbacks)) {
-      // enqueueing was successful - update the stats.
-      updateStatsWithEnqueuedLocked(numBytes, numRows);
+    auto sharedData =
+        std::shared_ptr<cudf::packed_columns>(std::move(data));
+
+    bool success = false;
+    if (kind_ == core::PartitionedOutputNode::Kind::kBroadcast) {
+      VELOX_CHECK_EQ(destination, 0, "Broadcast uses destination 0");
+      enqueueBroadcastOutputLocked(
+          std::move(sharedData), dataAvailableCallbacks);
+      // For broadcast, count queuedBytes_ once per active destination so
+      // that each destination's dequeue symmetrically decrements it. The
+      // total sent stats count the logical data once.
+      int numActive = 0;
+      for (auto& q : queues_) {
+        if (q != nullptr) {
+          numActive++;
+        }
+      }
+      updateTotalQueuedBytesMsLocked();
+      queuedBytes_ += numBytes * numActive;
+      queuedPackedColumns_ += numActive;
+      totalBytesSent_ += numBytes;
+      totalRowsSent_ += numRows;
+      totalPackedColumnsSent_++;
+      success = true;
+    } else {
+      VELOX_CHECK_LT(destination, queues_.size());
+      success = enqueuePartitionedOutputLocked(
+          destination, std::move(sharedData), dataAvailableCallbacks);
+      if (success) {
+        updateStatsWithEnqueuedLocked(numBytes, numRows);
+      }
     }
   }
   // Now that data is enqueued, notify blocked readers (outside of mutex.)
@@ -250,7 +277,7 @@ void CudfOutputQueue::getData(
     // have been removed. In this case, no data is returned.
     if (queue) {
       data = queue->getData([notify, this](
-                                std::unique_ptr<cudf::packed_columns> data,
+                                std::shared_ptr<cudf::packed_columns> data,
                                 std::vector<int64_t> remainingBytes) {
         std::vector<ContinuePromise> promises;
         int64_t bytes = data ? data->gpu_data->size() : -1L;
@@ -346,7 +373,7 @@ void CudfOutputQueue::checkIfDone(bool oneDriverFinished) {
 
 bool CudfOutputQueue::enqueuePartitionedOutputLocked(
     int destination,
-    std::unique_ptr<cudf::packed_columns> data,
+    std::shared_ptr<cudf::packed_columns> data,
     std::vector<CudfDataAvailable>& dataAvailableCbs) {
   VELOX_DCHECK(dataAvailableCbs.empty());
   VELOX_CHECK_LT(destination, queues_.size());
@@ -360,18 +387,91 @@ bool CudfOutputQueue::enqueuePartitionedOutputLocked(
   return success;
 }
 
+void CudfOutputQueue::enqueueBroadcastOutputLocked(
+    std::shared_ptr<cudf::packed_columns> data,
+    std::vector<CudfDataAvailable>& dataAvailableCbs) {
+  VELOX_DCHECK(dataAvailableCbs.empty());
+
+  for (auto& queue : queues_) {
+    if (queue != nullptr) {
+      queue->enqueueBack(data);
+      dataAvailableCbs.emplace_back(queue->getAndClearNotify());
+    }
+  }
+
+  // Store for late-arriving destinations (backfill).
+  if (!noMoreQueues_) {
+    dataToBroadcast_.emplace_back(std::move(data));
+  }
+}
+
 bool CudfOutputQueue::isFinished() {
   std::lock_guard<std::mutex> l(mutex_);
   return isFinishedLocked();
 }
 
 bool CudfOutputQueue::isFinishedLocked() {
+  // For broadcast, we can only be finished after receiving the no more
+  // (destination) buffers signal, matching OutputBuffer::isFinishedLocked().
+  if (kind_ == core::PartitionedOutputNode::Kind::kBroadcast &&
+      !noMoreQueues_) {
+    return false;
+  }
   for (auto& queue : queues_) {
     if (queue != nullptr) {
       return false;
     }
   }
   return true;
+}
+
+void CudfOutputQueue::updateOutputBuffers(int numBuffers, bool noMoreBuffers) {
+  using Kind = core::PartitionedOutputNode::Kind;
+  if (kind_ == Kind::kPartitioned) {
+    std::lock_guard<std::mutex> l(mutex_);
+    VELOX_CHECK_EQ(queues_.size(), numBuffers);
+    VELOX_CHECK(noMoreBuffers);
+    noMoreQueues_ = true;
+    return;
+  }
+
+  VELOX_CHECK_EQ(kind_, Kind::kBroadcast);
+  bool isFinished;
+  {
+    std::lock_guard<std::mutex> l(mutex_);
+
+    if (numBuffers > queues_.size()) {
+      // Add new destination queues and backfill with broadcast data.
+      int32_t numNewBuffers = numBuffers - queues_.size();
+      queues_.reserve(numBuffers);
+      for (int32_t i = 0; i < numNewBuffers; ++i) {
+        auto buffer = std::make_unique<CudfDestinationQueue>();
+        for (const auto& data : dataToBroadcast_) {
+          buffer->enqueueBack(data);
+          // Account for backfilled data in queuedBytes_ so that dequeue
+          // decrements don't drive it negative.
+          queuedBytes_ += data->gpu_data->size();
+          queuedPackedColumns_++;
+        }
+        if (atEnd_) {
+          buffer->enqueueBack(nullptr);
+        }
+        queues_.emplace_back(std::move(buffer));
+      }
+    }
+
+    if (!noMoreBuffers) {
+      return;
+    }
+
+    noMoreQueues_ = true;
+    dataToBroadcast_.clear();
+    isFinished = isFinishedLocked();
+  }
+
+  if (isFinished && task_) {
+    task_->setAllOutputConsumed();
+  }
 }
 
 void CudfOutputQueue::deleteResults(int destination) {

@@ -231,7 +231,7 @@ TEST_P(CudfExchangeTest, basicTest) {
         createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
 
     // tell the queue manager that a new source task exists.
-    queueManager_->initializeTask(srcTask, p.numPartitions, p.numSrcDrivers);
+    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, p.numPartitions, p.numSrcDrivers);
 
     sourceMocks.emplace_back(
         std::make_shared<CudfPartitionedOutputMock>(
@@ -333,7 +333,7 @@ TEST_P(CudfExchangeTest, dataIntegrityTest) {
         createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
 
     // tell the queue manager that a new source task exists.
-    queueManager_->initializeTask(srcTask, p.numPartitions, p.numSrcDrivers);
+    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, p.numPartitions, p.numSrcDrivers);
 
     // Mock the CudfPartitionedOutput operator, it will produce numChunks of
     // data each containing numRowsPerChunk of data copied from the CudfTestData
@@ -447,7 +447,7 @@ TEST_P(CudfExchangeTest, bandwidthTest) {
     // block sending
     auto srcTask = createSourceTask(
         srcTaskId, pool_, CudfTestData::kTestRowType, FOUR_GBYTES * 10);
-    queueManager_->initializeTask(srcTask, p.numPartitions, p.numSrcDrivers);
+    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, p.numPartitions, p.numSrcDrivers);
 
     // Mock the CudfPartitionedOutput operator, it will produce numChunks of
     // data each containing numRowsPerChunk of data copied from the CudfTestData
@@ -556,7 +556,7 @@ TEST_P(CudfExchangeTest, realPartitionedOutputTest) {
       partitionKeys);
 
   // Tell the queue manager that a new source task exists
-  queueManager_->initializeTask(srcTask, p.numPartitions, p.numSrcDrivers);
+  queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, p.numPartitions, p.numSrcDrivers);
 
   // Create table generator for wide tables, nullptr for narrow tables
   std::shared_ptr<BaseTableGenerator> tableGenerator;
@@ -711,7 +711,7 @@ TEST_P(CudfExchangeTest, realPartitionedOutputDataIntegrityTest) {
       partitionKeys);
 
   // Tell the queue manager that a new source task exists
-  queueManager_->initializeTask(srcTask, p.numPartitions, numSrcDrivers);
+  queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, p.numPartitions, numSrcDrivers);
 
   // Create SourceDriverMock with the tableGenerator
   auto sourceDriver = std::make_shared<SourceDriverMock>(
@@ -812,7 +812,7 @@ TEST_P(CudfExchangeTest, intraNodeTaskRemovalLivelock) {
   //    This simulates a producer that gets cancelled before producing.
   auto srcTask =
       createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
-  queueManager_->initializeTask(srcTask, numPartitions, /*numDrivers=*/1);
+  queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, numPartitions, /*numDrivers=*/1);
 
   // 2. Create sink task with exchange plan node.
   core::PlanNodeId exchangeNodeId;
@@ -893,7 +893,7 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
 
     auto srcTask = createPartitionedOutputTask(
         srcTaskId, pool_, rowType, numPartitions);
-    queueManager_->initializeTask(srcTask, numPartitions, numDrivers);
+    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, numPartitions, numDrivers);
 
     auto sourceDriver = std::make_shared<SourceDriverMock>(
         srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
@@ -967,7 +967,7 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
 
     auto srcTask = createPartitionedOutputTask(
         srcTaskId, pool_, rowType, numPartitions);
-    queueManager_->initializeTask(srcTask, numPartitions, numDrivers);
+    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, numPartitions, numDrivers);
 
     auto sourceDriver = std::make_shared<SourceDriverMock>(
         srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
@@ -1032,7 +1032,7 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
 
     auto srcTask = createPartitionedOutputTask(
         srcTaskId, pool_, rowType, numPartitions);
-    queueManager_->initializeTask(srcTask, numPartitions, numDrivers);
+    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, numPartitions, numDrivers);
 
     auto sourceDriver = std::make_shared<SourceDriverMock>(
         srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
@@ -1101,7 +1101,7 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
 
     auto srcTask = createPartitionedOutputTask(
         srcTaskId, pool_, rowType, numPartitions, {}, FOUR_GBYTES, extraConfig);
-    queueManager_->initializeTask(srcTask, numPartitions, numDrivers);
+    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, numPartitions, numDrivers);
 
     auto sourceDriver = std::make_shared<SourceDriverMock>(
         srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);

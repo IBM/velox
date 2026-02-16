@@ -176,7 +176,7 @@ int main(int argc, char** argv) {
       partitionKeys);
 
   // Register task with the queue manager
-  queueManager->initializeTask(srcTask, FLAGS_num_partitions, FLAGS_num_src_drivers);
+  queueManager->initializeTask(srcTask, facebook::velox::core::PartitionedOutputNode::Kind::kPartitioned, FLAGS_num_partitions, FLAGS_num_src_drivers);
   std::cout << "Registered task '" << FLAGS_task_id << "' with queue manager" << std::endl;
 
   // Create and run SourceDriverMock to drive the CudfPartitionedOutput operators

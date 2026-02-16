@@ -51,14 +51,16 @@ class CudfOutputQueueManagerTest : public testing::Test {
       const std::string& taskId,
       int numDestinations,
       int numDrivers,
-      bool cleanup = true) {
+      bool cleanup = true,
+      core::PartitionedOutputNode::Kind kind =
+          core::PartitionedOutputNode::Kind::kPartitioned) {
     if (cleanup) {
       queueManager_->removeTask(taskId);
     }
 
     auto task = createSourceTask(taskId, pool_, CudfTestData::kTestRowType);
 
-    queueManager_->initializeTask(task, numDestinations, numDrivers);
+    queueManager_->initializeTask(task, kind, numDestinations, numDrivers);
     return task;
   }
 
@@ -95,7 +97,7 @@ class CudfOutputQueueManagerTest : public testing::Test {
         taskId,
         destination,
         [destination, expectedEndMarker, &receivedData](
-            std::unique_ptr<cudf::packed_columns> data,
+            std::shared_ptr<cudf::packed_columns> data,
             std::vector<int64_t> remainingBytes) {
           ASSERT_EQ(expectedEndMarker, data == nullptr)
               << "for destination " << destination;
@@ -108,7 +110,7 @@ class CudfOutputQueueManagerTest : public testing::Test {
       int destination,
       bool& receivedEndMarker) {
     return [destination, &receivedEndMarker](
-               std::unique_ptr<cudf::packed_columns> data,
+               std::shared_ptr<cudf::packed_columns> data,
                std::vector<int64_t> remainingBytes) {
       EXPECT_FALSE(receivedEndMarker) << "for destination " << destination;
       EXPECT_TRUE(data == nullptr) << "for destination " << destination;
@@ -142,7 +144,7 @@ class CudfOutputQueueManagerTest : public testing::Test {
   CudfDataAvailableCallback receiveData(int destination, bool& receivedData) {
     receivedData = false;
     return [destination, &receivedData](
-               std::unique_ptr<cudf::packed_columns> data,
+               std::shared_ptr<cudf::packed_columns> data,
                std::vector<int64_t> /*remainingBytes*/) {
       EXPECT_FALSE(receivedData) << "for destination " << destination;
       EXPECT_TRUE(data != nullptr) << "for destination " << destination;
@@ -179,7 +181,7 @@ class CudfOutputQueueManagerTest : public testing::Test {
       queueManager_->getData(
           taskId,
           destination,
-          [&](std::unique_ptr<cudf::packed_columns> data,
+          [&](std::shared_ptr<cudf::packed_columns> data,
               std::vector<int64_t> /*remainingBytes*/) {
             if (data == nullptr) {
               atEnd = true;
@@ -197,7 +199,7 @@ class CudfOutputQueueManagerTest : public testing::Test {
     // out of order requests are allowed (fetch after delete)
     {
       struct Response {
-        std::unique_ptr<cudf::packed_columns> data;
+        std::shared_ptr<cudf::packed_columns> data;
         std::vector<int64_t> remainingBytes;
       };
       folly::Promise<Response> promise;
@@ -206,7 +208,7 @@ class CudfOutputQueueManagerTest : public testing::Test {
           taskId,
           destination,
           [&promise](
-              std::unique_ptr<cudf::packed_columns> data,
+              std::shared_ptr<cudf::packed_columns> data,
               std::vector<int64_t> remainingBytes) {
             promise.setValue(
                 Response{std::move(data), std::move(remainingBytes)});
@@ -344,7 +346,7 @@ TEST_F(CudfOutputQueueManagerTest, lateTaskCreation) {
 
   // Fetch data from a non-existing task.
   struct Response {
-    std::unique_ptr<cudf::packed_columns> data;
+    std::shared_ptr<cudf::packed_columns> data;
     std::vector<int64_t> remainingBytes;
   };
   folly::Promise<Response> promise;
@@ -353,7 +355,7 @@ TEST_F(CudfOutputQueueManagerTest, lateTaskCreation) {
       taskId,
       destination,
       [&promise](
-          std::unique_ptr<cudf::packed_columns> data,
+          std::shared_ptr<cudf::packed_columns> data,
           std::vector<int64_t> remainingBytes) {
         promise.setValue(Response{std::move(data), std::move(remainingBytes)});
       });
@@ -378,7 +380,7 @@ TEST_F(CudfOutputQueueManagerTest, lateTaskCreation) {
         taskId,
         destination,
         [&promise](
-            std::unique_ptr<cudf::packed_columns> data,
+            std::shared_ptr<cudf::packed_columns> data,
             std::vector<int64_t> remainingBytes) {
           promise.setValue(
               Response{std::move(data), std::move(remainingBytes)});
@@ -460,7 +462,7 @@ TEST_F(CudfOutputQueueManagerTest, callbackFiredOnTerminateBeforeInit) {
       taskId,
       0, // destination
       [&callbackFired, &receivedNullptr](
-          std::unique_ptr<cudf::packed_columns> data,
+          std::shared_ptr<cudf::packed_columns> data,
           std::vector<int64_t> remainingBytes) {
         callbackFired = true;
         receivedNullptr = (data == nullptr);
@@ -497,7 +499,7 @@ TEST_F(CudfOutputQueueManagerTest, callbackFiredOnTerminateAfterInit) {
       taskId,
       0,
       [&callback0Fired, &callback0Nullptr](
-          std::unique_ptr<cudf::packed_columns> data,
+          std::shared_ptr<cudf::packed_columns> data,
           std::vector<int64_t> remainingBytes) {
         callback0Fired = true;
         callback0Nullptr = (data == nullptr);
@@ -506,7 +508,7 @@ TEST_F(CudfOutputQueueManagerTest, callbackFiredOnTerminateAfterInit) {
       taskId,
       1,
       [&callback1Fired, &callback1Nullptr](
-          std::unique_ptr<cudf::packed_columns> data,
+          std::shared_ptr<cudf::packed_columns> data,
           std::vector<int64_t> remainingBytes) {
         callback1Fired = true;
         callback1Nullptr = (data == nullptr);
@@ -526,4 +528,145 @@ TEST_F(CudfOutputQueueManagerTest, callbackFiredOnTerminateAfterInit) {
   EXPECT_TRUE(callback0Nullptr);
   EXPECT_TRUE(callback1Fired);
   EXPECT_TRUE(callback1Nullptr);
+}
+
+// --- Broadcast tests ---
+
+// Basic broadcast: enqueue data, all destinations receive the same data.
+TEST_F(CudfOutputQueueManagerTest, broadcastBasic) {
+  const vector_size_t size = 100;
+  const std::string taskId = "broadcast0";
+  const int numDestinations = 3;
+
+  auto task = initializeTask(
+      taskId,
+      numDestinations,
+      1 /* numDrivers */,
+      true /* cleanup */,
+      core::PartitionedOutputNode::Kind::kBroadcast);
+
+  // Broadcast must not be finished before noMoreQueues.
+  EXPECT_FALSE(queueManager_->isFinished(taskId));
+
+  // Tell the queue manager the final number of destinations.
+  queueManager_->updateOutputBuffers(taskId, numDestinations, true);
+
+  // Enqueue one batch (broadcast always uses destination 0).
+  enqueue(taskId, 0, size);
+
+  // All destinations should receive the data.
+  for (int dest = 0; dest < numDestinations; ++dest) {
+    fetch(taskId, dest);
+  }
+
+  // Signal no more data.
+  noMoreData(taskId);
+
+  // Fetch end markers from all destinations.
+  for (int dest = 0; dest < numDestinations; ++dest) {
+    fetchEndMarker(taskId, dest);
+  }
+
+  EXPECT_TRUE(queueManager_->isFinished(taskId));
+  queueManager_->removeTask(taskId);
+}
+
+// Broadcast: late destination receives backfilled data.
+TEST_F(CudfOutputQueueManagerTest, broadcastLateDestination) {
+  const vector_size_t size = 50;
+  const std::string taskId = "broadcast1";
+
+  // Start with 2 destinations.
+  auto task = initializeTask(
+      taskId,
+      2 /* numDestinations */,
+      1 /* numDrivers */,
+      true /* cleanup */,
+      core::PartitionedOutputNode::Kind::kBroadcast);
+
+  // Enqueue 2 batches before the 3rd destination arrives.
+  enqueue(taskId, 0, size);
+  enqueue(taskId, 0, size);
+
+  // Fetch from existing destinations to verify data is there.
+  fetch(taskId, 0);
+  fetch(taskId, 1);
+
+  // Now add a 3rd destination (late arrival). It should be backfilled.
+  queueManager_->updateOutputBuffers(taskId, 3, false);
+
+  // The new destination should have both batches.
+  fetch(taskId, 2);
+  fetch(taskId, 2);
+
+  // Finalize destinations and data.
+  queueManager_->updateOutputBuffers(taskId, 3, true);
+  noMoreData(taskId);
+
+  // Fetch remaining data + end markers.
+  fetch(taskId, 0);
+  fetchEndMarker(taskId, 0);
+  fetch(taskId, 1);
+  fetchEndMarker(taskId, 1);
+  fetchEndMarker(taskId, 2);
+
+  EXPECT_TRUE(queueManager_->isFinished(taskId));
+  queueManager_->removeTask(taskId);
+}
+
+// Broadcast: isFinished requires noMoreQueues.
+TEST_F(CudfOutputQueueManagerTest, broadcastNotFinishedWithoutNoMoreQueues) {
+  const std::string taskId = "broadcast2";
+
+  auto task = initializeTask(
+      taskId,
+      2 /* numDestinations */,
+      1 /* numDrivers */,
+      true /* cleanup */,
+      core::PartitionedOutputNode::Kind::kBroadcast);
+
+  // Signal no more data.
+  noMoreData(taskId);
+
+  // Fetch end markers and delete results from all destinations.
+  fetchEndMarker(taskId, 0);
+  fetchEndMarker(taskId, 1);
+
+  // Still not finished because noMoreQueues hasn't been signaled.
+  EXPECT_FALSE(queueManager_->isFinished(taskId));
+
+  // Signal no more queues.
+  queueManager_->updateOutputBuffers(taskId, 2, true);
+
+  EXPECT_TRUE(queueManager_->isFinished(taskId));
+  queueManager_->removeTask(taskId);
+}
+
+// Broadcast: end marker propagated to late-arriving destinations.
+TEST_F(CudfOutputQueueManagerTest, broadcastEndMarkerToLateDestination) {
+  const std::string taskId = "broadcast3";
+
+  auto task = initializeTask(
+      taskId,
+      1 /* numDestinations */,
+      1 /* numDrivers */,
+      true /* cleanup */,
+      core::PartitionedOutputNode::Kind::kBroadcast);
+
+  enqueue(taskId, 0, 10);
+  noMoreData(taskId);
+
+  // Add a late destination after end marker was set.
+  queueManager_->updateOutputBuffers(taskId, 2, true);
+
+  // Destination 0: data + end marker.
+  fetch(taskId, 0);
+  fetchEndMarker(taskId, 0);
+
+  // Destination 1 (late): backfilled data + end marker.
+  fetch(taskId, 1);
+  fetchEndMarker(taskId, 1);
+
+  EXPECT_TRUE(queueManager_->isFinished(taskId));
+  queueManager_->removeTask(taskId);
 }

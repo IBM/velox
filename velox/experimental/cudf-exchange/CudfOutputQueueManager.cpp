@@ -36,6 +36,7 @@ CudfOutputQueueManager::getInstanceRef() {
 
 void CudfOutputQueueManager::initializeTask(
     std::shared_ptr<exec::Task> task,
+    core::PartitionedOutputNode::Kind kind,
     int numDestinations,
     int numDrivers) {
   const auto& taskId = task->taskId();
@@ -43,9 +44,9 @@ void CudfOutputQueueManager::initializeTask(
     auto it = queues.find(taskId);
     if (it == queues.end()) {
       queues[taskId] = std::make_shared<CudfOutputQueue>(
-          std::move(task), numDestinations, numDrivers);
+          std::move(task), numDestinations, numDrivers, kind);
     } else {
-      if (!it->second->initialize(task, numDestinations, numDrivers)) {
+      if (!it->second->initialize(task, numDestinations, numDrivers, kind)) {
         VELOX_FAIL(
             "Registering a cudf output queue for pre-existing taskId {}",
             taskId);
@@ -55,6 +56,13 @@ void CudfOutputQueueManager::initializeTask(
   // Clear any stale "removed" state so that getData() calls after this
   // initializeTask() create proper placeholder queues if needed.
   removedTasks_.withLock([&](auto& removed) { removed.erase(taskId); });
+}
+
+void CudfOutputQueueManager::updateOutputBuffers(
+    const std::string& taskId,
+    int numBuffers,
+    bool noMoreBuffers) {
+  getQueue(taskId)->updateOutputBuffers(numBuffers, noMoreBuffers);
 }
 
 void CudfOutputQueueManager::enqueue(

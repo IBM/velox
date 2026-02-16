@@ -86,7 +86,7 @@ void CudfExchangeServer::process() {
           partitionKey_.taskId,
           partitionKey_.destination,
           [weakQueue](
-              std::unique_ptr<cudf::packed_columns> data,
+              std::shared_ptr<cudf::packed_columns> data,
               std::vector<int64_t> remainingBytes) {
             auto self = weakQueue.lock();
             if (!self) {
@@ -217,18 +217,15 @@ void CudfExchangeServer::sendData() {
               << " Intra-node transfer: publishing data for sequence "
               << sequenceNumber_ << " of size " << bytes_;
 
-      // Convert the data to shared_ptr for sharing with the source
-      auto sharedData = std::make_shared<cudf::packed_columns>(
-          std::move(dataPtr_->metadata), std::move(dataPtr_->gpu_data));
-      dataPtr_.reset();
-
       IntraNodeTransferKey key{
           partitionKey_.taskId, partitionKey_.destination, sequenceNumber_};
       // Pass default stream since data is already synchronized (the producer
       // calls stream.synchronize() before enqueuing).
+      // dataPtr_ is already a shared_ptr, pass directly to share ownership.
       intraNodeRetrieveFuture_ =
           IntraNodeTransferRegistry::getInstance()->publish(
-              key, sharedData, rmm::cuda_stream_default, /*atEnd=*/false);
+              key, dataPtr_, rmm::cuda_stream_default, /*atEnd=*/false);
+      dataPtr_.reset();
       intraNodeAtEndPublished_ = false;
 
       // Transition to WaitingForIntraNodeRetrieve state
@@ -259,7 +256,11 @@ void CudfExchangeServer::sendData() {
     std::shared_ptr<MetadataMsg> metadataMsg = std::make_shared<MetadataMsg>();
 
     if (dataPtr_) {
-      metadataMsg->cudfMetadata = std::move(dataPtr_->metadata);
+      // Copy metadata (not move) because in broadcast mode, the same
+      // packed_columns may be shared across multiple destination queues.
+      // Metadata is small (CPU-side), so copying is negligible.
+      metadataMsg->cudfMetadata =
+          std::make_unique<std::vector<uint8_t>>(*dataPtr_->metadata);
       metadataMsg->dataSizeBytes = dataPtr_->gpu_data->size();
       metadataMsg->remainingBytes = {};
       metadataMsg->atEnd = false;
