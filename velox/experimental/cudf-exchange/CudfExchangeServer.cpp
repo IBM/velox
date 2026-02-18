@@ -20,6 +20,7 @@
 #include "velox/experimental/cudf-exchange/Communicator.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeProtocol.h"
 #include "velox/experimental/cudf-exchange/IntraNodeTransferRegistry.h"
+#include "velox/experimental/cudf/exec/Utilities.h"
 
 namespace facebook::velox::cudf_exchange {
 
@@ -219,8 +220,8 @@ void CudfExchangeServer::sendData() {
 
       IntraNodeTransferKey key{
           partitionKey_.taskId, partitionKey_.destination, sequenceNumber_};
-      // Pass default stream since data is already synchronized (the producer
-      // calls stream.synchronize() before enqueuing).
+      // Stream value is unused: the consumer (CudfExchangeSource::
+      // onIntraNodeData) allocates its own pool stream for downstream ops.
       // dataPtr_ is already a shared_ptr, pass directly to share ownership.
       intraNodeRetrieveFuture_ =
           IntraNodeTransferRegistry::getInstance()->publish(

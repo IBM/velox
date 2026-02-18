@@ -739,12 +739,14 @@ void CudfExchangeSource::onIntraNodeData(
   auto packedTable = std::make_unique<cudf::packed_table>(
       cudf::packed_table{tableView, std::move(packedCols)});
 
-  // Use the producer's stream for proper stream ordering.
-  // Since the producer (CudfPartitionedOutput) synchronizes before publishing,
-  // the data is already ready, but we pass the stream for consistency.
-  // If future optimizations remove the sync, this ensures correctness.
+  // Get a stream from the pool so downstream cuDF operations on this data
+  // run on a dedicated stream, not the default stream. The producer already
+  // synchronized before enqueuing, so the GPU data is ready. This matches
+  // the inter-node (UCX) receive path which also allocates a pool stream.
+  auto stream =
+      facebook::velox::cudf_velox::cudfGlobalStreamPool().get_stream();
   auto tableWithStream = std::make_unique<PackedTableWithStream>(
-      std::move(packedTable), producerStream);
+      std::move(packedTable), stream);
 
   enqueue(std::move(tableWithStream));
 
