@@ -66,12 +66,6 @@ void Acceptor::cStyleAMCallback(
       (handshakePtr->workerId == communicator->getWorkerId());
 
   std::string peerIp = epRef->getPeerIp();
-  LOG(INFO) << "[EXCHANGE_DEBUG] Acceptor received handshake for task=" << key.taskId
-            << " dest=" << key.destination
-            << " peerIp=" << peerIp
-            << " sourceWorkerId=" << handshakePtr->workerId
-            << " localWorkerId=" << communicator->getWorkerId()
-            << " isIntraNodeTransfer=" << isIntraNodeTransfer;
 
   auto exchangeServer = CudfExchangeServer::create(
       communicator, epRef, key, isIntraNodeTransfer);
