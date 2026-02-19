@@ -506,6 +506,7 @@ void IcebergDataSink::closeInternal() {
         WRITER_NON_RECLAIMABLE_SECTION_GUARD(i);
         writers_[i]->close();
         dataFileStats_.push_back(writers_[i]->dataFileStats());
+        finalizeWriterFile(i);
       }
     }
   } else {
