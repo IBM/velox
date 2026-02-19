@@ -120,8 +120,9 @@ void CudfOutputQueueManager::getData(
       }
       // create the queue structures such that the notify callback can be
       // stored. It will be later initialized once the task is being created.
-      VLOG(2) << "[QUEUE-MGR] task=" << taskId << " dest=" << destination
-              << " creating placeholder queue (server arrived before task init)";
+      VLOG(2)
+          << "[QUEUE-MGR] task=" << taskId << " dest=" << destination
+          << " creating placeholder queue (server arrived before task init)";
       outputQueue = std::make_shared<CudfOutputQueue>(nullptr, destination, 0);
       queues[taskId] = outputQueue;
     } else {
@@ -152,8 +153,7 @@ void CudfOutputQueueManager::removeTask(const std::string& taskId) {
         if (it == queues.end()) {
           // Already removed. Clear any stale "removed" state so the task ID
           // can be reused.
-          removedTasks_.withLock(
-              [&](auto& removed) { removed.erase(taskId); });
+          removedTasks_.withLock([&](auto& removed) { removed.erase(taskId); });
           return nullptr;
         }
         auto taskQueue = it->second;
@@ -161,8 +161,7 @@ void CudfOutputQueueManager::removeTask(const std::string& taskId) {
         // Insert into removedTasks_ while still holding the queues_ lock
         // to prevent getData() from seeing a gap between erase and insert,
         // which would cause it to create a zombie placeholder queue.
-        removedTasks_.withLock(
-            [&](auto& removed) { removed.insert(taskId); });
+        removedTasks_.withLock([&](auto& removed) { removed.insert(taskId); });
         return taskQueue;
       });
   VLOG(2) << "[QUEUE-MGR] removeTask=" << taskId

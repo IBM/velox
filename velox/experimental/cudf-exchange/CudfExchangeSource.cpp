@@ -30,8 +30,7 @@ void CudfExchangeSource::setState(ReceiverState newState) {
   auto oldState = state_.exchange(newState, std::memory_order_seq_cst);
   VLOG(2) << (isIntraNodeTransfer_ ? "[INTRA]" : "[REMOTE]") << " [ExSrc "
           << toString() << " seq=" << sequenceNumber_ << "] "
-          << getStateAsString(oldState) << " -> "
-          << getStateAsString(newState);
+          << getStateAsString(oldState) << " -> " << getStateAsString(newState);
 }
 
 // This constructor is private.
@@ -745,8 +744,8 @@ void CudfExchangeSource::onIntraNodeData(
   // the inter-node (UCX) receive path which also allocates a pool stream.
   auto stream =
       facebook::velox::cudf_velox::cudfGlobalStreamPool().get_stream();
-  auto tableWithStream = std::make_unique<PackedTableWithStream>(
-      std::move(packedTable), stream);
+  auto tableWithStream =
+      std::make_unique<PackedTableWithStream>(std::move(packedTable), stream);
 
   enqueue(std::move(tableWithStream));
 
@@ -773,8 +772,7 @@ bool CudfExchangeSource::setStateIf(
   }
   VLOG(2) << (isIntraNodeTransfer_ ? "[INTRA]" : "[REMOTE]") << " [ExSrc "
           << toString() << " seq=" << sequenceNumber_ << "] "
-          << getStateAsString(expected) << " -> "
-          << getStateAsString(desired);
+          << getStateAsString(expected) << " -> " << getStateAsString(desired);
   return true;
 }
 

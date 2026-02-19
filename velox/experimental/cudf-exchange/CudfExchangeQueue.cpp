@@ -42,7 +42,8 @@ void CudfExchangeQueue::enqueueLocked(
   if (data == nullptr) {
     ++numCompleted_;
     VLOG(2) << "[EX-QUEUE] source completed (null enqueued)"
-            << " numCompleted=" << numCompleted_ << " numSources=" << numSources_
+            << " numCompleted=" << numCompleted_
+            << " numSources=" << numSources_
             << " noMoreSources=" << noMoreSources_;
     auto completedPromises = checkCompleteLocked();
     promises.reserve(promises.size() + completedPromises.size());

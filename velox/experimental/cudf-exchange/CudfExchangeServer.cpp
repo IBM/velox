@@ -28,8 +28,7 @@ void CudfExchangeServer::setState(ServerState newState) {
   auto oldState = state_.exchange(newState, std::memory_order_seq_cst);
   VLOG(2) << (isIntraNodeTransfer_ ? "[INTRA]" : "[REMOTE]") << " [ExSrv "
           << partitionKey_.toString() << " seq=" << sequenceNumber_ << "] "
-          << getStateAsString(oldState) << " -> "
-          << getStateAsString(newState);
+          << getStateAsString(oldState) << " -> " << getStateAsString(newState);
 }
 
 // This constructor is private

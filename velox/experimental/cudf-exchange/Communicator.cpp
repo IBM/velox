@@ -168,7 +168,8 @@ void Communicator::run() {
 
         VLOG(2) << "[COMM-HEARTBEAT] workQueue=" << workQueue_.size()
                 << " elements=" << elements_.size()
-                << " (servers=" << numServers << " sources=" << numSources << ")"
+                << " (servers=" << numServers << " sources=" << numSources
+                << ")"
                 << " endpoints=" << endpoints_.size()
                 << " deferredCleanup=" << deferredEndpointCleanup_.size()
                 << " workItemsProcessed=" << workItemsProcessed_

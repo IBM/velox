@@ -205,8 +205,7 @@ void CudfOutputQueue::enqueue(
   {
     std::lock_guard<std::mutex> l(mutex_);
     auto numBytes = data->gpu_data->size();
-    auto sharedData =
-        std::shared_ptr<cudf::packed_columns>(std::move(data));
+    auto sharedData = std::shared_ptr<cudf::packed_columns>(std::move(data));
 
     bool success = false;
     if (kind_ == core::PartitionedOutputNode::Kind::kBroadcast) {
@@ -354,8 +353,7 @@ void CudfOutputQueue::checkIfDone(bool oneDriverFinished) {
       int64_t avgRows = totalPackedColumnsSent_ > 0
           ? totalRowsSent_ / totalPackedColumnsSent_
           : 0;
-      VLOG(1) << "[OUTPUT-STATS] task="
-              << (task_ ? task_->taskId() : "n/a")
+      VLOG(1) << "[OUTPUT-STATS] task=" << (task_ ? task_->taskId() : "n/a")
               << " totalRows=" << totalRowsSent_
               << " chunks=" << totalPackedColumnsSent_
               << " avgRowsPerChunk=" << avgRows
@@ -599,9 +597,8 @@ void CudfOutputQueue::updateStatsWithFreedLocked(
   // Check whether queue is below low-water mark and return outstanding
   // promises
   if (queuedBytes_ <= continueSize_ && !promises_.empty()) {
-    VLOG(2) << "[BACKPRESSURE] task="
-            << (task_ ? task_->taskId() : "n/a") << " UNBLOCKING "
-            << promises_.size() << " producers"
+    VLOG(2) << "[BACKPRESSURE] task=" << (task_ ? task_->taskId() : "n/a")
+            << " UNBLOCKING " << promises_.size() << " producers"
             << " queuedBytes=" << queuedBytes_
             << " continueSize=" << continueSize_;
     promises = std::move(promises_);

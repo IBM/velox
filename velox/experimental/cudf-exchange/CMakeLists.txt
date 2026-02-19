@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-set(CUDF_EXCHANGE_SOURCES
+set(
+  CUDF_EXCHANGE_SOURCES
   CudfPartitionedOutput.cpp
   CudfOutputQueueManager.cpp
   CudfQueues.cpp
@@ -42,16 +43,9 @@ configure_file(
   @ONLY
 )
 
-add_library(
-  velox_cudf_exchange
-  OBJECT
-  ${CUDF_EXCHANGE_SOURCES}
-)
+add_library(velox_cudf_exchange OBJECT ${CUDF_EXCHANGE_SOURCES})
 
-target_include_directories(
-  velox_cudf_exchange
-  PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
-)
+target_include_directories(velox_cudf_exchange PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 find_package(ucx REQUIRED)
 

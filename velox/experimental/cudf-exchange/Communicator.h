@@ -135,7 +135,9 @@ class Communicator {
   /// Used for intra-process detection: if two endpoints share the same
   /// workerId, they are in the same process and can use
   /// IntraNodeTransferRegistry instead of UCXX.
-  uint64_t getWorkerId() const { return workerId_; }
+  uint64_t getWorkerId() const {
+    return workerId_;
+  }
 
  private:
   Communicator() =

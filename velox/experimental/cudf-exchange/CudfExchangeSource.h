@@ -89,7 +89,9 @@ class CudfExchangeSource
   /// Must be called after addSourceLocked() increments numSources_ for this
   /// source. Without this, deliverEndMarker() will not enqueue the nullptr
   /// (preventing spurious numCompleted_ increments for unregistered sources).
-  void setRegistered() { registered_ = true; }
+  void setRegistered() {
+    registered_ = true;
+  }
 
   /// @brief Called by CudfExchangeClient::next() on the consumer (driver)
   /// thread to wake up this source after it went dormant due to backpressure.

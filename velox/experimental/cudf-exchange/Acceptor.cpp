@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 #include "velox/experimental/cudf-exchange/Acceptor.h"
-#include "velox/experimental/cudf-exchange/CudfOutputQueueManager.h"
 #include "velox/experimental/cudf-exchange/Communicator.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeProtocol.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeServer.h"
+#include "velox/experimental/cudf-exchange/CudfOutputQueueManager.h"
 #include "velox/experimental/cudf-exchange/EndpointRef.h"
 #include "velox/experimental/cudf/CudfConfig.h"
 
@@ -79,8 +79,8 @@ void Acceptor::cStyleAMCallback(
 
   std::string peerIp = epRef->getPeerIp();
 
-  auto exchangeServer = CudfExchangeServer::create(
-      communicator, epRef, key, isIntraNodeTransfer);
+  auto exchangeServer =
+      CudfExchangeServer::create(communicator, epRef, key, isIntraNodeTransfer);
 
   // Add this exchangeServer to the endpoint reference.
   epRef->addCommElem(exchangeServer);
