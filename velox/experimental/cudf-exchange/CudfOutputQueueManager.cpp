@@ -56,6 +56,9 @@ void CudfOutputQueueManager::initializeTask(
   // Clear any stale "removed" state so that getData() calls after this
   // initializeTask() create proper placeholder queues if needed.
   removedTasks_.withLock([&](auto& removed) { removed.erase(taskId); });
+  // Clear any stale "cancelled" state in the intra-node registry so
+  // that the cancelledTasks_ set doesn't grow unboundedly across queries.
+  IntraNodeTransferRegistry::getInstance()->clearCancelledTask(taskId);
 }
 
 void CudfOutputQueueManager::updateOutputBuffers(
@@ -141,21 +144,21 @@ void CudfOutputQueueManager::removeTask(const std::string& taskId) {
       queues_.withLock([&](auto& queues) -> std::shared_ptr<CudfOutputQueue> {
         auto it = queues.find(taskId);
         if (it == queues.end()) {
-          // Already removed.
+          // Already removed. Clear any stale "removed" state so the task ID
+          // can be reused.
+          removedTasks_.withLock(
+              [&](auto& removed) { removed.erase(taskId); });
           return nullptr;
         }
         auto taskQueue = it->second;
         queues.erase(taskId);
+        // Insert into removedTasks_ while still holding the queues_ lock
+        // to prevent getData() from seeing a gap between erase and insert,
+        // which would cause it to create a zombie placeholder queue.
+        removedTasks_.withLock(
+            [&](auto& removed) { removed.insert(taskId); });
         return taskQueue;
       });
-  if (queue != nullptr) {
-    // Record this task as removed so getData() won't re-create a placeholder.
-    removedTasks_.withLock([&](auto& removed) { removed.insert(taskId); });
-  } else {
-    // No queue exists — this is a no-op cleanup call. Clear any stale
-    // "removed" state so the task ID can be reused.
-    removedTasks_.withLock([&](auto& removed) { removed.erase(taskId); });
-  }
   VLOG(2) << "[QUEUE-MGR] removeTask=" << taskId
           << " queueExists=" << (queue != nullptr);
   if (queue != nullptr) {

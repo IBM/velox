@@ -131,6 +131,12 @@ class IntraNodeTransferRegistry {
   /// @param taskId The task to cancel
   void cancelTask(const std::string& taskId);
 
+  /// @brief Remove a task from the cancelled set.
+  /// Called when a task ID is (re)initialized, so that the cancelledTasks_
+  /// set does not grow unboundedly across queries.
+  /// @param taskId The task to clear from the cancelled set
+  void clearCancelledTask(const std::string& taskId);
+
  private:
   IntraNodeTransferRegistry() = default;
 

@@ -125,7 +125,7 @@ class CudfDestinationQueue {
 /// - updateNumDrivers is used to track the number of drivers.
 /// - noMoreData is called by each driver when the driver is done and has no
 /// more data will be added.
-class CudfOutputQueue {
+class CudfOutputQueue : public std::enable_shared_from_this<CudfOutputQueue> {
  public:
   /// @brief Creates a new output queue for a data-producing task.
   /// @param taskId The id of the source task that produces the data

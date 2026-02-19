@@ -276,4 +276,9 @@ void IntraNodeTransferRegistry::cancelTask(const std::string& taskId) {
           << " entriesCleaned=" << entriesToFulfill.size();
 }
 
+void IntraNodeTransferRegistry::clearCancelledTask(const std::string& taskId) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  cancelledTasks_.erase(taskId);
+}
+
 } // namespace facebook::velox::cudf_exchange

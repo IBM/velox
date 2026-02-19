@@ -276,25 +276,28 @@ void CudfOutputQueue::getData(
     // queue can be nullptr here if the task has terminated and results
     // have been removed. In this case, no data is returned.
     if (queue) {
-      data = queue->getData([notify, this](
+      // Capture weak_ptr instead of raw `this` to prevent use-after-free.
+      // The callback fires outside the lock (from enqueue() or terminate()),
+      // and concurrent removeTask() can destroy the CudfOutputQueue while
+      // the callback is still executing.
+      std::weak_ptr<CudfOutputQueue> weakSelf = shared_from_this();
+      data = queue->getData([notify, weakSelf](
                                 std::shared_ptr<cudf::packed_columns> data,
                                 std::vector<int64_t> remainingBytes) {
         std::vector<ContinuePromise> promises;
         int64_t bytes = data ? data->gpu_data->size() : -1L;
         notify(std::move(data), std::move(remainingBytes));
         if (bytes >= 0L) {
-          std::lock_guard<std::mutex> l(mutex_);
-          this->updateStatsWithFreedLocked(bytes, 1L, promises);
+          auto self = weakSelf.lock();
+          if (!self) {
+            // Queue was destroyed by removeTask(), safe to skip stats update.
+            return;
+          }
+          std::lock_guard<std::mutex> l(self->mutex_);
+          self->updateStatsWithFreedLocked(bytes, 1L, promises);
         }
         // outside of lock:
         // wake up any producers that are waiting for queue to become less full.
-        if (promises.empty()) {
-          VLOG(3) << "No waiting producers in task: "
-                  << (task_ ? task_->taskId() : "n/a");
-        } else {
-          VLOG(3) << "Waking up producers in task: "
-                  << (task_ ? task_->taskId() : "n/a");
-        }
         for (auto& promise : promises) {
           promise.setValue();
         }
