@@ -139,6 +139,12 @@ void CudfOutputQueueManager::getData(
   outputQueue->getData(destination, notify);
 }
 
+bool CudfOutputQueueManager::isBroadcast(const std::string& taskId) {
+  auto queue = getQueueIfExists(taskId);
+  return queue &&
+      queue->kind() == core::PartitionedOutputNode::Kind::kBroadcast;
+}
+
 void CudfOutputQueueManager::removeTask(const std::string& taskId) {
   auto queue =
       queues_.withLock([&](auto& queues) -> std::shared_ptr<CudfOutputQueue> {

@@ -38,6 +38,7 @@
 #include "velox/experimental/cudf-exchange/Communicator.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeProtocol.h"
 #include "velox/experimental/cudf-exchange/CudfOutputQueueManager.h"
+#include "velox/experimental/cudf/CudfConfig.h"
 #include "velox/experimental/cudf-exchange/tests/CudfPartitionedOutputMock.h"
 #include "velox/experimental/cudf-exchange/tests/CudfTestData.h"
 #include "velox/experimental/cudf-exchange/tests/CudfTestHelpers.h"
@@ -855,6 +856,93 @@ TEST_P(CudfExchangeTest, intraNodeTaskRemovalLivelock) {
            << "IntraNodeTransferRegistry for cancelled task";
   }
   // If we get here, the source correctly detected the cancelled task.
+}
+
+// Regression test for broadcast + intra-node SIGSEGV.
+// Before the fix in Acceptor.cpp, broadcast tasks using intra-node transfer
+// would crash because the intra-node source destructively moves gpu_data from
+// a shared packed_columns object, corrupting it for other servers.
+// The fix disables intra-node at handshake time for broadcast tasks, falling
+// back to UCXX. This test verifies that broadcast with intra-node enabled
+// completes without crash and delivers correct data.
+TEST_P(CudfExchangeTest, broadcastIntraNodeFallback) {
+  // This test doesn't use parameters — run only for the first param set.
+  {
+    ExchangeTestParams p = GetParam();
+    if (p.numSrcDrivers != 1 || p.numDstDrivers != 1 || p.numPartitions != 1 ||
+        p.numChunks != 100 || p.numUpstreamTasks != 1 ||
+        p.tableType != TableType::NARROW) {
+      GTEST_SKIP() << "broadcastIntraNodeFallback: runs only once";
+    }
+  }
+
+  // Enable intra-node exchange so the Acceptor's broadcast guard is exercised.
+  auto& config = cudf_velox::CudfConfig::getInstance();
+  const bool origIntraNode = config.intraNodeExchange;
+  config.intraNodeExchange = true;
+
+  const std::string taskPrefix = getUniqueTaskPrefix();
+  const std::string srcTaskId = taskPrefix + "broadcastSrc";
+  const int numDestinations = 3;
+  const int numDrivers = 1;
+  const int numChunks = 5;
+  const int numRowsPerChunk = 1000;
+
+  // Create source task with broadcast mode.
+  auto srcTask =
+      createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
+  queueManager_->initializeTask(
+      srcTask,
+      core::PartitionedOutputNode::Kind::kBroadcast,
+      numDestinations,
+      numDrivers);
+  // Finalize destinations for broadcast.
+  queueManager_->updateOutputBuffers(srcTaskId, numDestinations, true);
+
+  // Create one sink per destination. Each connects to its own destination index.
+  std::vector<std::shared_ptr<SinkDriverMock>> sinkDrivers;
+  for (int destId = 0; destId < numDestinations; ++destId) {
+    const std::string sinkTaskId =
+        taskPrefix + "broadcastSink" + std::to_string(destId);
+    core::PlanNodeId exchangeNodeId;
+    auto sinkTask = createExchangeTask(
+        sinkTaskId, CudfTestData::kTestRowType, destId, exchangeNodeId);
+    auto sinkDriver = std::make_shared<SinkDriverMock>(sinkTask, /*numDrivers=*/1);
+
+    std::vector<exec::Split> splits;
+    splits.emplace_back(remoteSplit(srcTaskId, destId));
+    sinkDriver->addSplits(splits);
+
+    sinkDrivers.push_back(sinkDriver);
+  }
+
+  // Producer sends to 1 partition (destination 0); broadcast replicates to all.
+  auto sourceMock = std::make_shared<CudfPartitionedOutputMock>(
+      srcTaskId, numDrivers, /*numPartitions=*/1, numChunks, numRowsPerChunk);
+
+  // Start source and sinks.
+  sourceMock->run();
+  for (auto& sink : sinkDrivers) {
+    sink->run();
+  }
+
+  // Wait for completion.
+  sourceMock->joinThreads();
+  for (auto& sink : sinkDrivers) {
+    sink->joinThreads();
+  }
+
+  // Each sink should receive all chunks: 5 * 1000 = 5000 rows.
+  const size_t expectedRowsPerSink =
+      static_cast<size_t>(numChunks) * numRowsPerChunk;
+  for (int i = 0; i < numDestinations; ++i) {
+    EXPECT_EQ(sinkDrivers[i]->numRows(), expectedRowsPerSink)
+        << "Sink " << i << " row count mismatch";
+  }
+
+  // Cleanup.
+  queueManager_->removeTask(srcTaskId);
+  config.intraNodeExchange = origIntraNode;
 }
 
 // Test that CudfPartitionedOutput's batch accumulation correctly merges many

@@ -202,7 +202,7 @@ void CudfExchangeServer::sendData() {
   VLOG(2) << (isIntraNodeTransfer_ ? "[INTRA]" : "[REMOTE]") << " [ExSrv "
           << partitionKey_.toString() << " seq=" << sequenceNumber_
           << "] sendData hasData=" << (dataPtr_ != nullptr)
-          << (dataPtr_
+          << (dataPtr_ && dataPtr_->gpu_data
                   ? " size=" + std::to_string(dataPtr_->gpu_data->size())
                   : "");
 

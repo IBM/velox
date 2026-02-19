@@ -100,6 +100,15 @@ class CudfOutputQueueManager {
       int destination,
       CudfDataAvailableCallback notify);
 
+  /// @brief Returns true if the task exists, is initialized, and uses broadcast
+  /// mode. Returns false if the task doesn't exist or uses partitioned mode.
+  ///
+  /// NOTE: There is a theoretical race where this is called before
+  /// initializeTask() sets the queue's kind_. In that case it returns false
+  /// (default kPartitioned). In practice, Presto's coordinator ensures the
+  /// producer task is initialized before telling consumers to connect.
+  bool isBroadcast(const std::string& taskId);
+
   /// @brief Removes the queue for the given task from the queue manager.
   /// Calls "terminate" on the queue to awake waiting producers.
   void removeTask(const std::string& taskId);
