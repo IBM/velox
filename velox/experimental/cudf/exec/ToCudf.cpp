@@ -432,6 +432,9 @@ void CudfConfig::initialize(
   if (config.find(kUcxxBlockingPolling) != config.end()) {
     ucxxBlockingPolling = folly::to<bool>(config[kUcxxBlockingPolling]);
   }
+  if (config.find(kCudfExchangeLogLevel) != config.end()) {
+    exchangeLogLevel = folly::to<int32_t>(config[kCudfExchangeLogLevel]);
+  }
 
 }
 

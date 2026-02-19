@@ -45,6 +45,8 @@ struct CudfConfig {
   static constexpr const char* kCudfIntraNodeExchange{
       "cudf.intra_node_exchange"};
   static constexpr const char* kUcxxBlockingPolling{"ucxx.blocking_polling"};
+  static constexpr const char* kCudfExchangeLogLevel{
+      "cudf.exchange_log_level"};
 
   /// Singleton CudfConfig instance.
   /// Clients must set the configs below before invoking registerCudf().
@@ -109,6 +111,10 @@ struct CudfConfig {
 
   /// Whether to use blocking polling in UCXX.
   bool ucxxBlockingPolling{true};
+
+  /// VLOG level for cudf-exchange source files (0 = silent, 1-3 = increasing
+  /// verbosity). Applied via google::SetVLOGLevel when Communicator starts.
+  int32_t exchangeLogLevel{0};
 };
 
 } // namespace facebook::velox::cudf_velox
