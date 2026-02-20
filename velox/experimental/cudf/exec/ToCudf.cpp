@@ -435,7 +435,6 @@ void CudfConfig::initialize(
   if (config.find(kCudfExchangeLogLevel) != config.end()) {
     exchangeLogLevel = folly::to<int32_t>(config[kCudfExchangeLogLevel]);
   }
-
 }
 
 } // namespace facebook::velox::cudf_velox

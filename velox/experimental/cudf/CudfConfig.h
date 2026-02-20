@@ -45,8 +45,7 @@ struct CudfConfig {
   static constexpr const char* kCudfIntraNodeExchange{
       "cudf.intra_node_exchange"};
   static constexpr const char* kUcxxBlockingPolling{"ucxx.blocking_polling"};
-  static constexpr const char* kCudfExchangeLogLevel{
-      "cudf.exchange_log_level"};
+  static constexpr const char* kCudfExchangeLogLevel{"cudf.exchange_log_level"};
 
   /// Singleton CudfConfig instance.
   /// Clients must set the configs below before invoking registerCudf().

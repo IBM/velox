@@ -87,7 +87,8 @@ add_custom_target(exchange_tests)
 add_dependencies(exchange_tests 1brc_server 1brc_client)
 
 # Wide table exchange server and client for profiling
-add_executable(wide_table_exchange_server
+add_executable(
+  wide_table_exchange_server
   WideTableExchangeServer.cpp
   SourceDriverMock.cpp
   CudfTestHelpers.cpp
@@ -95,7 +96,8 @@ add_executable(wide_table_exchange_server
 )
 target_compile_options(wide_table_exchange_server PRIVATE -Wno-missing-field-initializers)
 
-add_executable(wide_table_exchange_client
+add_executable(
+  wide_table_exchange_client
   WideTableExchangeClient.cpp
   SinkDriverMock.cpp
   CudfTestHelpers.cpp

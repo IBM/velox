@@ -31,19 +31,19 @@
 #include <sstream>
 #include <vector>
 #include "CudfTestHelpers.h"
-#include "velox/core/QueryConfig.h"
 #include "folly/experimental/EventCount.h"
 #include "velox/common/memory/MemoryPool.h"
+#include "velox/core/QueryConfig.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/experimental/cudf-exchange/Communicator.h"
 #include "velox/experimental/cudf-exchange/CudfExchangeProtocol.h"
 #include "velox/experimental/cudf-exchange/CudfOutputQueueManager.h"
-#include "velox/experimental/cudf/CudfConfig.h"
 #include "velox/experimental/cudf-exchange/tests/CudfPartitionedOutputMock.h"
 #include "velox/experimental/cudf-exchange/tests/CudfTestData.h"
 #include "velox/experimental/cudf-exchange/tests/CudfTestHelpers.h"
 #include "velox/experimental/cudf-exchange/tests/SinkDriverMock.h"
 #include "velox/experimental/cudf-exchange/tests/SourceDriverMock.h"
+#include "velox/experimental/cudf/CudfConfig.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -211,9 +211,11 @@ TEST_P(CudfExchangeTest, basicTest) {
   VLOG(3) << "+ CudfExchangeTest::basicTest";
   ExchangeTestParams p = GetParam();
 
-  // Skip wide table tests - CudfPartitionedOutputMock only supports narrow tables
+  // Skip wide table tests - CudfPartitionedOutputMock only supports narrow
+  // tables
   if (shouldSkipWideTable()) {
-    GTEST_SKIP() << "basicTest skipped for WideTable - uses CudfPartitionedOutputMock";
+    GTEST_SKIP()
+        << "basicTest skipped for WideTable - uses CudfPartitionedOutputMock";
   }
 
   int numUpstreamTasks = p.numUpstreamTasks;
@@ -232,7 +234,11 @@ TEST_P(CudfExchangeTest, basicTest) {
         createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
 
     // tell the queue manager that a new source task exists.
-    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, p.numPartitions, p.numSrcDrivers);
+    queueManager_->initializeTask(
+        srcTask,
+        core::PartitionedOutputNode::Kind::kPartitioned,
+        p.numPartitions,
+        p.numSrcDrivers);
 
     sourceMocks.emplace_back(
         std::make_shared<CudfPartitionedOutputMock>(
@@ -285,8 +291,9 @@ TEST_P(CudfExchangeTest, basicTest) {
   VLOG(3) << "All sink tasks done.";
 
   // Total rows received across all partitions should equal total rows sent.
-  // CudfPartitionedOutputMock sends numChunks * numRowsPerChunk to EACH partition,
-  // so total rows = chunks * rowsPerChunk * partitions * upstreamTasks * srcDrivers
+  // CudfPartitionedOutputMock sends numChunks * numRowsPerChunk to EACH
+  // partition, so total rows = chunks * rowsPerChunk * partitions *
+  // upstreamTasks * srcDrivers
   size_t expectedRows = static_cast<size_t>(p.numChunks) * p.numRowsPerChunk *
       p.numPartitions * numUpstreamTasks * p.numSrcDrivers;
   size_t totalReceivedRows = 0;
@@ -308,9 +315,11 @@ TEST_P(CudfExchangeTest, dataIntegrityTest) {
   VLOG(3) << "+ CudfExchangeTest::dataIntegrityTest";
   ExchangeTestParams p = GetParam();
 
-  // Skip wide table tests - CudfPartitionedOutputMock only supports narrow tables
+  // Skip wide table tests - CudfPartitionedOutputMock only supports narrow
+  // tables
   if (shouldSkipWideTable()) {
-    GTEST_SKIP() << "dataIntegrityTest skipped for WideTable - uses CudfPartitionedOutputMock";
+    GTEST_SKIP()
+        << "dataIntegrityTest skipped for WideTable - uses CudfPartitionedOutputMock";
   }
 
   int numUpstreamTasks = p.numUpstreamTasks;
@@ -334,7 +343,11 @@ TEST_P(CudfExchangeTest, dataIntegrityTest) {
         createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
 
     // tell the queue manager that a new source task exists.
-    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, p.numPartitions, p.numSrcDrivers);
+    queueManager_->initializeTask(
+        srcTask,
+        core::PartitionedOutputNode::Kind::kPartitioned,
+        p.numPartitions,
+        p.numSrcDrivers);
 
     // Mock the CudfPartitionedOutput operator, it will produce numChunks of
     // data each containing numRowsPerChunk of data copied from the CudfTestData
@@ -419,9 +432,11 @@ TEST_P(CudfExchangeTest, bandwidthTest) {
         << "Bandwidth test skipped. Set RUN_BANDWIDTH_TEST=1 to enable.";
   }
 
-  // Skip wide table tests - CudfPartitionedOutputMock only supports narrow tables
+  // Skip wide table tests - CudfPartitionedOutputMock only supports narrow
+  // tables
   if (shouldSkipWideTable()) {
-    GTEST_SKIP() << "bandwidthTest skipped for WideTable - uses CudfPartitionedOutputMock";
+    GTEST_SKIP()
+        << "bandwidthTest skipped for WideTable - uses CudfPartitionedOutputMock";
   }
 
   VLOG(3) << "+ CudfExchangeTest::bandwidthTest";
@@ -448,7 +463,11 @@ TEST_P(CudfExchangeTest, bandwidthTest) {
     // block sending
     auto srcTask = createSourceTask(
         srcTaskId, pool_, CudfTestData::kTestRowType, FOUR_GBYTES * 10);
-    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, p.numPartitions, p.numSrcDrivers);
+    queueManager_->initializeTask(
+        srcTask,
+        core::PartitionedOutputNode::Kind::kPartitioned,
+        p.numPartitions,
+        p.numSrcDrivers);
 
     // Mock the CudfPartitionedOutput operator, it will produce numChunks of
     // data each containing numRowsPerChunk of data copied from the CudfTestData
@@ -530,8 +549,9 @@ TEST_P(CudfExchangeTest, realPartitionedOutputTest) {
   VLOG(3) << "+ CudfExchangeTest::realPartitionedOutputTest";
   ExchangeTestParams p = GetParam();
 
-  // Wide table multi-partition tests work by using structs_column_view::get_sliced_child()
-  // in CudfExchangeServer/CudfExchangeProtocol to get STRUCT children with the
+  // Wide table multi-partition tests work by using
+  // structs_column_view::get_sliced_child() in
+  // CudfExchangeServer/CudfExchangeProtocol to get STRUCT children with the
   // parent's offset/size applied after cudf::split.
 
   // Use unique task prefix to avoid collisions between parametrized tests
@@ -553,11 +573,14 @@ TEST_P(CudfExchangeTest, realPartitionedOutputTest) {
 
   // Create source task with PartitionedOutput plan node
   auto srcTask = createPartitionedOutputTask(
-      srcTaskId, pool_, rowType, p.numPartitions,
-      partitionKeys);
+      srcTaskId, pool_, rowType, p.numPartitions, partitionKeys);
 
   // Tell the queue manager that a new source task exists
-  queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, p.numPartitions, p.numSrcDrivers);
+  queueManager_->initializeTask(
+      srcTask,
+      core::PartitionedOutputNode::Kind::kPartitioned,
+      p.numPartitions,
+      p.numSrcDrivers);
 
   // Create table generator for wide tables, nullptr for narrow tables
   std::shared_ptr<BaseTableGenerator> tableGenerator;
@@ -577,10 +600,11 @@ TEST_P(CudfExchangeTest, realPartitionedOutputTest) {
     const std::string sinkTaskId =
         taskPrefix + "sinkTask" + std::to_string(partitionId);
     core::PlanNodeId exchangeNodeId;
-    auto sinkTask = createExchangeTask(
-        sinkTaskId, rowType, partitionId, exchangeNodeId);
+    auto sinkTask =
+        createExchangeTask(sinkTaskId, rowType, partitionId, exchangeNodeId);
 
-    auto sinkDriver = std::make_shared<SinkDriverMock>(sinkTask, p.numDstDrivers);
+    auto sinkDriver =
+        std::make_shared<SinkDriverMock>(sinkTask, p.numDstDrivers);
 
     // Add remote split for this partition
     std::vector<facebook::velox::exec::Split> splits;
@@ -626,9 +650,12 @@ TEST_P(CudfExchangeTest, realPartitionedOutputTest) {
 
 // Test using real CudfPartitionedOutput with data integrity verification.
 // This test:
-// 1. Creates reference data (CudfTestData or WideTestTable) - same as dataIntegrityTest
-// 2. For narrow tables with multi-partition: partitions that data using cudf::hash_partition
-//    (same algorithm as CudfPartitionedOutput) to create per-partition reference data
+// 1. Creates reference data (CudfTestData or WideTestTable) - same as
+// dataIntegrityTest
+// 2. For narrow tables with multi-partition: partitions that data using
+// cudf::hash_partition
+//    (same algorithm as CudfPartitionedOutput) to create per-partition
+//    reference data
 // 3. Sends data through SourceDriverMock (which uses CudfPartitionedOutput)
 // 4. Each SinkDriverMock verifies received data against its partition's
 //    expected data using row-by-row comparison
@@ -636,8 +663,9 @@ TEST_P(CudfExchangeTest, realPartitionedOutputDataIntegrityTest) {
   VLOG(3) << "+ CudfExchangeTest::realPartitionedOutputDataIntegrityTest";
   ExchangeTestParams p = GetParam();
 
-  // Wide table multi-partition tests work by using structs_column_view::get_sliced_child()
-  // in CudfExchangeServer/CudfExchangeProtocol to get STRUCT children with the
+  // Wide table multi-partition tests work by using
+  // structs_column_view::get_sliced_child() in
+  // CudfExchangeServer/CudfExchangeProtocol to get STRUCT children with the
   // parent's offset/size applied after cudf::split.
 
   // Use unique task prefix to avoid collisions between parametrized tests
@@ -652,7 +680,8 @@ TEST_P(CudfExchangeTest, realPartitionedOutputDataIntegrityTest) {
   // Get the row type based on the table type
   auto rowType = getRowType(p.tableType);
 
-  // Create reference data that will be sent - CudfTestData for narrow, WideTestTable for wide
+  // Create reference data that will be sent - CudfTestData for narrow,
+  // WideTestTable for wide
   std::shared_ptr<BaseTableGenerator> tableGenerator;
   if (p.tableType == TableType::WIDE) {
     auto wideTable = std::make_shared<WideTestTable>();
@@ -665,7 +694,8 @@ TEST_P(CudfExchangeTest, realPartitionedOutputDataIntegrityTest) {
   }
 
   // Specify partition keys when numPartitions > 1 to enable hash partitioning.
-  // Use "c0" for narrow tables (column index 0) or "int32_col" for wide tables (column index 2).
+  // Use "c0" for narrow tables (column index 0) or "int32_col" for wide tables
+  // (column index 2).
   std::vector<std::string> partitionKeys;
   std::vector<cudf::size_type> partitionKeyIndices;
   if (p.numPartitions > 1) {
@@ -684,35 +714,37 @@ TEST_P(CudfExchangeTest, realPartitionedOutputDataIntegrityTest) {
   std::vector<std::shared_ptr<BaseTableGenerator>> partitionedDataToVerify(
       p.numPartitions);
 
-  // For narrow tables with multi-partition, we can compute per-partition reference data
-  // For wide tables or single partition, we use the tableGenerator directly
+  // For narrow tables with multi-partition, we can compute per-partition
+  // reference data For wide tables or single partition, we use the
+  // tableGenerator directly
   bool canVerifyDataIntegrity = true;
 
   if (p.numPartitions > 1 && !partitionKeyIndices.empty()) {
     // Multi-partition: skip data integrity verification.
     // cudf::hash_partition does not guarantee deterministic row ordering within
-    // partitions, so the reference data created here may have different row order
-    // than the data sent through CudfPartitionedOutput::hashPartition(), even though
-    // both use the same input data and hash function.
-    // Row count verification still confirms all data is transferred correctly.
+    // partitions, so the reference data created here may have different row
+    // order than the data sent through CudfPartitionedOutput::hashPartition(),
+    // even though both use the same input data and hash function. Row count
+    // verification still confirms all data is transferred correctly.
     canVerifyDataIntegrity = false;
     VLOG(3) << "Multi-partition test: skipping data integrity verification "
             << "(hash_partition row order is not deterministic)";
   } else {
-    // Single partition: all data goes to partition 0, use tableGenerator directly
+    // Single partition: all data goes to partition 0, use tableGenerator
+    // directly
     partitionedDataToVerify[0] = tableGenerator;
   }
 
   // Create source task with PartitionedOutput plan node
   auto srcTask = createPartitionedOutputTask(
-      srcTaskId,
-      pool_,
-      rowType,
-      p.numPartitions,
-      partitionKeys);
+      srcTaskId, pool_, rowType, p.numPartitions, partitionKeys);
 
   // Tell the queue manager that a new source task exists
-  queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, p.numPartitions, numSrcDrivers);
+  queueManager_->initializeTask(
+      srcTask,
+      core::PartitionedOutputNode::Kind::kPartitioned,
+      p.numPartitions,
+      numSrcDrivers);
 
   // Create SourceDriverMock with the tableGenerator
   auto sourceDriver = std::make_shared<SourceDriverMock>(
@@ -725,13 +757,16 @@ TEST_P(CudfExchangeTest, realPartitionedOutputDataIntegrityTest) {
     const std::string sinkTaskId =
         taskPrefix + "sinkTask" + std::to_string(partitionId);
     core::PlanNodeId exchangeNodeId;
-    auto sinkTask = createExchangeTask(
-        sinkTaskId, rowType, partitionId, exchangeNodeId);
+    auto sinkTask =
+        createExchangeTask(sinkTaskId, rowType, partitionId, exchangeNodeId);
 
-    // Pass the partitioned reference data for this partition (may be nullptr for wide multi-partition)
+    // Pass the partitioned reference data for this partition (may be nullptr
+    // for wide multi-partition)
     auto sinkDriver = std::make_shared<SinkDriverMock>(
-        sinkTask, p.numDstDrivers,
-        canVerifyDataIntegrity ? partitionedDataToVerify[partitionId] : nullptr);
+        sinkTask,
+        p.numDstDrivers,
+        canVerifyDataIntegrity ? partitionedDataToVerify[partitionId]
+                               : nullptr);
 
     std::vector<facebook::velox::exec::Split> splits;
     splits.emplace_back(remoteSplit(srcTaskId, partitionId));
@@ -780,7 +815,8 @@ TEST_P(CudfExchangeTest, realPartitionedOutputDataIntegrityTest) {
 
     GTEST_ASSERT_EQ(allDataValid, true);
   } else {
-    VLOG(3) << "Data integrity verification skipped for wide table with multi-partition";
+    VLOG(3)
+        << "Data integrity verification skipped for wide table with multi-partition";
   }
 
   // Cleanup
@@ -811,15 +847,19 @@ TEST_P(CudfExchangeTest, intraNodeTaskRemovalLivelock) {
 
   // 1. Create and initialize source task but never enqueue any data.
   //    This simulates a producer that gets cancelled before producing.
-  auto srcTask =
-      createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
-  queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, numPartitions, /*numDrivers=*/1);
+  auto srcTask = createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
+  queueManager_->initializeTask(
+      srcTask,
+      core::PartitionedOutputNode::Kind::kPartitioned,
+      numPartitions,
+      /*numDrivers=*/1);
 
   // 2. Create sink task with exchange plan node.
   core::PlanNodeId exchangeNodeId;
   auto sinkTask = createExchangeTask(
       sinkTaskId, CudfTestData::kTestRowType, partitionId, exchangeNodeId);
-  auto sinkDriver = std::make_shared<SinkDriverMock>(sinkTask, /*numDrivers=*/1);
+  auto sinkDriver =
+      std::make_shared<SinkDriverMock>(sinkTask, /*numDrivers=*/1);
 
   // Add split pointing to source task. Since we use a single Communicator,
   // the handshake will resolve to intra-node (same listener IP:port).
@@ -835,15 +875,15 @@ TEST_P(CudfExchangeTest, intraNodeTaskRemovalLivelock) {
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
   // 5. Premature task cancellation — abort the source task then remove it.
-  //    This mirrors the production flow where the task is aborted before removal.
-  //    After the fix, the consumer should detect this and stop polling.
+  //    This mirrors the production flow where the task is aborted before
+  //    removal. After the fix, the consumer should detect this and stop
+  //    polling.
   srcTask->requestAbort();
   queueManager_->removeTask(srcTaskId);
 
   // 6. Wait for sink to complete with a timeout.
-  auto future = std::async(std::launch::async, [&]() {
-    sinkDriver->joinThreads();
-  });
+  auto future =
+      std::async(std::launch::async, [&]() { sinkDriver->joinThreads(); });
   auto status = future.wait_for(std::chrono::seconds(10));
 
   // 7. Verify that the sink completed (no livelock).
@@ -889,8 +929,7 @@ TEST_P(CudfExchangeTest, broadcastIntraNodeFallback) {
   const int numRowsPerChunk = 1000;
 
   // Create source task with broadcast mode.
-  auto srcTask =
-      createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
+  auto srcTask = createSourceTask(srcTaskId, pool_, CudfTestData::kTestRowType);
   queueManager_->initializeTask(
       srcTask,
       core::PartitionedOutputNode::Kind::kBroadcast,
@@ -899,7 +938,8 @@ TEST_P(CudfExchangeTest, broadcastIntraNodeFallback) {
   // Finalize destinations for broadcast.
   queueManager_->updateOutputBuffers(srcTaskId, numDestinations, true);
 
-  // Create one sink per destination. Each connects to its own destination index.
+  // Create one sink per destination. Each connects to its own destination
+  // index.
   std::vector<std::shared_ptr<SinkDriverMock>> sinkDrivers;
   for (int destId = 0; destId < numDestinations; ++destId) {
     const std::string sinkTaskId =
@@ -907,7 +947,8 @@ TEST_P(CudfExchangeTest, broadcastIntraNodeFallback) {
     core::PlanNodeId exchangeNodeId;
     auto sinkTask = createExchangeTask(
         sinkTaskId, CudfTestData::kTestRowType, destId, exchangeNodeId);
-    auto sinkDriver = std::make_shared<SinkDriverMock>(sinkTask, /*numDrivers=*/1);
+    auto sinkDriver =
+        std::make_shared<SinkDriverMock>(sinkTask, /*numDrivers=*/1);
 
     std::vector<exec::Split> splits;
     splits.emplace_back(remoteSplit(srcTaskId, destId));
@@ -979,17 +1020,20 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
     auto dataToSend = std::make_shared<CudfTestData>();
     dataToSend->initialize(numRowsPerChunk);
 
-    auto srcTask = createPartitionedOutputTask(
-        srcTaskId, pool_, rowType, numPartitions);
-    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, numPartitions, numDrivers);
+    auto srcTask =
+        createPartitionedOutputTask(srcTaskId, pool_, rowType, numPartitions);
+    queueManager_->initializeTask(
+        srcTask,
+        core::PartitionedOutputNode::Kind::kPartitioned,
+        numPartitions,
+        numDrivers);
 
     auto sourceDriver = std::make_shared<SourceDriverMock>(
         srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
 
     const std::string sinkTaskId = taskPrefix + "sinkTask0";
     core::PlanNodeId exchangeNodeId;
-    auto sinkTask =
-        createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
+    auto sinkTask = createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
     auto sinkDriver =
         std::make_shared<SinkDriverMock>(sinkTask, numDrivers, dataToSend);
 
@@ -1002,8 +1046,7 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
     sourceDriver->joinThreads();
     sinkDriver->joinThreads();
 
-    size_t expectedTotalRows =
-        static_cast<size_t>(numChunks) * numRowsPerChunk;
+    size_t expectedTotalRows = static_cast<size_t>(numChunks) * numRowsPerChunk;
 
     // Verify all rows arrived.
     EXPECT_EQ(sinkDriver->numRows(), expectedTotalRows)
@@ -1053,17 +1096,20 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
     auto dataToSend = std::make_shared<CudfTestData>();
     dataToSend->initialize(numRowsPerChunk);
 
-    auto srcTask = createPartitionedOutputTask(
-        srcTaskId, pool_, rowType, numPartitions);
-    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, numPartitions, numDrivers);
+    auto srcTask =
+        createPartitionedOutputTask(srcTaskId, pool_, rowType, numPartitions);
+    queueManager_->initializeTask(
+        srcTask,
+        core::PartitionedOutputNode::Kind::kPartitioned,
+        numPartitions,
+        numDrivers);
 
     auto sourceDriver = std::make_shared<SourceDriverMock>(
         srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
 
     const std::string sinkTaskId = taskPrefix + "sinkTask0";
     core::PlanNodeId exchangeNodeId;
-    auto sinkTask =
-        createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
+    auto sinkTask = createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
     auto sinkDriver =
         std::make_shared<SinkDriverMock>(sinkTask, numDrivers, dataToSend);
 
@@ -1076,8 +1122,7 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
     sourceDriver->joinThreads();
     sinkDriver->joinThreads();
 
-    size_t expectedTotalRows =
-        static_cast<size_t>(numChunks) * numRowsPerChunk;
+    size_t expectedTotalRows = static_cast<size_t>(numChunks) * numRowsPerChunk;
 
     EXPECT_EQ(sinkDriver->numRows(), expectedTotalRows)
         << "Remainder scenario must not lose rows";
@@ -1118,17 +1163,20 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
     auto dataToSend = std::make_shared<CudfTestData>();
     dataToSend->initialize(numRowsPerChunk);
 
-    auto srcTask = createPartitionedOutputTask(
-        srcTaskId, pool_, rowType, numPartitions);
-    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, numPartitions, numDrivers);
+    auto srcTask =
+        createPartitionedOutputTask(srcTaskId, pool_, rowType, numPartitions);
+    queueManager_->initializeTask(
+        srcTask,
+        core::PartitionedOutputNode::Kind::kPartitioned,
+        numPartitions,
+        numDrivers);
 
     auto sourceDriver = std::make_shared<SourceDriverMock>(
         srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
 
     const std::string sinkTaskId = taskPrefix + "sinkTask0";
     core::PlanNodeId exchangeNodeId;
-    auto sinkTask =
-        createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
+    auto sinkTask = createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
     auto sinkDriver =
         std::make_shared<SinkDriverMock>(sinkTask, numDrivers, dataToSend);
 
@@ -1141,8 +1189,7 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
     sourceDriver->joinThreads();
     sinkDriver->joinThreads();
 
-    size_t expectedTotalRows =
-        static_cast<size_t>(numChunks) * numRowsPerChunk;
+    size_t expectedTotalRows = static_cast<size_t>(numChunks) * numRowsPerChunk;
 
     EXPECT_EQ(sinkDriver->numRows(), expectedTotalRows)
         << "Large-chunk scenario must not lose rows";
@@ -1157,8 +1204,7 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
 
     // Large chunks should pass through without accumulation — each addInput
     // immediately flushes because pendingRows >= kTargetRowsPerChunk.
-    EXPECT_EQ(
-        sinkDriver->numChunksReceived(), static_cast<uint64_t>(numChunks))
+    EXPECT_EQ(sinkDriver->numChunksReceived(), static_cast<uint64_t>(numChunks))
         << "Large chunks should not be accumulated";
 
     queueManager_->removeTask(srcTaskId);
@@ -1189,15 +1235,18 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
 
     auto srcTask = createPartitionedOutputTask(
         srcTaskId, pool_, rowType, numPartitions, {}, FOUR_GBYTES, extraConfig);
-    queueManager_->initializeTask(srcTask, core::PartitionedOutputNode::Kind::kPartitioned, numPartitions, numDrivers);
+    queueManager_->initializeTask(
+        srcTask,
+        core::PartitionedOutputNode::Kind::kPartitioned,
+        numPartitions,
+        numDrivers);
 
     auto sourceDriver = std::make_shared<SourceDriverMock>(
         srcTask, numDrivers, numChunks, numRowsPerChunk, dataToSend);
 
     const std::string sinkTaskId = taskPrefix + "sinkTask0";
     core::PlanNodeId exchangeNodeId;
-    auto sinkTask =
-        createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
+    auto sinkTask = createExchangeTask(sinkTaskId, rowType, 0, exchangeNodeId);
     auto sinkDriver =
         std::make_shared<SinkDriverMock>(sinkTask, numDrivers, dataToSend);
 
@@ -1210,8 +1259,7 @@ TEST_P(CudfExchangeTest, batchAccumulationTest) {
     sourceDriver->joinThreads();
     sinkDriver->joinThreads();
 
-    size_t expectedTotalRows =
-        static_cast<size_t>(numChunks) * numRowsPerChunk;
+    size_t expectedTotalRows = static_cast<size_t>(numChunks) * numRowsPerChunk;
 
     EXPECT_EQ(sinkDriver->numRows(), expectedTotalRows)
         << "Custom threshold scenario must not lose rows";

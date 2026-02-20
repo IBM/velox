@@ -279,21 +279,20 @@ TEST_F(TopNTest, decimalTopNSynchronization) {
 
   createDuckDbTable(vectors);
 
-  auto plan = PlanBuilder()
-                  .values(vectors)
-                  .topN(
-                      {"c1 DESC NULLS LAST", "c0 ASC NULLS LAST"},
-                      topN,
-                      false)
-                  .planNode();
+  auto plan =
+      PlanBuilder()
+          .values(vectors)
+          .topN({"c1 DESC NULLS LAST", "c0 ASC NULLS LAST"}, topN, false)
+          .planNode();
 
   // Force per-input GPU batches and early merges to exercise cross-stream sync.
   AssertQueryBuilder(plan, duckDbQueryRunner_)
       .config(cudf_velox::CudfFromVelox::kGpuBatchSizeRows, batchSize)
       .config(cudf_velox::CudfQueryConfig::kCudfTopNBatchSize, 2)
-      .assertResults(fmt::format(
-          "SELECT c0, c1, c2 FROM tmp ORDER BY c1 DESC, c0 LIMIT {}",
-          topN));
+      .assertResults(
+          fmt::format(
+              "SELECT c0, c1, c2 FROM tmp ORDER BY c1 DESC, c0 LIMIT {}",
+              topN));
 }
 
 TEST_F(TopNTest, empty) {
