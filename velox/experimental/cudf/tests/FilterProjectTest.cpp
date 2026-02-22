@@ -1720,4 +1720,102 @@ TEST_F(CudfFilterProjectTest, andAndAndWithDecimalDivideBelowExpr) {
   facebook::velox::test::assertEqualVectors(expected, result);
 }
 
+TEST_F(CudfSimpleFilterProjectTest, castDateToVarchar) {
+  auto result = evaluateOnce<std::string>(
+      "cast(c0 as varchar)",
+      {DATE()},
+      std::optional<int32_t>(parseDate("2024-03-15")));
+  EXPECT_EQ(result, "2024-03-15");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, castDateToVarcharEpoch) {
+  auto result = evaluateOnce<std::string>(
+      "cast(c0 as varchar)",
+      {DATE()},
+      std::optional<int32_t>(parseDate("1970-01-01")));
+  EXPECT_EQ(result, "1970-01-01");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, castDateToVarcharYear0001) {
+  // SAP null date — cuDF %Y zero-pads to 4 digits
+  auto result = evaluateOnce<std::string>(
+      "cast(c0 as varchar)",
+      {DATE()},
+      std::optional<int32_t>(parseDate("0001-01-01")));
+  EXPECT_EQ(result, "0001-01-01");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, castDateToVarcharPreEpoch) {
+  auto result = evaluateOnce<std::string>(
+      "cast(c0 as varchar)",
+      {DATE()},
+      std::optional<int32_t>(parseDate("1920-01-02")));
+  EXPECT_EQ(result, "1920-01-02");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, castDateToVarcharNull) {
+  auto result = evaluateOnce<std::string>(
+      "cast(c0 as varchar)", {DATE()}, std::optional<int32_t>(std::nullopt));
+  EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(CudfSimpleFilterProjectTest, tryCastDateToVarchar) {
+  // try_cast should also work (from_timestamps always succeeds)
+  auto result = evaluateOnce<std::string>(
+      "try_cast(c0 as varchar)",
+      {DATE()},
+      std::optional<int32_t>(parseDate("2024-03-15")));
+  EXPECT_EQ(result, "2024-03-15");
+}
+
+// End-to-end test for Query 1's CASE WHEN pattern on the cuDF GPU path.
+// Original query:
+//   SELECT 1 FROM s3_erpams_vbep
+//   GROUP BY CASE WHEN CAST(tddat AS varchar) = '00010101'
+//                 THEN '00000000'
+//                 ELSE CAST(tddat AS varchar)
+//            END
+//   LIMIT 1;
+//
+// Note: Presto's CAST(date AS varchar) produces ISO 8601 'YYYY-MM-DD' (with
+// dashes), so the comparison literal uses dashes. The original query compared
+// against '00010101' (dashless) which is a semantic mismatch — it would never
+// match. This test uses the correct Presto semantics.
+TEST_F(CudfFilterProjectTest, castDateToVarcharQuery1Pattern) {
+  // End-to-end test for Query 1's CASE WHEN pattern:
+  //   CASE WHEN CAST(tddat AS varchar) = '0001-01-01'
+  //        THEN '00000000'
+  //        ELSE CAST(tddat AS varchar)
+  //   END
+  // Note: Presto CAST(date AS varchar) produces ISO 8601 'YYYY-MM-DD' (with
+  // dashes), so the comparison literal uses dashes. The original query compared
+  // against '00010101' (dashless) which is a semantic mismatch.
+  auto dates = makeNullableFlatVector<int32_t>(
+      {DATE()->toDays("0001-01-01"), // SAP null date — should match
+       DATE()->toDays("2024-03-15"), // normal date — should not match
+       DATE()->toDays("1970-01-01"), // epoch — should not match
+       DATE()->toDays("2027-10-18"), // far future — should not match
+       std::nullopt}, // NULL — should propagate as NULL
+      DATE());
+  auto plan = PlanBuilder()
+                  .values({makeRowVector({dates})})
+                  .project({"CASE WHEN cast(c0 as varchar) = '0001-01-01'"
+                            " THEN '00000000'"
+                            " ELSE cast(c0 as varchar)"
+                            " END AS result"})
+                  .planNode();
+  auto result = AssertQueryBuilder(plan).copyResults(pool());
+
+  auto expected = makeRowVector({
+      makeNullableFlatVector<StringView>({
+          "00000000"_sv, // 0001-01-01 matched → replaced
+          "2024-03-15"_sv, // normal date passthrough
+          "1970-01-01"_sv, // epoch passthrough
+          "2027-10-18"_sv, // far future passthrough
+          std::nullopt, // NULL propagation
+      }),
+  });
+  facebook::velox::test::assertEqualVectors(expected, result);
+}
+
 } // namespace
