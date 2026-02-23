@@ -610,11 +610,11 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
       int64_t numValues,
       int64_t nullCount,
       int64_t distinctCount,
+      int64_t nanCount,
       bool hasMinMax,
       bool hasNullCount,
       bool hasDistinctCount,
       bool hasNaNCount,
-      int64_t nanCount,
       MemoryPool* pool)
       : TypedStatisticsImpl(descr, pool) {
     TypedStatisticsImpl::incrementNumValues(numValues);
@@ -636,7 +636,7 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
     }
 
     if (!encodedMin.empty()) {
-      PlainDecode(encodedMin, &min_);
+      plainDecode(encodedMin, &min_);
     }
     if (!encodedMax.empty()) {
       plainDecode(encodedMax, &max_);
@@ -810,7 +810,7 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
 
   std::string MinValue() const override {
     if constexpr (std::is_same_v<T, int64_t>) {
-      if (descr_->logical_type()->is_decimal()) {
+      if (descr_->logicalType()->isDecimal()) {
         return encodeDecimalToBigEndian(min_);
       }
     }
@@ -824,19 +824,19 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
       const auto truncatedMin = UnicodeUtil::truncateStringMin(
           reinterpret_cast<const char*>(min_.ptr), min_.len, 16);
       std::string s;
-      this->PlainEncode(
+      this->plainEncode(
           ByteArray(
               truncatedMin.size(),
               reinterpret_cast<const uint8_t*>(truncatedMin.data())),
           &s);
       return s;
     }
-    return EncodeMin();
+    return encodeMin();
   }
 
   std::string MaxValue() const override {
     if constexpr (std::is_same_v<T, int64_t>) {
-      if (descr_->logical_type()->is_decimal()) {
+      if (descr_->logicalType()->isDecimal()) {
         return encodeDecimalToBigEndian(max_);
       }
     }
@@ -847,14 +847,14 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
       const auto truncatedMax = UnicodeUtil::truncateStringMax(
           reinterpret_cast<const char*>(max_.ptr), max_.len, 16);
       std::string s;
-      this->PlainEncode(
+      this->plainEncode(
           ByteArray(
               truncatedMax.size(),
               reinterpret_cast<const uint8_t*>(truncatedMax.data())),
           &s);
       return s;
     }
-    return EncodeMax();
+    return encodeMax();
   }
 
   std::optional<std::string> icebergUpperBoundExclusive(
@@ -899,7 +899,7 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
       s.setDistinctCount(this->distinctCount());
     }
     if (hasNanCount_) {
-      s.set_nan_count(nanCount_);
+      s.setNanCount(nanCount_);
     }
     return s;
   }
@@ -932,12 +932,12 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
 
   bool CompareMax(const Statistics& other) const override {
     auto typedStats = dynamic_cast<const TypedStatisticsImpl<DType>*>(&other);
-    return comparator_->Compare(max_, typedStats->max_) ? false : true;
+    return comparator_->compare(max_, typedStats->max_) ? false : true;
   }
 
   bool CompareMin(const Statistics& other) const override {
     auto typedStats = dynamic_cast<const TypedStatisticsImpl<DType>*>(&other);
-    return comparator_->Compare(min_, typedStats->min_) ? true : false;
+    return comparator_->compare(min_, typedStats->min_) ? true : false;
   }
 
  private:
@@ -1300,11 +1300,11 @@ std::shared_ptr<Statistics> Statistics::make(
       numValues,
       encodedStats->nullCount,
       encodedStats->distinctCount,
+      encodedStats->nanCount,
       encodedStats->hasMin && encodedStats->hasMax,
       encodedStats->hasNullCount,
       encodedStats->hasDistinctCount,
       encodedStats->hasNanCount,
-      encodedStats->nanCount,
       pool);
 }
 
@@ -1315,11 +1315,11 @@ std::shared_ptr<Statistics> Statistics::make(
     int64_t numValues,
     int64_t nullCount,
     int64_t distinctCount,
+    int64_t nanCount,
     bool hasMinMax,
     bool hasNullCount,
     bool hasDistinctCount,
     bool hasNaNCount,
-    int64_t nanCount,
     ::arrow::MemoryPool* pool) {
 #define MAKE_STATS(CAP_TYPE, KLASS)                      \
   case Type::CAP_TYPE:                                   \
@@ -1330,11 +1330,11 @@ std::shared_ptr<Statistics> Statistics::make(
         numValues,                                       \
         nullCount,                                       \
         distinctCount,                                   \
+        nanCount,                                        \
         hasMinMax,                                       \
         hasNullCount,                                    \
         hasDistinctCount,                                \
         hasNaNCount,                                     \
-        nanCount,                                        \
         pool)
 
   switch (descr->physicalType()) {
