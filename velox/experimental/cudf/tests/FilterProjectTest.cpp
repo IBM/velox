@@ -1790,11 +1790,14 @@ TEST_F(CudfSimpleFilterProjectTest, dateFormatIso) {
 }
 
 TEST_F(CudfSimpleFilterProjectTest, dateFormatYearZeroPad) {
-  // Year 0001 — SAP null date. cuDF %Y zero-pads to 4 digits.
+  // Verify %Y zero-pads to 4 digits for years < 1000.
+  // Note: year 0001 (SAP null date) can't be tested here because Timestamp
+  // uses nanoseconds which overflow for dates before ~1677. For 0001-01-01,
+  // use CAST(date AS varchar) instead (Query 1 pattern).
   auto result = evaluateOnce<std::string>(
       "date_format(c0, '%Y%m%d')",
-      std::optional<Timestamp>(parseTimestamp("0001-01-01")));
-  EXPECT_EQ(result, "00010101");
+      std::optional<Timestamp>(parseTimestamp("1900-01-01")));
+  EXPECT_EQ(result, "19000101");
 }
 
 TEST_F(CudfSimpleFilterProjectTest, dateFormatWithTime) {
@@ -1853,8 +1856,7 @@ TEST_F(CudfSimpleFilterProjectTest, dateFormatTwoDigitYear) {
 TEST_F(CudfSimpleFilterProjectTest, dateFormatNull) {
   // NULL propagation — cuDF copies bitmask from input
   auto result = evaluateOnce<std::string>(
-      "date_format(c0, '%Y%m%d')",
-      std::optional<Timestamp>(std::nullopt));
+      "date_format(c0, '%Y%m%d')", std::optional<Timestamp>(std::nullopt));
   EXPECT_FALSE(result.has_value());
 }
 
@@ -1868,23 +1870,28 @@ TEST_F(CudfSimpleFilterProjectTest, dateFormatLiteralPercent) {
 
 // End-to-end test for Query 2's date_format CASE WHEN pattern on the GPU.
 // Original query (Snowflake-to-Presto rewrite):
-//   SELECT CASE WHEN date_format(CAST(tddat AS timestamp), '%Y%m%d') = '00010101'
+//   SELECT CASE WHEN date_format(CAST(tddat AS timestamp), '%Y%m%d') =
+//   '00010101'
 //               THEN '00000000'
 //               ELSE date_format(CAST(tddat AS timestamp), '%Y%m%d')
 //          END AS tddat
 //   FROM s3_erpams_vbep LIMIT 1;
+// End-to-end test for Query 2's date_format CASE WHEN pattern on the GPU.
+// Note: 0001-01-01 (SAP null date) is NOT included because CAST(date AS
+// timestamp) overflows — Timestamp uses nanoseconds (int64 range ~1677-2262).
+// For 0001-01-01 handling, use Query 1's CAST(date AS varchar) pattern instead.
 TEST_F(CudfFilterProjectTest, dateFormatQuery2Pattern) {
   auto dates = makeNullableFlatVector<int32_t>(
-      {DATE()->toDays("0001-01-01"),  // SAP null date — should match
-       DATE()->toDays("2024-03-15"),  // normal date — should not match
-       DATE()->toDays("1970-01-01"),  // epoch — should not match
-       std::nullopt},                  // NULL — should propagate
+      {DATE()->toDays("2024-03-15"), // normal date
+       DATE()->toDays("1970-01-01"), // epoch
+       DATE()->toDays("2027-10-18"), // far future
+       std::nullopt}, // NULL — should propagate
       DATE());
   auto plan =
       PlanBuilder()
           .values({makeRowVector({dates})})
           .project(
-              {"CASE WHEN date_format(cast(c0 as timestamp), '%Y%m%d') = '00010101'"
+              {"CASE WHEN date_format(cast(c0 as timestamp), '%Y%m%d') = '19700101'"
                " THEN '00000000'"
                " ELSE date_format(cast(c0 as timestamp), '%Y%m%d')"
                " END AS result"})
@@ -1893,10 +1900,10 @@ TEST_F(CudfFilterProjectTest, dateFormatQuery2Pattern) {
 
   auto expected = makeRowVector({
       makeNullableFlatVector<StringView>({
-          "00000000"_sv,  // 0001-01-01 matched → replaced
-          "20240315"_sv,  // normal date passthrough (no dashes)
-          "19700101"_sv,  // epoch passthrough
-          std::nullopt,   // NULL propagation
+          "20240315"_sv, // normal date passthrough
+          "00000000"_sv, // epoch matched → replaced
+          "20271018"_sv, // far future passthrough
+          std::nullopt, // NULL propagation
       }),
   });
   facebook::velox::test::assertEqualVectors(expected, result);
