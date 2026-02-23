@@ -1768,6 +1768,58 @@ TEST_F(CudfSimpleFilterProjectTest, tryCastDateToVarchar) {
   EXPECT_EQ(result, "2024-03-15");
 }
 
+// INTEGER/BIGINT → VARCHAR cast tests.
+// Needed for SAP time columns (ERZET, LFUHR, etc.) stored as INTEGER
+// in INT tables, cast to VARCHAR in view definitions.
+
+TEST_F(CudfSimpleFilterProjectTest, castIntToVarchar) {
+  auto result = evaluateOnce<std::string>(
+      "cast(c0 as varchar)", std::optional<int32_t>(12345));
+  EXPECT_EQ(result, "12345");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, castIntToVarcharNegative) {
+  auto result = evaluateOnce<std::string>(
+      "cast(c0 as varchar)", std::optional<int32_t>(-100));
+  EXPECT_EQ(result, "-100");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, castIntToVarcharZero) {
+  auto result = evaluateOnce<std::string>(
+      "cast(c0 as varchar)", std::optional<int32_t>(0));
+  EXPECT_EQ(result, "0");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, castIntToVarcharNull) {
+  auto result = evaluateOnce<std::string>(
+      "cast(c0 as varchar)", std::optional<int32_t>(std::nullopt));
+  EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(CudfSimpleFilterProjectTest, castBigintToVarchar) {
+  auto result = evaluateOnce<std::string>(
+      "cast(c0 as varchar)", std::optional<int64_t>(9876543210LL));
+  EXPECT_EQ(result, "9876543210");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, tryCastIntToVarchar) {
+  auto result = evaluateOnce<std::string>(
+      "try_cast(c0 as varchar)", std::optional<int32_t>(42));
+  EXPECT_EQ(result, "42");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, castSmallintToVarchar) {
+  auto result = evaluateOnce<std::string, int16_t>(
+      "cast(c0 as varchar)", std::optional<int16_t>(255));
+  EXPECT_EQ(result, "255");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, castTinyintToVarchar) {
+  auto result = evaluateOnce<std::string, int8_t>(
+      "cast(c0 as varchar)", std::optional<int8_t>(127));
+  EXPECT_EQ(result, "127");
+}
+
 // date_format tests — GPU path for Patch 1.
 // Only format specifiers supported by cuDF are tested here.
 // Unsupported specifiers (%M month name, %W weekday, %a, %b, %p, %r,
