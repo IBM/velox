@@ -69,29 +69,29 @@ void DataFileStatsCollector::collectStats(
   std::unordered_map<int32_t, std::shared_ptr<arrow::Statistics>>
       globalMaxStats;
 
-  dataFileStats->numRecords = fileMetadata->num_rows();
-  const auto numRowGroups = fileMetadata->num_row_groups();
+  dataFileStats->numRecords = fileMetadata->numRows();
+  const auto numRowGroups = fileMetadata->numRowGroups();
   for (auto i = 0; i < numRowGroups; ++i) {
-    const auto rgm = fileMetadata->RowGroup(i);
-    VELOX_CHECK_EQ(numFields, rgm->num_columns());
-    dataFileStats->splitOffsets.emplace_back(rgm->file_offset());
+    const auto rgm = fileMetadata->rowGroup(i);
+    VELOX_CHECK_EQ(numFields, rgm->numColumns());
+    dataFileStats->splitOffsets.emplace_back(rgm->fileOffset());
 
     for (auto j = 0; j < numFields; ++j) {
-      const auto columnChunkMetadata = rgm->ColumnChunk(j);
-      const auto fieldId = columnChunkMetadata->field_id();
-      const auto numValues = columnChunkMetadata->num_values();
+      const auto columnChunkMetadata = rgm->columnChunk(j);
+      const auto fieldId = columnChunkMetadata->fieldId();
+      const auto numValues = columnChunkMetadata->numValues();
 
       dataFileStats->valueCounts[fieldId] += numValues;
       dataFileStats->columnsSizes[fieldId] +=
-          columnChunkMetadata->total_compressed_size();
+          columnChunkMetadata->totalCompressedSize();
 
       const auto columnChunkStats = columnChunkMetadata->statistics();
-      if (columnChunkStats->nan_count() > 0) {
-        dataFileStats->nanValueCounts[fieldId] += columnChunkStats->nan_count();
+      if (columnChunkStats->nanCount() > 0) {
+        dataFileStats->nanValueCounts[fieldId] += columnChunkStats->nanCount();
       }
-      dataFileStats->nullValueCounts[fieldId] += columnChunkStats->null_count();
+      dataFileStats->nullValueCounts[fieldId] += columnChunkStats->nullCount();
 
-      if (columnChunkStats->HasMinMax() &&
+      if (columnChunkStats->hasMinMax() &&
           !skipBoundsFields.contains(fieldId)) {
         if (globalMaxStats.find(fieldId) == globalMaxStats.end()) {
           globalMinStats[fieldId] = columnChunkStats;
