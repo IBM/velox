@@ -1768,6 +1768,140 @@ TEST_F(CudfSimpleFilterProjectTest, tryCastDateToVarchar) {
   EXPECT_EQ(result, "2024-03-15");
 }
 
+// date_format tests — GPU path for Patch 1.
+// Only format specifiers supported by cuDF are tested here.
+// Unsupported specifiers (%M month name, %W weekday, %a, %b, %p, %r,
+// %c, %e, %k, %l, %v, %x) fall back to CPU.
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormatYmd) {
+  // %Y%m%d — the SAP YYYYMMDD use case (Query 2's format)
+  auto result = evaluateOnce<std::string>(
+      "date_format(c0, '%Y%m%d')",
+      std::optional<Timestamp>(parseTimestamp("2024-03-15")));
+  EXPECT_EQ(result, "20240315");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormatIso) {
+  // ISO date with dashes
+  auto result = evaluateOnce<std::string>(
+      "date_format(c0, '%Y-%m-%d')",
+      std::optional<Timestamp>(parseTimestamp("1970-01-01")));
+  EXPECT_EQ(result, "1970-01-01");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormatYearZeroPad) {
+  // Year 0001 — SAP null date. cuDF %Y zero-pads to 4 digits.
+  auto result = evaluateOnce<std::string>(
+      "date_format(c0, '%Y%m%d')",
+      std::optional<Timestamp>(parseTimestamp("0001-01-01")));
+  EXPECT_EQ(result, "00010101");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormatWithTime) {
+  // %H:%i:%S — Presto %i (minutes) must translate to cuDF %M
+  auto result = evaluateOnce<std::string>(
+      "date_format(c0, '%Y-%m-%d %H:%i:%S')",
+      std::optional<Timestamp>(Timestamp(0, 0)));
+  EXPECT_EQ(result, "1970-01-01 00:00:00");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormatFullDateTime) {
+  // Full datetime with all supported time components
+  auto result = evaluateOnce<std::string>(
+      "date_format(c0, '%Y-%m-%d %H:%i:%s')",
+      std::optional<Timestamp>(parseTimestamp("2000-02-29 13:45:30")));
+  EXPECT_EQ(result, "2000-02-29 13:45:30");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormat24hTime) {
+  // %T composite — expands to %H:%M:%S in cuDF
+  auto result = evaluateOnce<std::string>(
+      "date_format(c0, '%T')",
+      std::optional<Timestamp>(parseTimestamp("2022-01-01 23:59:59")));
+  EXPECT_EQ(result, "23:59:59");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormat12hHour) {
+  // %h and %I — 12-hour zero-padded hour
+  auto resultH = evaluateOnce<std::string>(
+      "date_format(c0, '%h')",
+      std::optional<Timestamp>(parseTimestamp("2022-01-01 14:00:00")));
+  EXPECT_EQ(resultH, "02");
+
+  auto resultI = evaluateOnce<std::string>(
+      "date_format(c0, '%I')",
+      std::optional<Timestamp>(parseTimestamp("2022-01-01 14:00:00")));
+  EXPECT_EQ(resultI, "02");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormatDayOfYear) {
+  // %j — day of year, zero-padded to 3 digits
+  auto result = evaluateOnce<std::string>(
+      "date_format(c0, '%j')",
+      std::optional<Timestamp>(parseTimestamp("2022-12-31")));
+  EXPECT_EQ(result, "365");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormatTwoDigitYear) {
+  // %y — 2-digit year
+  auto result = evaluateOnce<std::string>(
+      "date_format(c0, '%y')",
+      std::optional<Timestamp>(parseTimestamp("2024-06-15")));
+  EXPECT_EQ(result, "24");
+}
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormatNull) {
+  // NULL propagation — cuDF copies bitmask from input
+  auto result = evaluateOnce<std::string>(
+      "date_format(c0, '%Y%m%d')",
+      std::optional<Timestamp>(std::nullopt));
+  EXPECT_FALSE(result.has_value());
+}
+
+TEST_F(CudfSimpleFilterProjectTest, dateFormatLiteralPercent) {
+  // %% — literal percent sign
+  auto result = evaluateOnce<std::string>(
+      "date_format(c0, '100%%')",
+      std::optional<Timestamp>(parseTimestamp("2024-01-01")));
+  EXPECT_EQ(result, "100%");
+}
+
+// End-to-end test for Query 2's date_format CASE WHEN pattern on the GPU.
+// Original query (Snowflake-to-Presto rewrite):
+//   SELECT CASE WHEN date_format(CAST(tddat AS timestamp), '%Y%m%d') = '00010101'
+//               THEN '00000000'
+//               ELSE date_format(CAST(tddat AS timestamp), '%Y%m%d')
+//          END AS tddat
+//   FROM s3_erpams_vbep LIMIT 1;
+TEST_F(CudfFilterProjectTest, dateFormatQuery2Pattern) {
+  auto dates = makeNullableFlatVector<int32_t>(
+      {DATE()->toDays("0001-01-01"),  // SAP null date — should match
+       DATE()->toDays("2024-03-15"),  // normal date — should not match
+       DATE()->toDays("1970-01-01"),  // epoch — should not match
+       std::nullopt},                  // NULL — should propagate
+      DATE());
+  auto plan =
+      PlanBuilder()
+          .values({makeRowVector({dates})})
+          .project(
+              {"CASE WHEN date_format(cast(c0 as timestamp), '%Y%m%d') = '00010101'"
+               " THEN '00000000'"
+               " ELSE date_format(cast(c0 as timestamp), '%Y%m%d')"
+               " END AS result"})
+          .planNode();
+  auto result = AssertQueryBuilder(plan).copyResults(pool());
+
+  auto expected = makeRowVector({
+      makeNullableFlatVector<StringView>({
+          "00000000"_sv,  // 0001-01-01 matched → replaced
+          "20240315"_sv,  // normal date passthrough (no dashes)
+          "19700101"_sv,  // epoch passthrough
+          std::nullopt,   // NULL propagation
+      }),
+  });
+  facebook::velox::test::assertEqualVectors(expected, result);
+}
+
 // End-to-end test for Query 1's CASE WHEN pattern on the cuDF GPU path.
 // Original query:
 //   SELECT 1 FROM s3_erpams_vbep
