@@ -838,18 +838,18 @@ TEST_F(ParquetWriterTest, withoutFieldIds) {
       std::make_shared<::arrow::Buffer>(
           reinterpret_cast<const uint8_t*>(sinkData.data()), sinkData.size()));
 
-  auto fileReader = parquet::arrow::ParquetFileReader::Open(arrowBufferReader);
+  auto fileReader = parquet::arrow::ParquetFileReader::open(arrowBufferReader);
   auto metadata = fileReader->metadata();
   auto* descr = metadata->schema();
-  auto* root = descr->group_node();
+  auto* root = descr->groupNode();
 
-  ASSERT_EQ(root->field_count(), 4);
+  ASSERT_EQ(root->fieldCount(), 4);
 
   // All field IDs should be -1 (not set).
-  EXPECT_EQ(root->field(0)->field_id(), -1);
-  EXPECT_EQ(root->field(1)->field_id(), -1);
-  EXPECT_EQ(root->field(2)->field_id(), -1);
-  EXPECT_EQ(root->field(3)->field_id(), -1);
+  EXPECT_EQ(root->field(0)->fieldId(), -1);
+  EXPECT_EQ(root->field(1)->fieldId(), -1);
+  EXPECT_EQ(root->field(2)->fieldId(), -1);
+  EXPECT_EQ(root->field(3)->fieldId(), -1);
 }
 
 TEST_F(ParquetWriterTest, withFieldIds) {
@@ -907,35 +907,35 @@ TEST_F(ParquetWriterTest, withFieldIds) {
       std::make_shared<::arrow::Buffer>(
           reinterpret_cast<const uint8_t*>(sinkData.data()), sinkData.size()));
 
-  auto fileReader = parquet::arrow::ParquetFileReader::Open(arrowBufferReader);
+  auto fileReader = parquet::arrow::ParquetFileReader::open(arrowBufferReader);
   auto metadata = fileReader->metadata();
   auto* descr = metadata->schema();
-  auto* root = descr->group_node();
+  auto* root = descr->groupNode();
 
-  ASSERT_EQ(root->field_count(), 4);
+  ASSERT_EQ(root->fieldCount(), 4);
 
   // Top-level field IDs.
-  EXPECT_EQ(root->field(0)->field_id(), 10);
-  EXPECT_EQ(root->field(1)->field_id(), 20);
-  EXPECT_EQ(root->field(2)->field_id(), 30);
-  EXPECT_EQ(root->field(3)->field_id(), 40);
+  EXPECT_EQ(root->field(0)->fieldId(), 10);
+  EXPECT_EQ(root->field(1)->fieldId(), 20);
+  EXPECT_EQ(root->field(2)->fieldId(), 30);
+  EXPECT_EQ(root->field(3)->fieldId(), 40);
 
   using GroupNode = parquet::arrow::schema::GroupNode;
   auto* b = static_cast<const GroupNode*>(root->field(1).get());
-  EXPECT_EQ(b->field(0)->field_id(), 21);
-  EXPECT_EQ(b->field(1)->field_id(), 22);
+  EXPECT_EQ(b->field(0)->fieldId(), 21);
+  EXPECT_EQ(b->field(1)->fieldId(), 22);
 
   auto* c = static_cast<const GroupNode*>(root->field(2).get());
   auto* listEntries = c->field(0).get();
   auto* listGroup = static_cast<const GroupNode*>(listEntries);
   auto* element = listGroup->field(0).get();
-  EXPECT_EQ(element->field_id(), 31);
+  EXPECT_EQ(element->fieldId(), 31);
 
   auto* m = static_cast<const GroupNode*>(root->field(3).get());
   auto* keyValue = m->field(0).get();
   auto* keyValueGroup = static_cast<const GroupNode*>(keyValue);
-  EXPECT_EQ(keyValueGroup->field(0)->field_id(), 41);
-  EXPECT_EQ(keyValueGroup->field(1)->field_id(), 42);
+  EXPECT_EQ(keyValueGroup->field(0)->fieldId(), 41);
+  EXPECT_EQ(keyValueGroup->field(1)->fieldId(), 42);
 }
 
 } // namespace
