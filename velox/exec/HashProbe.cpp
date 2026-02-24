@@ -988,7 +988,8 @@ bool HashProbe::canSpill() const {
   // Hash table caching is incompatible with spilling. When the table is
   // cached and shared across tasks, clearing it after probe would corrupt
   // the cache for subsequent tasks.
-  if (joinNode_->useHashTableCache()) {
+  if (joinNode_->useHashTableCache() ||
+      joinNode_->reusableHashTable() != nullptr) {
     return false;
   }
   if (operatorCtx_->task()->hasMixedExecutionGroupJoin(joinNode_.get())) {
