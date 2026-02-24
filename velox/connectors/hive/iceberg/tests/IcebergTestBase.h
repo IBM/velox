@@ -19,7 +19,6 @@
 #include <gtest/gtest.h>
 
 #include "velox/common/testutil/TempDirectoryPath.h"
-#include "velox/connectors/hive/iceberg/IcebergConfig.h"
 #include "velox/connectors/hive/iceberg/IcebergDataSink.h"
 #include "velox/connectors/hive/iceberg/IcebergSplit.h"
 #include "velox/exec/tests/utils/HiveConnectorTestBase.h"
