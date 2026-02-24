@@ -34,7 +34,7 @@ class IcebergStatsTest : public IcebergTestBase {
 
 TEST_F(IcebergStatsTest, mixedNullTest) {
   auto rowType = ROW({"int_col"}, {INTEGER()});
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedIntNulls = 34;
@@ -83,7 +83,7 @@ TEST_F(IcebergStatsTest, mixedNullTest) {
 TEST_F(IcebergStatsTest, bigintStatsTest) {
   auto rowType = ROW({"bigint_col"}, {BIGINT()});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 25;
@@ -136,7 +136,7 @@ TEST_F(IcebergStatsTest, bigintStatsTest) {
 TEST_F(IcebergStatsTest, decimalStatsTest) {
   auto rowType = ROW({"decimal_col"}, {DECIMAL(38, 3)});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 20;
@@ -181,7 +181,7 @@ TEST_F(IcebergStatsTest, decimalStatsTest) {
 TEST_F(IcebergStatsTest, varcharStatsTest) {
   auto rowType = ROW({"varchar_col"}, {VARCHAR()});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 0;
@@ -246,7 +246,7 @@ TEST_F(IcebergStatsTest, varcharStatsTest) {
 TEST_F(IcebergStatsTest, varbinaryStatsTest) {
   auto rowType = ROW({"varbinary_col"}, {VARBINARY()});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 0;
@@ -306,7 +306,7 @@ TEST_F(IcebergStatsTest, varbinaryStatsTest) {
 TEST_F(IcebergStatsTest, varbinaryStatsTest2) {
   auto rowType = ROW({"varbinary_col"}, {VARBINARY()});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   std::vector<PartitionField> partitionTransforms = {
       {0, TransformType::kBucket, 4}};
   auto dataSink =
@@ -353,7 +353,7 @@ TEST_F(IcebergStatsTest, multipleDataTypesTest) {
       {"int_col", "bigint_col", "decimal_col", "varchar_col", "varbinary_col"},
       {INTEGER(), BIGINT(), DECIMAL(38, 3), VARCHAR(), VARBINARY()});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
 
@@ -476,7 +476,7 @@ TEST_F(IcebergStatsTest, multipleDataTypesTest) {
 TEST_F(IcebergStatsTest, dateStatsTest) {
   auto rowType = ROW({"date_col"}, {DATE()});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 20;
@@ -533,7 +533,7 @@ TEST_F(IcebergStatsTest, dateStatsTest) {
 TEST_F(IcebergStatsTest, booleanStatsTest) {
   auto rowType = ROW({"boolean_col"}, {BOOLEAN()});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 10;
@@ -591,7 +591,7 @@ TEST_F(IcebergStatsTest, booleanStatsTest) {
 
 TEST_F(IcebergStatsTest, emptyStatsTest) {
   auto rowType = ROW({"int_col", "varchar_col"}, {INTEGER(), VARCHAR()});
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   // Create an empty row vector (0 rows)
   constexpr vector_size_t size = 0;
@@ -613,7 +613,7 @@ TEST_F(IcebergStatsTest, emptyStatsTest) {
 
 TEST_F(IcebergStatsTest, nullValuesTest) {
   auto rowType = ROW({"int_col", "varchar_col"}, {INTEGER(), VARCHAR()});
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   // Create an empty row vector (0 rows)
   constexpr vector_size_t size = 100;
@@ -638,7 +638,7 @@ TEST_F(IcebergStatsTest, nullValuesTest) {
 
 TEST_F(IcebergStatsTest, realStatsTest) {
   auto rowType = ROW({"real_col"}, {REAL()});
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 15;
@@ -707,7 +707,7 @@ TEST_F(IcebergStatsTest, realStatsTest) {
 TEST_F(IcebergStatsTest, doubleStatsTest) {
   auto rowType = ROW({"double_col"}, {DOUBLE()});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 15;
@@ -776,7 +776,7 @@ TEST_F(IcebergStatsTest, MixedDoubleFloatStatsTest) {
   std::vector<std::string> names = {"id", "data1", "data2", "data3"};
   auto rowType = ROW(names, {INTEGER(), REAL(), DOUBLE(), DOUBLE()});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   std::vector<PartitionField> partitionTransforms = {
       {0, TransformType::kIdentity, std::nullopt}};
 
@@ -859,7 +859,7 @@ TEST_F(IcebergStatsTest, MixedDoubleFloatStatsTest) {
 TEST_F(IcebergStatsTest, NaNStatsTest) {
   auto rowType = ROW({"double_col"}, {DOUBLE()});
 
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 1'000;
   auto expectedNulls = 500;
@@ -906,7 +906,7 @@ TEST_F(IcebergStatsTest, NaNStatsTest) {
 TEST_F(IcebergStatsTest, partitionedTableStatsTest) {
   auto rowType = ROW(
       {"int_col", "date_col", "varchar_col"}, {INTEGER(), DATE(), VARCHAR()});
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   std::vector<PartitionField> partitionTransforms = {
       {0, TransformType::kBucket, 4},
       {1, TransformType::kDay, std::nullopt},
@@ -999,7 +999,7 @@ TEST_F(IcebergStatsTest, multiplePartitionTransformsStatsTest) {
   auto rowType =
       ROW({"int_col", "date_col", "varchar_col", "bigint_col"},
           {INTEGER(), DATE(), VARCHAR(), BIGINT()});
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
 
   std::vector<PartitionField> partitionTransforms = {
       {0, TransformType::kBucket, 2},
@@ -1100,7 +1100,7 @@ TEST_F(IcebergStatsTest, multiplePartitionTransformsStatsTest) {
 TEST_F(IcebergStatsTest, partitionedTableWithNullsStatsTest) {
   auto rowType = ROW(
       {"int_col", "date_col", "varchar_col"}, {INTEGER(), DATE(), VARCHAR()});
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   std::vector<PartitionField> partitionTransforms = {
       {0, TransformType::kIdentity, std::nullopt},
       {1, TransformType::kMonth, std::nullopt},
@@ -1211,7 +1211,7 @@ TEST_F(IcebergStatsTest, partitionedTableWithNullsStatsTest) {
 TEST_F(IcebergStatsTest, mapTypeTest) {
   auto rowType =
       ROW({"int_col", "map_col"}, {INTEGER(), MAP(INTEGER(), VARCHAR())});
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 0;
@@ -1259,7 +1259,7 @@ TEST_F(IcebergStatsTest, mapTypeTest) {
 
 TEST_F(IcebergStatsTest, arrayTypeTest) {
   auto rowType = ROW({"int_col", "array_col"}, {INTEGER(), ARRAY(VARCHAR())});
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 0;
@@ -1328,7 +1328,7 @@ TEST_F(IcebergStatsTest, structTypeTest) {
                 VARCHAR(),
                 ROW({"second_level_id", "second_level_name"},
                     {INTEGER(), VARCHAR()})})});
-  auto outputDir = exec::test::TempDirectoryPath::create();
+  auto outputDir = TempDirectoryPath::create();
   auto dataSink = createIcebergDataSink(rowType, outputDir->getPath());
   constexpr vector_size_t size = 100;
   auto expectedNulls = 0;
