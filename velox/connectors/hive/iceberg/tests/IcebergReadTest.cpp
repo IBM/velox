@@ -18,9 +18,11 @@
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/common/file/FileSystems.h"
 #include "velox/connectors/hive/HiveConnectorSplit.h"
+#include "velox/connectors/hive/iceberg/IcebergConnector.h"
 #include "velox/connectors/hive/iceberg/IcebergDeleteFile.h"
 #include "velox/connectors/hive/iceberg/IcebergMetadataColumns.h"
 #include "velox/connectors/hive/iceberg/IcebergSplit.h"
+#include "velox/connectors/hive/iceberg/tests/IcebergTestBase.h"
 #include "velox/dwio/common/tests/utils/DataFiles.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -43,9 +45,22 @@ class HiveIcebergTest : public HiveConnectorTestBase {
  public:
   void SetUp() override {
     HiveConnectorTestBase::SetUp();
+    // Register IcebergConnector.
+    IcebergConnectorFactory icebergFactory;
+    auto icebergConnector = icebergFactory.newConnector(
+        test::kIcebergConnectorId,
+        std::make_shared<config::ConfigBase>(
+            std::unordered_map<std::string, std::string>()),
+        ioExecutor_.get());
+    registerConnector(icebergConnector);
 #ifdef VELOX_ENABLE_PARQUET
     parquet::registerParquetReaderFactory();
 #endif
+  }
+
+  void TearDown() override {
+    unregisterConnector(test::kIcebergConnectorId);
+    HiveConnectorTestBase::TearDown();
   }
 
   HiveIcebergTest()
@@ -1190,7 +1205,7 @@ TEST_F(HiveIcebergTest, skipDeleteFileByPositionUpperBound) {
 
   auto plan = PlanBuilder()
                   .startTableScan()
-                  .connectorId(kIcebergConnectorId)
+                  .connectorId(test::kIcebergConnectorId)
                   .outputType(ROW({"c0"}, {BIGINT()}))
                   .endTableScan()
                   .planNode();
@@ -1203,7 +1218,7 @@ TEST_F(HiveIcebergTest, skipDeleteFileByPositionUpperBound) {
   const int64_t fileSize = file->size();
   std::vector<IcebergDeleteFile> deleteFiles = {deleteFile};
   auto split = std::make_shared<HiveIcebergSplit>(
-      kIcebergConnectorId,
+      test::kIcebergConnectorId,
       dataFilePath->getPath(),
       dwio::common::FileFormat::DWRF,
       static_cast<uint64_t>(fileSize / 2),
@@ -1230,7 +1245,7 @@ TEST_F(HiveIcebergTest, positionalDeleteFileWithRowGroupFilter) {
   // baseReadOffset tracked by Iceberg's split reader and the actual offset,
   // resulting in records in the position delete file being mapped to incorrect
   // rows.
-  auto path = test::getDataFilePath(
+  auto path = velox::test::getDataFilePath(
       "velox/connectors/hive/iceberg/test", "examples/three_groups.parquet");
   const auto deletedPositionSize = 100;
   std::vector<int64_t> deletePositionsVec(
