@@ -61,7 +61,7 @@ TEST_F(IcebergConnectorTest, connectorProperties) {
   ASSERT_NE(icebergConnector, nullptr);
 
   ASSERT_TRUE(icebergConnector->canAddDynamicFilter());
-  ASSERT_TRUE(icebergConnector->supportsSplitPreload());
+  ASSERT_FALSE(icebergConnector->supportsSplitPreload());
   ASSERT_NE(icebergConnector->ioExecutor(), nullptr);
 }
 

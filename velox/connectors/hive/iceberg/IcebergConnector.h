@@ -53,6 +53,10 @@ class IcebergConnector final : public HiveConnector {
       ConnectorQueryCtx* connectorQueryCtx,
       CommitStrategy commitStrategy) override;
 
+  bool supportsSplitPreload() const override {
+    return false;
+  }
+
  private:
   const std::string functionPrefix_;
 };
