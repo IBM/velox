@@ -307,7 +307,9 @@ ExprPtr compileCall(
       auto simpleFunctionEntry =
           simpleFunctions().resolveFunction(call->name(), inputTypes)) {
     VELOX_USER_CHECK(
-        resultType->equivalent(*simpleFunctionEntry->type().get()),
+        (resultType->equivalent(*simpleFunctionEntry->type().get()) ||
+         TypeCoercer::isTypeOnlyCoercion(
+             resultType, simpleFunctionEntry->type())),
         "Found incompatible return types for '{}' ({} vs. {}) "
         "for input types ({}).",
         call->name(),

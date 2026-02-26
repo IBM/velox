@@ -376,6 +376,91 @@ TEST(TypeCoercerTest, leastCommonSuperType) {
           MAP(INTEGER(), REAL()), ROW({INTEGER(), REAL()})) == nullptr);
 }
 
+TEST(TypeCoercerTest, isTypeOnlyCoercion) {
+  // VARCHAR type-only coercions
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(VARCHAR(10), VARCHAR(10)));
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(VARCHAR(10), VARCHAR(20)));
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(VARCHAR(10), VARCHAR()));
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(VARCHAR(), VARCHAR(10)));
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(VARCHAR(), VARCHAR()));
+
+  // VARBINARY type-only coercions
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(VARBINARY(10), VARBINARY(10)));
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(VARBINARY(10), VARBINARY(20)));
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(VARBINARY(10), VARBINARY()));
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(VARBINARY(), VARBINARY(10)));
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(VARBINARY(), VARBINARY()));
+
+  // DECIMAL type-only coercions (same scale, different precision)
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(DECIMAL(4, 2), DECIMAL(4, 2)));
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(DECIMAL(4, 2), DECIMAL(10, 2)));
+  EXPECT_TRUE(TypeCoercer::isTypeOnlyCoercion(DECIMAL(10, 2), DECIMAL(15, 2)));
+
+  // DECIMAL - same scale, source precision > result precision (not type-only)
+  EXPECT_FALSE(TypeCoercer::isTypeOnlyCoercion(DECIMAL(10, 2), DECIMAL(4, 2)));
+
+  // DECIMAL - different scale (not type-only)
+  EXPECT_FALSE(TypeCoercer::isTypeOnlyCoercion(DECIMAL(10, 2), DECIMAL(10, 3)));
+
+  // DECIMAL - different subtype (short vs long, not type-only)
+  EXPECT_FALSE(TypeCoercer::isTypeOnlyCoercion(DECIMAL(10, 2), DECIMAL(20, 2)));
+
+  // Complex types with VARCHAR
+  EXPECT_TRUE(
+      TypeCoercer::isTypeOnlyCoercion(ARRAY(VARCHAR(10)), ARRAY(VARCHAR(20))));
+  EXPECT_TRUE(
+      TypeCoercer::isTypeOnlyCoercion(ARRAY(VARCHAR(10)), ARRAY(VARCHAR())));
+  EXPECT_TRUE(
+      TypeCoercer::isTypeOnlyCoercion(
+          MAP(VARCHAR(10), INTEGER()), MAP(VARCHAR(20), INTEGER())));
+  EXPECT_TRUE(
+      TypeCoercer::isTypeOnlyCoercion(
+          MAP(INTEGER(), VARCHAR(10)), MAP(INTEGER(), VARCHAR())));
+
+  // ROW type-only coercions with matching column names
+  EXPECT_TRUE(
+      TypeCoercer::isTypeOnlyCoercion(
+          ROW({"a", "b"}, {INTEGER(), VARCHAR(10)}),
+          ROW({"a", "b"}, {INTEGER(), VARCHAR(20)})));
+  EXPECT_TRUE(
+      TypeCoercer::isTypeOnlyCoercion(
+          ROW({"x", "y"}, {VARCHAR(10), INTEGER()}),
+          ROW({"x", "y"}, {VARCHAR(), INTEGER()})));
+
+  // ROW type-only coercions - nested ROW with matching names
+  EXPECT_TRUE(
+      TypeCoercer::isTypeOnlyCoercion(
+          ROW({"outer", "inner"},
+              {INTEGER(), ROW({"a", "b"}, {VARCHAR(10), INTEGER()})}),
+          ROW({"outer", "inner"},
+              {INTEGER(), ROW({"a", "b"}, {VARCHAR(20), INTEGER()})})));
+
+  // ROW - different column names (not type-only)
+  EXPECT_FALSE(
+      TypeCoercer::isTypeOnlyCoercion(
+          ROW({"a", "b"}, {INTEGER(), VARCHAR()}),
+          ROW({"a", "c"}, {INTEGER(), VARCHAR()})));
+  EXPECT_FALSE(
+      TypeCoercer::isTypeOnlyCoercion(
+          ROW({"x", "y"}, {INTEGER(), VARCHAR()}),
+          ROW({"a", "b"}, {INTEGER(), VARCHAR()})));
+
+  // ROW - nested ROW with different column names (not type-only)
+  EXPECT_FALSE(
+      TypeCoercer::isTypeOnlyCoercion(
+          ROW({"outer", "inner"},
+              {INTEGER(), ROW({"a", "b"}, {VARCHAR(), INTEGER()})}),
+          ROW({"outer", "inner"},
+              {INTEGER(), ROW({"x", "y"}, {VARCHAR(), INTEGER()})})));
+
+  // Not type-only coercions
+  EXPECT_FALSE(TypeCoercer::isTypeOnlyCoercion(INTEGER(), BIGINT()));
+  EXPECT_FALSE(TypeCoercer::isTypeOnlyCoercion(REAL(), DOUBLE()));
+  EXPECT_FALSE(TypeCoercer::isTypeOnlyCoercion(VARCHAR(), INTEGER()));
+  EXPECT_FALSE(
+      TypeCoercer::isTypeOnlyCoercion(ARRAY(INTEGER()), ARRAY(BIGINT())));
+}
+
 TEST(TypeCoercerTest, ctorRejectsDuplicateCostForSameSource) {
   VELOX_ASSERT_THROW(
       TypeCoercer({{INTEGER(), BIGINT(), 1}, {INTEGER(), DOUBLE(), 1}}),
