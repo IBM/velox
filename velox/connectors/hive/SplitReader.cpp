@@ -22,6 +22,7 @@
 #include "velox/connectors/hive/HiveConnectorSplit.h"
 #include "velox/connectors/hive/HiveConnectorUtil.h"
 #include "velox/connectors/hive/TableHandle.h"
+#include "velox/connectors/hive/iceberg/IcebergSplitReader.h"
 #include "velox/dwio/common/ReaderFactory.h"
 
 namespace facebook::velox::connector::hive {
@@ -99,20 +100,41 @@ std::unique_ptr<SplitReader> SplitReader::create(
     FileHandleFactory* fileHandleFactory,
     folly::Executor* ioExecutor,
     const std::shared_ptr<common::ScanSpec>& scanSpec,
+    core::ExpressionEvaluator* expressionEvaluator,
+    std::atomic<uint64_t>& totalRemainingFilterTime,
     const common::SubfieldFilters* subfieldFiltersForValidation) {
-  return std::unique_ptr<SplitReader>(new SplitReader(
-      hiveSplit,
-      hiveTableHandle,
-      partitionKeys,
-      connectorQueryCtx,
-      hiveConfig,
-      readerOutputType,
-      ioStatistics,
-      ioStats,
-      fileHandleFactory,
-      ioExecutor,
-      scanSpec,
-      subfieldFiltersForValidation));
+  //  Create the SplitReader based on hiveSplit->customSplitInfo["table_format"]
+  if (hiveSplit->customSplitInfo.count("table_format") > 0 &&
+      hiveSplit->customSplitInfo["table_format"] == "hive-iceberg") {
+    return std::make_unique<iceberg::IcebergSplitReader>(
+        hiveSplit,
+        hiveTableHandle,
+        partitionKeys,
+        connectorQueryCtx,
+        hiveConfig,
+        readerOutputType,
+        ioStatistics,
+        ioStats,
+        fileHandleFactory,
+        ioExecutor,
+        scanSpec,
+        expressionEvaluator,
+        totalRemainingFilterTime);
+  } else {
+    return std::unique_ptr<SplitReader>(new SplitReader(
+        hiveSplit,
+        hiveTableHandle,
+        partitionKeys,
+        connectorQueryCtx,
+        hiveConfig,
+        readerOutputType,
+        ioStatistics,
+        ioStats,
+        fileHandleFactory,
+        ioExecutor,
+        scanSpec,
+        subfieldFiltersForValidation));
+  }
 }
 
 SplitReader::SplitReader(
@@ -478,12 +500,18 @@ std::vector<TypePtr> SplitReader::adaptColumns(
       auto fileTypeIdx = fileType->getChildIdxIfExists(fieldName);
       if (!fileTypeIdx.has_value()) {
         // Column is missing. Most likely due to schema evolution.
-        VELOX_CHECK(tableSchema, "Unable to resolve column '{}'", fieldName);
+        auto outputTypeIdx = readerOutputType_->getChildIdxIfExists(fieldName);
+        TypePtr fieldType;
+        if (outputTypeIdx.has_value()) {
+          // Field name exists in the user-specified output type.
+          fieldType = readerOutputType_->childAt(outputTypeIdx.value());
+        } else {
+          VELOX_CHECK(tableSchema, "Unable to resolve column '{}'", fieldName);
+          fieldType = tableSchema->findChild(fieldName);
+        }
         childSpec->setConstantValue(
             BaseVector::createNullConstant(
-                tableSchema->findChild(fieldName),
-                1,
-                connectorQueryCtx_->memoryPool()));
+                fieldType, 1, connectorQueryCtx_->memoryPool()));
       } else {
         // Column no longer missing, reset constant value set on the spec.
         childSpec->setConstantValue(nullptr);
