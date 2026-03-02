@@ -6997,3 +6997,37 @@ TEST_F(DateTimeFunctionsTest, currentTimezone) {
     EXPECT_EQ(tz.value(), "America/New_York");
   }
 }
+
+TEST_F(DateTimeFunctionsTest, currentTimestamp) {
+    setQueryTimeZone("Asia/Kolkata");
+
+  auto empotyRowVector = makeRowVector(ROW({}), 1);
+  auto befre = Timestamp::now().toMillis();
+
+  auto packedNow = evaluateOnce<int64_t>("now()", emptyRowVector);
+  auto packedCurrentTimestamp =
+      evaluateOnce<int64_t>("current_timestamp()", emptyRowVector);
+
+  auto after = Timestamp::now().toMillis();
+
+  ASSERT_TRUE(packedNow.has_value()) << "now() returned nullopt";
+  auto unpackedNow = TimestampWithTimezone::unpack(packedNow);
+  ASSERT_TRUE(unpackedNow.has_value()) << "Failed to unpack now() result";
+
+  ASSERT_TRUE(packedCurrentTimestamp.has_value())
+      << "current_timestamp() returned nullopt";
+  auto unpackedCurrent = TimestampWithTimezone::unpack(packedCurrentTimestamp);
+  ASSERT_TRUE(unpackedCurrent.has_value())
+      << "Failed to unpack current_timestamp() result";
+
+  EXPECT_LE(before, unpackedNow->milliSeconds_);
+  EXPECT_LE(unpackedNow->milliSeconds_, after);
+  EXPECT_LE(before, unpackedCurrent->milliSeconds_);
+  EXPECT_LE(unpackedCurrent->milliSeconds_, after);
+
+  EXPECT_EQ(unpackedNow->timezone_->name(), "Asia/Kolkata");
+  EXPECT_EQ(unpackedCurrent->timezone_->name(), "Asia/Kolkata");
+  EXPECT_EQ(unpackedNow->timezone_->name(), unpackedCurrent->timezone_->name());
+
+  EXPECT_NEAR(unpackedNow->milliSeconds_, unpackedCurrent->milliSeconds_, 200);
+}
