@@ -730,8 +730,12 @@ bool applyPartitionFilter(
     }
     case TypeKind::TIMESTAMP: {
       auto result = util::fromTimestampString(
-          StringView(partitionValue), util::TimestampParseMode::kPrestoCast);
-      VELOX_CHECK(!result.hasError());
+          StringView(partitionValue), util::TimestampParseMode::kIso8601);
+      VELOX_CHECK(
+          !result.hasError(),
+          "Failed to parse TIMESTAMP partition value '{}': {}",
+          partitionValue,
+          result.error().message());
       if (asLocalTime) {
         result.value().toGMT(Timestamp::defaultTimezone());
       }
