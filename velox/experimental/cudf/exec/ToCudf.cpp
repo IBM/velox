@@ -59,6 +59,7 @@
 #include "velox/exec/TopNRowNumber.h"
 #include "velox/exec/Values.h"
 
+#include <fmt/format.h>
 #include <cudf/detail/nvtx/ranges.hpp>
 
 #include <cuda.h>
@@ -258,7 +259,11 @@ bool CompileState::compile(bool allowCpuFallback) {
       // condition is if GPU replacement success or if CPU operators itself is
       // GPU compatible. or if specific CPU operator is allowed even when
       // fallback is disabled.
-      VELOX_CHECK(!isPureCpuOperator, "Replacement with cuDF operator failed");
+      const auto failMsg = fmt::format(
+          "Replacement with cuDF operator failed. Operator: {}. PlanNode: {}",
+          oper->toString(),
+          planNode ? planNode->toString(true, false) : "N/A");
+      VELOX_CHECK(!isPureCpuOperator, failMsg);
     } else if (isPureCpuOperator) {
       LOG(WARNING)
           << "Replacement with cuDF operator failed. Falling back to CPU execution";

@@ -28,6 +28,7 @@
 #include "velox/experimental/cudf/exec/CudfOrderBy.h"
 #include "velox/experimental/cudf/exec/CudfTopN.h"
 #include "velox/experimental/cudf/exec/CudfTopNRowNumber.h"
+#include "velox/experimental/cudf/exec/CudfWindow.h"
 #include "velox/experimental/cudf/exec/OperatorAdapters.h"
 #include "velox/experimental/cudf/exec/Utilities.h"
 #include "velox/experimental/cudf/expression/ExpressionEvaluator.h"
@@ -49,6 +50,7 @@
 #include "velox/exec/Task.h"
 #include "velox/exec/TopN.h"
 #include "velox/exec/TopNRowNumber.h"
+#include "velox/exec/Window.h"
 #include "velox/exec/Values.h"
 
 namespace facebook::velox::cudf_velox {
@@ -730,8 +732,63 @@ class TopNRowNumberAdapter : public OperatorAdapter {
   }
 };
 
+/// WindowAdapter - Replaces with CudfWindow
+class WindowAdapter : public OperatorAdapter {
+ public:
+  WindowAdapter() : OperatorAdapter("Window") {}
+
+  bool canHandle(const exec::Operator* op) const override {
+    return dynamic_cast<const exec::Window*>(op) != nullptr;
+  }
+
+  bool canRunOnGPU(
+      const exec::Operator* /*op*/,
+      const core::PlanNodePtr& planNode,
+      exec::DriverCtx* /*ctx*/) const override {
+    auto windowNode =
+        std::dynamic_pointer_cast<const core::WindowNode>(planNode);
+    if (!windowNode) {
+      return false;
+    }
+    for (const auto& func : windowNode->windowFunctions()) {
+      auto name = func.functionCall->name();
+      auto pos = name.rfind('.');
+      auto baseName = pos == std::string::npos ? name : name.substr(pos + 1);
+      if (baseName != "lag" && baseName != "lead" &&
+          baseName != "row_number" &&
+          baseName != "first_value" && baseName != "last_value" &&
+          baseName != "sum" && baseName != "min" && baseName != "max" &&
+          baseName != "count" && baseName != "avg") {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool acceptsGpuInput() const override {
+    return true;
+  }
+
+  bool producesGpuOutput() const override {
+    return true;
+  }
+
+  std::vector<std::unique_ptr<exec::Operator>> createReplacements(
+      const exec::Operator* /*op*/,
+      const core::PlanNodePtr& planNode,
+      exec::DriverCtx* ctx,
+      int32_t operatorId) const override {
+    auto windowPlanNode =
+        std::dynamic_pointer_cast<const core::WindowNode>(planNode);
+
+    std::vector<std::unique_ptr<exec::Operator>> result;
+    result.push_back(
+        std::make_unique<CudfWindow>(operatorId, ctx, windowPlanNode));
+    return result;
+  }
+};
+
 // Cudf Exchange Facade
-// Helpers for the CudfExchange operator replacement logic
 struct TaskPipelineKey {
   std::string taskId;
   int pipelineId;
@@ -739,25 +796,20 @@ struct TaskPipelineKey {
   TaskPipelineKey(const std::string& tid, int pid)
       : taskId(tid), pipelineId(pid) {}
 
-  // need equality operator for unordered map.
   bool operator==(const TaskPipelineKey& other) const {
     return taskId == other.taskId && pipelineId == other.pipelineId;
   }
 
-  // Need a hash functor for the unordered map.
   struct Hash {
     std::size_t operator()(const TaskPipelineKey& key) const {
       std::hash<std::string> hasher;
       std::size_t h1 = hasher(key.taskId);
       std::size_t h2 = std::hash<int>{}(key.pipelineId);
-      return h1 ^ (h2 << 1); // simple combination of the two hash functions.
+      return h1 ^ (h2 << 1);
     }
   };
 };
 
-// Map to store ExchangeClientFacade instances by task and pipeline.
-// Declared in ToCudf.cpp to ensure a single instance across all translation
-// units.
 using ExchangeClientFacadeMap = std::unordered_map<
     TaskPipelineKey,
     std::shared_ptr<cudf_exchange::ExchangeClientFacade>,
@@ -977,6 +1029,7 @@ void registerAllOperatorAdapters() {
   registry.registerAdapter(std::make_unique<ValuesAdapter>());
   registry.registerAdapter(std::make_unique<CallbackSinkAdapter>());
   registry.registerAdapter(std::make_unique<TopNRowNumberAdapter>());
+  registry.registerAdapter(std::make_unique<WindowAdapter>());
   registry.registerAdapter(std::make_unique<ExchangeAdapter>());
   registry.registerAdapter(std::make_unique<MergeExchangeAdapter>());
   registry.registerAdapter(std::make_unique<PartitionedOutputAdapter>());
