@@ -386,6 +386,43 @@ void nextValues(
       decoder, data, numValues, nulls);
 }
 
+// Emits a FlatVector<Timestamp> by interpreting decoded int32 days-since-epoch
+// as Timestamp(days * 86400, 0). Null mask is propagated. Mirrors the semantic
+// in SelectiveColumnReader::convertDateToTimestampValues.
+void emitDaysAsTimestampVector(
+    const int32_t* days,
+    uint64_t numValues,
+    const uint64_t* nullsPtr,
+    uint64_t nullCount,
+    BufferPtr nulls,
+    memory::MemoryPool& pool,
+    VectorPtr& result) {
+  static constexpr int64_t kSecondsPerDay{86'400};
+  auto values = AlignedBuffer::allocate<Timestamp>(numValues, &pool);
+  auto* timestamps = values->asMutable<Timestamp>();
+  if (nullsPtr) {
+    for (uint64_t i = 0; i < numValues; ++i) {
+      if (!bits::isBitNull(nullsPtr, i)) {
+        timestamps[i] =
+            Timestamp(kSecondsPerDay * static_cast<int64_t>(days[i]), 0);
+      }
+    }
+  } else {
+    for (uint64_t i = 0; i < numValues; ++i) {
+      timestamps[i] =
+          Timestamp(kSecondsPerDay * static_cast<int64_t>(days[i]), 0);
+    }
+  }
+  result = std::make_shared<FlatVector<Timestamp>>(
+      &pool,
+      TIMESTAMP(),
+      std::move(nulls),
+      numValues,
+      std::move(values),
+      std::vector<BufferPtr>{});
+  result->setNullCount(nullCount);
+}
+
 template <typename DataT>
 class DecimalColumnReader : public ColumnReader {
  private:
@@ -582,6 +619,26 @@ void IntegerDirectColumnReader<ReqT>::next(
     uint64_t numValues,
     VectorPtr& result,
     const uint64_t* incomingNulls) {
+  // DATE-erased-to-INT file column requested as TIMESTAMP: decode into a
+  // scratch int32 buffer and emit a FlatVector<Timestamp>. ReqT is int32_t
+  // here (see buildTypedIntegerColumnReader's TIMESTAMP case).
+  if constexpr (std::is_same_v<ReqT, int32_t>) {
+    if (requestedType_->kind() == TypeKind::TIMESTAMP) {
+      result.reset();
+      BufferPtr nulls = readNulls(numValues, result, incomingNulls);
+      const auto* nullsPtr = nulls ? nulls->as<uint64_t>() : nullptr;
+      uint64_t nullCount =
+          nullsPtr ? bits::countNulls(nullsPtr, 0, numValues) : 0;
+      auto daysBuffer =
+          AlignedBuffer::allocate<int32_t>(numValues, &memoryPool_);
+      auto* days = daysBuffer->template asMutable<int32_t>();
+      nextValues(*ints, days, numValues, nullsPtr);
+      emitDaysAsTimestampVector(
+          days, numValues, nullsPtr, nullCount, nulls, memoryPool_, result);
+      return;
+    }
+  }
+
   auto flatVector = resetIfWrongFlatVectorType<ReqT>(result);
   BufferPtr values;
   if (flatVector) {
@@ -739,6 +796,36 @@ void IntegerDictionaryColumnReader<ReqT>::next(
     uint64_t numValues,
     VectorPtr& result,
     const uint64_t* incomingNulls) {
+  // DATE-erased-to-INT file column requested as TIMESTAMP: decode and
+  // populate into a scratch int32 buffer, then emit a FlatVector<Timestamp>.
+  // ReqT is int32_t here (see buildTypedIntegerColumnReader's TIMESTAMP case).
+  if constexpr (std::is_same_v<ReqT, int32_t>) {
+    if (requestedType_->kind() == TypeKind::TIMESTAMP) {
+      result.reset();
+      BufferPtr nulls = readNulls(numValues, result, incomingNulls);
+      const auto* nullsPtr = nulls ? nulls->as<uint64_t>() : nullptr;
+      uint64_t nullCount =
+          nullsPtr ? bits::countNulls(nullsPtr, 0, numValues) : 0;
+      auto daysBuffer =
+          AlignedBuffer::allocate<int32_t>(numValues, &memoryPool_);
+      auto* days = daysBuffer->template asMutable<int32_t>();
+      const char* inDict = nullptr;
+      if (inDictionaryReader) {
+        detail::ensureCapacity<bool>(inDictionary, numValues, &memoryPool_);
+        inDictionaryReader->next(
+            inDictionary->asMutable<char>(), numValues, nullsPtr);
+        inDict = inDictionary->as<char>();
+      }
+      ensureInitialized();
+      auto dict = dictionary->as<int64_t>();
+      nextValues(*dataReader, days, numValues, nullsPtr);
+      populateOutput(dict, days, numValues, nullsPtr, inDict);
+      emitDaysAsTimestampVector(
+          days, numValues, nullsPtr, nullCount, nulls, memoryPool_, result);
+      return;
+    }
+  }
+
   auto flatVector = resetIfWrongFlatVectorType<ReqT>(result);
   BufferPtr values;
   if (result) {
@@ -2496,6 +2583,18 @@ std::unique_ptr<ColumnReader> buildTypedIntegerColumnReader(
           std::move(flatMapContext));
     case TypeKind::SMALLINT:
       return std::make_unique<IntegerColumnReaderT<int16_t>>(
+          requestedType,
+          fileType,
+          stripe,
+          streamLabels,
+          numBytes,
+          std::move(flatMapContext));
+    case TypeKind::TIMESTAMP:
+      // DATE columns are erased to plain INTEGER on the DWRF write path,
+      // so a TIMESTAMP request against an int file column means the source
+      // is int32 days-since-epoch. Storage stays int32; the days * 86400
+      // -> Timestamp conversion happens in IntegerColumnReaderT::next.
+      return std::make_unique<IntegerColumnReaderT<int32_t>>(
           requestedType,
           fileType,
           stripe,
