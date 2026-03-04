@@ -93,22 +93,28 @@ DeserializeResult deserialize(
                       int totalBytesRead,
                       int requestedBytes) -> std::unique_ptr<folly::IOBuf> {
     std::unique_ptr<folly::IOBuf> buffer;
+    const void* data;
+    int32_t dataBytes;
+    if (!readData(&data, &dataBytes)) {
+      return folly::IOBuf::wrapBuffer(nullptr, 0);
+    }
+
     if (currentDataBytes == 0) {
-      const void* data;
-      int32_t dataBytes;
-      if (!readData(&data, &dataBytes)) {
-        return folly::IOBuf::wrapBuffer(nullptr, 0);
-      }
       if (dataBytes >= requestedBytes) {
         return folly::IOBuf::wrapBuffer(data, dataBytes);
       }
       buffer = folly::IOBuf::copyBuffer(data, dataBytes);
     } else {
-      buffer = folly::IOBuf::copyBuffer(currentData, currentDataBytes);
+      // Return only the new data - the currentData bytes are already in the
+      // reader's view
+      if (dataBytes >= requestedBytes - currentDataBytes) {
+        return folly::IOBuf::wrapBuffer(data, dataBytes);
+      }
+      buffer = folly::IOBuf::copyBuffer(data, dataBytes);
     }
     while (true) {
-      const void* data;
-      int32_t dataBytes;
+      data = nullptr;
+      dataBytes = 0;
       if (!readData(&data, &dataBytes)) {
         break;
       }
