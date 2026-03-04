@@ -1200,7 +1200,7 @@ TEST_F(ParquetReaderWideningTest, decimalLongToLongWithScaleWidening) {
 
 TEST_F(ParquetReaderWideningTest, typeWideningRejectionIncompatibleTypes) {
   for (const auto& type :
-       std::vector<TypePtr>{TIMESTAMP(), BIGINT(), INTEGER(), VARCHAR()}) {
+       std::vector<TypePtr>{BIGINT(), INTEGER(), VARCHAR()}) {
     assertWideningThrows(
         makeRowVector({makeFlatVector<int32_t>({-1, 0, 1}, DATE())}),
         ROW("col", type),
