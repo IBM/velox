@@ -602,6 +602,33 @@ class SelectiveColumnReader {
   template <typename T, typename TVector>
   void upcastScalarValues(const RowSet& rows);
 
+  /// Reads DATE (int32 days-since-epoch) values and converts them to
+  /// Timestamp (seconds = days × 86400, nanoseconds = 0).
+  /// Emits Timestamps for 'rows' from a buffer of int32 days-since-epoch read
+  /// by prepareRead<int32_t>.
+  ///
+  /// Reentrancy rules — the two paths differ:
+  ///  - Small-subset path (rows.size() < numValues_/2): the source int32 buffer
+  ///    and numValues_ are left intact; each call allocates a fresh Timestamp
+  ///    vector. Safe to call multiple times for arbitrary subsets of the same
+  ///    read, including disjoint ones.
+  ///  - Bulk path (rows.size() >= numValues_/2): the int32 buffer is
+  ///    transmuted to Timestamps in place (amortizing the conversion),
+  ///    valueSize_ becomes sizeof(Timestamp), and the call finishes via
+  ///    getFlatValues<Timestamp, Timestamp>. getFlatValues compacts the values
+  ///    buffer down to rows.size(), so any un-extracted rows are discarded
+  ///    and subsequent extractions must ask for rows that advance forward
+  ///    through what remains — disjoint or earlier subsets are unsupported.
+  ///
+  /// Caller (getIntValues) dispatches on valueSize_ before calling; once the
+  /// bulk path has run, valueSize_ == sizeof(Timestamp) and later calls should
+  /// go directly to getFlatValues<Timestamp, Timestamp>. Pass isFinal=true on
+  /// the last call to release the mayGetValues_ lock.
+  void convertDateToTimestampValues(
+      const RowSet& rows,
+      VectorPtr* result,
+      bool isFinal = false);
+
   // For complex type column, we need to compact only nulls if the rows are
   // shrinked.  Child fields are handled recursively in their own column
   // readers.
