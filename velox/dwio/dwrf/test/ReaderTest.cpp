@@ -4005,5 +4005,117 @@ TEST_F(TestReader, extractionNestedChainScanSpec) {
       << "Nested extraction: " << extBytes << ", Full: " << fullBytes;
 }
 
+// ── DATE→TIMESTAMP widening coercion tests ────────────────────────────────
+//
+// DWRF stores DATE columns as int32 (days since Unix epoch). These tests
+// verify that the selective reader can widen DATE to TIMESTAMP at read time,
+// producing Timestamp(days * 86400, 0).
+
+TEST_F(TestReader, readDateColumnAsTimestamp) {
+  constexpr int kNumRows = 20;
+
+  // Write a DATE (int32 days) column.
+  auto sink = std::make_unique<dwio::common::MemorySink>(
+      1024 * 1024, dwio::common::FileSink::Options{.pool = pool()});
+  auto* sinkPtr = sink.get();
+
+  auto fileSchema = ROW({"dt"}, {DATE()});
+  dwrf::WriterOptions writerOptions;
+  writerOptions.schema = fileSchema;
+  // The Writer(options, sink, parentPool&) constructor calls
+  // addAggregateChild on the parent pool, which is only valid on an
+  // aggregate pool. VectorTestBase::pool() is a leaf, so pass the
+  // aggregate root pool here.
+  dwrf::Writer writer{writerOptions, std::move(sink), *rootPool_};
+
+  // Days 1–20 since the Unix epoch.
+  auto dateData = makeFlatVector<int32_t>(
+      kNumRows, [](auto row) { return row + 1; }, nullptr, DATE());
+  writer.write(makeRowVector({dateData}));
+  writer.close();
+
+  // Read back, requesting TIMESTAMP (widening coercion).
+  std::string data(sinkPtr->data(), sinkPtr->size());
+  auto readFile =
+      std::make_shared<facebook::velox::InMemoryReadFile>(std::move(data));
+  auto input = std::make_unique<BufferedInput>(readFile, *pool());
+
+  dwio::common::ReaderOptions readerOpts{pool()};
+  auto requestedSchema = ROW({"dt"}, {TIMESTAMP()});
+  RowReaderOptions rowReaderOpts;
+  rowReaderOpts.select(std::make_shared<ColumnSelector>(requestedSchema));
+
+  auto reader = DwrfReader::create(std::move(input), readerOpts);
+  auto rowReader = reader->createRowReader(rowReaderOpts);
+
+  VectorPtr batch;
+  ASSERT_TRUE(rowReader->next(kNumRows, batch));
+  auto* root = batch->as<RowVector>();
+  ASSERT_EQ(root->size(), kNumRows);
+  auto* tsCol = root->childAt(0)->as<SimpleVector<Timestamp>>();
+  ASSERT_NE(tsCol, nullptr);
+
+  constexpr int64_t kSecondsPerDay = 86400;
+  for (int i = 0; i < kNumRows; ++i) {
+    EXPECT_FALSE(tsCol->isNullAt(i));
+    EXPECT_EQ(tsCol->valueAt(i), Timestamp((i + 1) * kSecondsPerDay, 0))
+        << "row " << i;
+  }
+}
+
+TEST_F(TestReader, readDateColumnAsTimestampWithNulls) {
+  constexpr int kNumRows = 20;
+
+  auto sink = std::make_unique<dwio::common::MemorySink>(
+      1024 * 1024, dwio::common::FileSink::Options{.pool = pool()});
+  auto* sinkPtr = sink.get();
+
+  auto fileSchema = ROW({"dt"}, {DATE()});
+  dwrf::WriterOptions writerOptions;
+  writerOptions.schema = fileSchema;
+  // The Writer(options, sink, parentPool&) constructor calls
+  // addAggregateChild on the parent pool, which is only valid on an
+  // aggregate pool. VectorTestBase::pool() is a leaf, so pass the
+  // aggregate root pool here.
+  dwrf::Writer writer{writerOptions, std::move(sink), *rootPool_};
+
+  // Every 3rd row is null.
+  auto dateData = makeFlatVector<int32_t>(
+      kNumRows, [](auto row) { return row + 1; }, nullEvery(3), DATE());
+  writer.write(makeRowVector({dateData}));
+  writer.close();
+
+  std::string data(sinkPtr->data(), sinkPtr->size());
+  auto readFile =
+      std::make_shared<facebook::velox::InMemoryReadFile>(std::move(data));
+  auto input = std::make_unique<BufferedInput>(readFile, *pool());
+
+  dwio::common::ReaderOptions readerOpts{pool()};
+  auto requestedSchema = ROW({"dt"}, {TIMESTAMP()});
+  RowReaderOptions rowReaderOpts;
+  rowReaderOpts.select(std::make_shared<ColumnSelector>(requestedSchema));
+
+  auto reader = DwrfReader::create(std::move(input), readerOpts);
+  auto rowReader = reader->createRowReader(rowReaderOpts);
+
+  VectorPtr batch;
+  ASSERT_TRUE(rowReader->next(kNumRows, batch));
+  auto* root = batch->as<RowVector>();
+  ASSERT_EQ(root->size(), kNumRows);
+  auto* tsCol = root->childAt(0)->as<SimpleVector<Timestamp>>();
+  ASSERT_NE(tsCol, nullptr);
+
+  constexpr int64_t kSecondsPerDay = 86400;
+  for (int i = 0; i < kNumRows; ++i) {
+    // nullEvery(3): rows 0, 3, 6, ... are null (0-based).
+    bool expectNull = (i % 3 == 0);
+    EXPECT_EQ(tsCol->isNullAt(i), expectNull) << "row " << i;
+    if (!expectNull) {
+      EXPECT_EQ(tsCol->valueAt(i), Timestamp((i + 1) * kSecondsPerDay, 0))
+          << "row " << i;
+    }
+  }
+}
+
 } // namespace
 } // namespace facebook::velox::dwrf
