@@ -1050,7 +1050,12 @@ TypePtr ReaderBase::convertType(
                 isCompatible(
                     requestedType,
                     isRepeated,
-                    [](const TypePtr& type) { return type->isDate(); }),
+                    [](const TypePtr& type) {
+                      // DATE can be read as DATE or widened to TIMESTAMP
+                      // (days × 86400 seconds).
+                      return type->isDate() ||
+                          type->kind() == TypeKind::TIMESTAMP;
+                    }),
             kTypeMappingErrorFmtStr,
             "DATE",
             requestedType->toString(),
