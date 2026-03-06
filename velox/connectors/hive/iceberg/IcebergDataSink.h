@@ -150,6 +150,9 @@ class IcebergDataSink : public HiveDataSink {
   std::shared_ptr<dwio::common::WriterOptions> createWriterOptions()
       const override;
 
+  std::shared_ptr<dwio::common::WriterOptions> createWriterOptions(
+      size_t writerIndex) const override;
+
   std::optional<std::string> getPartitionName(
       const HiveWriterId& id) const override;
 
@@ -165,6 +168,8 @@ class IcebergDataSink : public HiveDataSink {
   void closeWriter(int32_t index);
 
   bool finishWriter(int32_t index);
+
+  void rotateWriter(size_t index) override;
 
   // Below are structures for partitions from all inputs. partitionData_
   // is indexed by partitionId.

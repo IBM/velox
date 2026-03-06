@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#include "velox/connectors/hive/HiveConfig.h"
 #include "velox/common/base/tests/GTestUtils.h"
+#include "velox/connectors/hive/HiveConfig.h"
 #include "velox/connectors/hive/iceberg/IcebergConnector.h"
 #include "velox/connectors/hive/iceberg/tests/IcebergTestBase.h"
 #include "velox/exec/tests/utils/PlanBuilder.h"
@@ -92,11 +92,18 @@ TEST_F(IcebergInsertTest, maxTargetFileSizeRotation) {
   const auto outputPath = TempDirectoryPath::create()->getPath();
   const auto rowType = ROW({"c0", "c1"}, {BIGINT(), VARCHAR()});
   const auto vectors = createTestData(rowType, 10, 1'000);
-  const auto dataSink = createDataSinkAndAppendData(vectors, outputPath);
+  auto dataSink = createIcebergDataSink(rowType, outputPath, {});
+
+  for (const auto& vector : vectors) {
+    dataSink->appendData(vector);
+  }
+
+  ASSERT_TRUE(dataSink->finish());
   const auto commitTasks = dataSink->close();
 
   ASSERT_EQ(listFiles(outputPath).size(), 5);
 
+  createDuckDbTable(vectors);
   auto splits = createSplitsForDirectory(outputPath);
   auto plan = exec::test::PlanBuilder()
                   .startTableScan()
@@ -104,7 +111,7 @@ TEST_F(IcebergInsertTest, maxTargetFileSizeRotation) {
                   .outputType(rowType)
                   .endTableScan()
                   .planNode();
-  exec::test::AssertQueryBuilder(plan).splits(splits).assertResults(vectors);
+  assertQuery(plan, splits, "SELECT * FROM tmp");
 }
 #endif
 
