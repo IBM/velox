@@ -740,10 +740,18 @@ bool applyPartitionFilter(
         LOG(INFO) << "Converted to Timestamp (UTC): " << ts.toString();
         return applyFilter(*filter, ts);
       } catch (const std::exception& e) {
-        // Fall back to ISO 8601 string parsing
-        LOG(INFO) << "Failed to parse as microseconds, trying ISO 8601: " << e.what();
+        // Fall back to string parsing - try ISO 8601 first (for Iceberg), then PrestoCast
+        LOG(INFO) << "Failed to parse as microseconds, trying kIso8601 parsing: " << e.what();
         auto result = util::fromTimestampString(
             StringView(partitionValue), util::TimestampParseMode::kIso8601);
+        
+        // If ISO 8601 fails, try PrestoCast for backward compatibility
+        if (result.hasError()) {
+          LOG(INFO) << "ISO 8601 parsing failed, trying PrestoCast: " << result.error().message();
+          result = util::fromTimestampString(
+              StringView(partitionValue), util::TimestampParseMode::kPrestoCast);
+        }
+        
         VELOX_CHECK(
             !result.hasError(),
             "Failed to parse TIMESTAMP partition value '{}': {}",
@@ -752,7 +760,7 @@ bool applyPartitionFilter(
         if (asLocalTime) {
           result.value().toGMT(Timestamp::defaultTimezone());
         }
-        LOG(INFO) << "Successfully parsed as ISO 8601: " << result.value().toString();
+        LOG(INFO) << "Successfully parsed timestamp: " << result.value().toString();
         return applyFilter(*filter, result.value());
       }
     }
