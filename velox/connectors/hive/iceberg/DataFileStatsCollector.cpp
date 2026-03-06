@@ -81,6 +81,12 @@ void DataFileStatsCollector::collectStats(
       const auto fieldId = columnChunkMetadata->fieldId();
       const auto numValues = columnChunkMetadata->numValues();
 
+      // Skip columns without field IDs. field_id() returns -1 when metadata is
+      // missing.
+      if (fieldId < 0) {
+        continue;
+      }
+
       dataFileStats->valueCounts[fieldId] += numValues;
       dataFileStats->columnsSizes[fieldId] +=
           columnChunkMetadata->totalCompressedSize();

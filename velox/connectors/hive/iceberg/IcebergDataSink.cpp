@@ -462,7 +462,13 @@ HiveWriterId IcebergDataSink::getIcebergWriterId(size_t row) const {
 
 std::shared_ptr<dwio::common::WriterOptions>
 IcebergDataSink::createWriterOptions() const {
-  auto options = HiveDataSink::createWriterOptions();
+  // Default: use the last writer's info (for appendWriter which just added it)
+  return createWriterOptions(writerInfo_.size() - 1);
+}
+
+std::shared_ptr<dwio::common::WriterOptions>
+IcebergDataSink::createWriterOptions(size_t writerIndex) const {
+  auto options = HiveDataSink::createWriterOptions(writerIndex);
   options->fileStatsCollector = icebergStatsCollector_.get();
 
 #ifdef VELOX_ENABLE_PARQUET
@@ -545,6 +551,22 @@ void IcebergDataSink::closeWriter(int32_t index) {
     dataFileStats_.push_back(writers_[index]->dataFileStats());
     writers_[index] = nullptr;
   }
+}
+
+void IcebergDataSink::rotateWriter(size_t index) {
+  common::testutil::TestValue::adjust(
+      "facebook::velox::connector::hive::iceberg::IcebergDataSink::rotateWriter",
+      this);
+
+  if (writers_[index]) {
+    WRITER_NON_RECLAIMABLE_SECTION_GUARD(index);
+    // Collect dataFileStats before the writer is closed by parent's
+    // rotateWriter
+    dataFileStats_.push_back(writers_[index]->dataFileStats());
+  }
+
+  // Call parent's rotateWriter to close the writer and finalize the file
+  HiveDataSink::rotateWriter(index);
 }
 
 bool IcebergDataSink::finishWriter(int32_t index) {

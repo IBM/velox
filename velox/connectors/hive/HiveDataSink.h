@@ -755,7 +755,7 @@ class HiveDataSink : public DataSink {
   // Creates WriterOptions for a specific writer index. Use this overload
   // during writer rotation to ensure the correct writer's memory pool and
   // nonReclaimableSection are used.
-  std::shared_ptr<dwio::common::WriterOptions> createWriterOptions(
+  virtual std::shared_ptr<dwio::common::WriterOptions> createWriterOptions(
       size_t writerIndex) const;
 
   std::unique_ptr<facebook::velox::dwio::common::Writer>
@@ -800,7 +800,7 @@ class HiveDataSink : public DataSink {
   /// Rotates the writer at the given index to a new file. This is called when
   /// the current file exceeds maxTargetFileBytes_. The old writer is closed
   /// and a new writer is created for the same partition/bucket.
-  void rotateWriter(size_t index);
+  virtual void rotateWriter(size_t index);
 
   /// Finalizes the current file for the writer at the given index.
   /// Captures file stats and adds the file info to writtenFiles.
