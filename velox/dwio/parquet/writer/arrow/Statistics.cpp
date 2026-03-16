@@ -835,6 +835,19 @@ class TypedStatisticsImpl : public TypedStatistics<DType> {
   }
 
   std::string MaxValue() const override {
+    if (!hasMinMax()) {
+      return std::string();
+    }
+    // if constexpr (std::is_same_v<T, int16_t>) {
+    //   if (descr_->logicalType()->isDecimal()) {
+    //     return encodeDecimalToBigEndian(static_cast<int64_t>(max_));
+    //   }
+    // }
+    // if constexpr (std::is_same_v<T, int32_t>) {
+    //   if (descr_->logicalType()->isDecimal()) {
+    //     return encodeDecimalToBigEndian(static_cast<int64_t>(max_));
+    //   }
+    // }
     if constexpr (std::is_same_v<T, int64_t>) {
       if (descr_->logicalType()->isDecimal()) {
         return encodeDecimalToBigEndian(max_);
