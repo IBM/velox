@@ -170,19 +170,19 @@ class RowReader {
 };
 
 /// Represents a row range within a stripe [startRow, endRow).
-struct RowRange {
-  vector_size_t startRow{0}; // Inclusive
-  vector_size_t endRow{0}; // Exclusive
+// struct RowRange {
+//   vector_size_t startRow{0}; // Inclusive
+//   vector_size_t endRow{0}; // Exclusive
 
-  RowRange() = default;
-  RowRange(vector_size_t _startRow, vector_size_t _endRow)
-      : startRow(_startRow), endRow(_endRow) {}
+//   RowRange() = default;
+//   RowRange(vector_size_t _startRow, vector_size_t _endRow)
+//       : startRow(_startRow), endRow(_endRow) {}
 
-  /// Returns true if this row range is empty (no rows to read).
-  bool empty() const {
-    return startRow >= endRow;
-  }
-};
+//   /// Returns true if this row range is empty (no rows to read).
+//   bool empty() const {
+//     return startRow >= endRow;
+//   }
+// };
 
 /**
  * Abstract index reader interface for index-based lookups.

@@ -48,7 +48,7 @@ class ParquetTableScanTest : public HiveConnectorTestBase {
     parquet::registerParquetReaderFactory();
   }
 
-  void assertSelect(
+  std::shared_ptr<Task> assertSelect(
       std::vector<std::shared_ptr<connector::ConnectorSplit>> splits,
       std::vector<std::string>&& outputColumnNames,
       const std::string& sql) {
@@ -56,7 +56,7 @@ class ParquetTableScanTest : public HiveConnectorTestBase {
 
     auto plan = PlanBuilder().tableScan(rowType).planNode();
 
-    assertQuery(plan, splits, sql);
+    return assertQuery(plan, splits, sql);
   }
 
   void assertSelectWithDataColumns(
@@ -1858,7 +1858,6 @@ TEST_F(ParquetTableScanTest, pageIndexWithStats) {
   // has 19 data pages, and the file includes the page index. The following test
   // cases verify the correctness of results when page index is used.
   loadData(
-      getExampleFilePath("column_index.parquet"),
       ROW({"_1"}, {BIGINT()}),
       makeRowVector(
           {"_1"},
@@ -1867,7 +1866,11 @@ TEST_F(ParquetTableScanTest, pageIndexWithStats) {
           }));
 
   // Without filters, page index is not used, so all pages are processed.
-  auto task = assertSelect({"_1"}, "SELECT _1 FROM tmp");
+
+  auto task = assertSelect(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
+      {"_1"},
+      "SELECT _1 FROM tmp");
   ASSERT_EQ(
       task->taskStats()
           .pipelineStats[0]
@@ -1877,7 +1880,11 @@ TEST_F(ParquetTableScanTest, pageIndexWithStats) {
       0);
   // With filters.
   task = assertSelectWithFilter(
-      {"_1"}, {"_1 < 20"}, "", "SELECT _1 FROM tmp WHERE _1 < 20");
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
+      {"_1"},
+      {"_1 < 20"},
+      "",
+      "SELECT _1 FROM tmp WHERE _1 < 20");
   ASSERT_EQ(
       task->taskStats()
           .pipelineStats[0]
@@ -1896,7 +1903,6 @@ TEST_F(ParquetTableScanTest, pageIndexWithStats) {
 
 TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
   loadData(
-      getExampleFilePath("column_index.parquet"),
       ROW({"_1", "_2", "_3", "_5"}, {BIGINT(), VARCHAR(), VARCHAR(), BIGINT()}),
       makeRowVector(
           {"_1", "_2", "_3", "_5"},
@@ -1920,30 +1926,59 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
   };
   // With filters.
   auto task = assertSelectWithFilter(
-      {"_1"}, {"_1 < 20"}, "", "SELECT _1 FROM tmp WHERE _1 < 20");
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
+      {"_1"},
+      {"_1 < 20"},
+      "",
+      "SELECT _1 FROM tmp WHERE _1 < 20");
   verifyPageSkipped(task, 18);
   task = assertSelectWithFilter(
-      {"_1"}, {"_1 > 300"}, "", "SELECT _1 FROM tmp WHERE _1 > 300");
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
+      {"_1"},
+      {"_1 > 300"},
+      "",
+      "SELECT _1 FROM tmp WHERE _1 > 300");
   verifyPageSkipped(task, 3);
 
   // Page skip with multiple columns.
   task = assertSelectWithFilter(
-      {"_1", "_5"}, {"_1 < 20"}, "", "SELECT _1, _5 FROM tmp WHERE _1 < 20");
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
+      {"_1", "_5"},
+      {"_1 < 20"},
+      "",
+      "SELECT _1, _5 FROM tmp WHERE _1 < 20");
   verifyPageSkipped(task, 36);
   task = assertSelectWithFilter(
-      {"_5", "_1"}, {"_1 < 100"}, "", "SELECT _5, _1 FROM tmp WHERE _1 < 100");
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
+      {"_5", "_1"},
+      {"_1 < 100"},
+      "",
+      "SELECT _5, _1 FROM tmp WHERE _1 < 100");
   verifyPageSkipped(task, 36);
   task = assertSelectWithFilter(
-      {"_2", "_1"}, {"_1 < 100"}, "", "SELECT _2, _1 FROM tmp WHERE _1 < 100");
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
+      {"_2", "_1"},
+      {"_1 < 100"},
+      "",
+      "SELECT _2, _1 FROM tmp WHERE _1 < 100");
   verifyPageSkipped(task, 36);
   task = assertSelectWithFilter(
-      {"_3", "_1"}, {"_1 < 100"}, "", "SELECT _3, _1 FROM tmp WHERE _1 < 100");
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
+      {"_3", "_1"},
+      {"_1 < 100"},
+      "",
+      "SELECT _3, _1 FROM tmp WHERE _1 < 100");
   verifyPageSkipped(task, 36);
   task = assertSelectWithFilter(
-      {"_1", "_2"}, {"_1 > 345"}, "", "SELECT _1, _2 FROM tmp WHERE _1 > 345");
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
+      {"_1", "_2"},
+      {"_1 > 345"},
+      "",
+      "SELECT _1, _2 FROM tmp WHERE _1 > 345");
   verifyPageSkipped(task, 6);
 
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_3"},
       {"_1 > 1500"},
       "",
@@ -1952,6 +1987,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
 
   // With multiple filters.
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_2"},
       {"_1 > 345", "_2 < '901'"},
       "",
@@ -1959,6 +1995,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
   verifyPageSkipped(task, 6);
 
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_2"},
       {"_1 > 345", "_2 <= '901'"},
       "",
@@ -1966,6 +2003,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
   verifyPageSkipped(task, 6);
 
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_3"},
       {"_1 > 345", "_3 != '5'"},
       "",
@@ -1973,6 +2011,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
   verifyPageSkipped(task, 6);
 
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5"},
       {"_1 > 20", "_5 > 300"},
       "",
@@ -1980,6 +2019,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
   verifyPageSkipped(task, 6);
 
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5"},
       {"_1 < 300", "_5 < 600"},
       "",
@@ -1987,6 +2027,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
   verifyPageSkipped(task, 32);
 
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5"},
       {"_1 > 200", "_5 < 500"},
       "",
@@ -1994,12 +2035,14 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
   verifyPageSkipped(task, 32);
 
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5"},
       {"_1 > 222", "_5 > 333"},
       "",
       "SELECT _1, _5 FROM tmp WHERE _1 > 222 and _5 > 333");
   verifyPageSkipped(task, 6);
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5"},
       {"_1 < 333", "_5 < 656"},
       "",
@@ -2007,6 +2050,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
   verifyPageSkipped(task, 30);
 
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5"},
       {"_1 > 222", "_5 < 556"},
       "",
@@ -2015,6 +2059,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilter) {
 
   // With OR filter.
   task = assertSelectWithFilter(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5"},
       {"_1 < 200 OR _1 >= 700"},
       "",
@@ -2031,7 +2076,6 @@ TEST_F(ParquetTableScanTest, pageIndexWithComplexTypeColumn) {
       makeFlatVector<int64_t>(500, [](vector_size_t row) { return row; });
   auto arrayVector = makeArrayVector(offsets, elements);
   loadData(
-      getExampleFilePath("complex_type_column_index.parquet"),
       ROW({"_1", "_2"}, {BIGINT(), ARRAY(BIGINT())}),
       makeRowVector(
           {"_1", "_2"},
@@ -2051,12 +2095,20 @@ TEST_F(ParquetTableScanTest, pageIndexWithComplexTypeColumn) {
   };
 
   auto task = assertSelectWithFilter(
-      {"_1"}, {"_1 < 20"}, "", "SELECT _1 FROM tmp WHERE _1 < 20");
+      {makeSplit(getExampleFilePath("complex_type_column_index.parquet"))},
+      {"_1"},
+      {"_1 < 20"},
+      "",
+      "SELECT _1 FROM tmp WHERE _1 < 20");
   verifyPageSkipped(task, 4);
 
   // There is complex type column, so the page index is not used.
   task = assertSelectWithFilter(
-      {"_1", "_2"}, {"_1 < 20"}, "", "SELECT _1, _2 FROM tmp WHERE _1 < 20");
+      {makeSplit(getExampleFilePath("complex_type_column_index.parquet"))},
+      {"_1", "_2"},
+      {"_1 < 20"},
+      "",
+      "SELECT _1, _2 FROM tmp WHERE _1 < 20");
   verifyPageSkipped(task, 0);
 }
 
@@ -2065,7 +2117,6 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilterAndAgg) {
   // (~19 data pages), the rest in the second. It includes a page index. The
   // test cases verify correct results when using the page index.
   loadData(
-      getExampleFilePath("column_index.parquet"),
       ROW({"_1", "_2", "_3", "_5"}, {BIGINT(), VARCHAR(), VARCHAR(), BIGINT()}),
       makeRowVector(
           {"_1", "_2", "_3", "_5"},
@@ -2089,6 +2140,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilterAndAgg) {
   };
   // With filter and aggregation.
   auto task = assertSelectWithFilterAndAgg(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1"},
       {"_1 < 30"},
       {"sum(_1)"},
@@ -2096,6 +2148,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilterAndAgg) {
       "SELECT sum(_1) FROM tmp WHERE _1 < 30");
   verifyPageSkipped(task, 18);
   task = assertSelectWithFilterAndAgg(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5"},
       {"_1 > 200"},
       {"sum(_5)"},
@@ -2103,6 +2156,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilterAndAgg) {
       "SELECT sum(_5) FROM tmp WHERE _1 > 200");
   verifyPageSkipped(task, 4);
   task = assertSelectWithFilterAndAgg(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5"},
       {"_1 < 700"},
       {"min(_1)", "max(_5)"},
@@ -2110,6 +2164,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilterAndAgg) {
       "SELECT min(_1), max(_5) FROM tmp WHERE _1 < 700");
   verifyPageSkipped(task, 24);
   task = assertSelectWithFilterAndAgg(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_5", "_1"},
       {"_1 < 3"},
       {"max(_5)"},
@@ -2117,6 +2172,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilterAndAgg) {
       "SELECT max(_5), _1 FROM tmp WHERE _1 < 3 GROUP BY _1");
   verifyPageSkipped(task, 36);
   task = assertSelectWithFilterAndAgg(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_2"},
       {"_1 > 200"},
       {"count(_2)"},
@@ -2124,6 +2180,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilterAndAgg) {
       "SELECT count(_2) FROM tmp WHERE _1 > 200");
   verifyPageSkipped(task, 4);
   task = assertSelectWithFilterAndAgg(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_3"},
       {"_1 > 200"},
       {"count(_3)"},
@@ -2132,6 +2189,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilterAndAgg) {
   verifyPageSkipped(task, 4);
 
   task = assertSelectWithFilterAndAgg(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5"},
       {"_1 > 200", "_5 < 901"},
       {"sum(_5)"},
@@ -2139,6 +2197,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilterAndAgg) {
       "SELECT sum(_5) FROM tmp WHERE _1 > 200 and _5 < 901");
   verifyPageSkipped(task, 22);
   task = assertSelectWithFilterAndAgg(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_2"},
       {"_1 < 200 or _1 > 901"},
       {"min(_2)"},
@@ -2146,6 +2205,7 @@ TEST_F(ParquetTableScanTest, pageIndexWithFilterAndAgg) {
       "SELECT min(_2) FROM tmp WHERE _1 < 200 or _1 > 901");
   verifyPageSkipped(task, 14);
   task = assertSelectWithFilterAndAgg(
+      {makeSplit(getExampleFilePath("column_index.parquet"))},
       {"_1", "_5", "_3"},
       {"_1 > 200", "_5 < 901"},
       {"max(_3)"},
