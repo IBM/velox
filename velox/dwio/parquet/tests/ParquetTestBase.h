@@ -208,7 +208,7 @@ class ParquetTestBase : public testing::Test,
 
   std::string getExampleFilePath(const std::string& fileName) {
     return test::getDataFilePath(
-        "velox/dwio/parquet/tests/reader", "../examples/" + fileName);
+        "velox/dwio/parquet/tests/examples", fileName);
   }
 
   dwio::common::MemorySink* write(
