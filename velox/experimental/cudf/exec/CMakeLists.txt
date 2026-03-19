@@ -24,6 +24,7 @@ add_library(
   CudfOrderBy.cpp
   CudfTopN.cpp
   CudfTopNRowNumber.cpp
+  CudfWindow.cpp
   DebugUtil.cpp
   OperatorAdapters.cpp
   ToCudf.cpp
