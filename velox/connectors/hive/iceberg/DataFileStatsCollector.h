@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/dwio/common/DataFileStatsCollector.h"
+#include "velox/type/Type.h"
 
 namespace facebook::velox::connector::hive::iceberg {
 
@@ -26,10 +27,11 @@ struct IcebergDataFileStatsSettings
     : public dwio::common::DataFileStatsSettings {
   int32_t fieldId;
   bool skipBounds;
+  TypePtr veloxType;
   std::vector<std::unique_ptr<IcebergDataFileStatsSettings>> children;
 
-  IcebergDataFileStatsSettings(int32_t id, bool skip)
-      : fieldId(id), skipBounds(skip), children() {}
+  IcebergDataFileStatsSettings(int32_t id, bool skip, TypePtr type = nullptr)
+      : fieldId(id), skipBounds(skip), veloxType(type), children() {}
 };
 
 class DataFileStatsCollector : public dwio::common::FileStatsCollector {
