@@ -38,11 +38,17 @@ void DataFileStatsCollector::collectStats(
   VELOX_CHECK_NOT_NULL(fileMetadata);
 
   std::unordered_set<int32_t> skipBoundsFields;
+  std::unordered_map<int32_t, TypePtr> fieldIdToType;
   std::function<int32_t(IcebergDataFileStatsSettings*)> processFields =
       [&skipBoundsFields,
+       &fieldIdToType,
        &processFields](IcebergDataFileStatsSettings* field) -> int32_t {
     if (field->skipBounds) {
       skipBoundsFields.insert(field->fieldId);
+    }
+    // Store the Velox type for this field
+    if (field->veloxType) {
+      fieldIdToType[field->fieldId] = field->veloxType;
     }
     if (field->children.empty()) {
       return 1;
@@ -112,13 +118,29 @@ void DataFileStatsCollector::collectStats(
     }
   }
 
+  // Only 4-byte DECIMAL values (precision <= 9) need byte-swapping.
   for (const auto& [fieldId, minStats] : globalMinStats) {
-    const auto lowerBound = minStats->MinValue();
+    auto lowerBound = minStats->MinValue();
+    auto upperBound = globalMaxStats[fieldId]->MaxValue();
+
+    auto typeIt = fieldIdToType.find(fieldId);
+    if (typeIt != fieldIdToType.end() && typeIt->second &&
+        typeIt->second->isDecimal() && lowerBound.size() == 4) {
+      std::string lowerResult(4, '\0');
+      auto lowerSwapped = __builtin_bswap32(
+          *reinterpret_cast<const uint32_t*>(lowerBound.data()));
+      std::memcpy(lowerResult.data(), &lowerSwapped, 4);
+      lowerBound = lowerResult;
+
+      std::string upperResult(4, '\0');
+      auto upperSwapped = __builtin_bswap32(
+          *reinterpret_cast<const uint32_t*>(upperBound.data()));
+      std::memcpy(upperResult.data(), &upperSwapped, 4);
+      upperBound = upperResult;
+    }
+
     dataFileStats->lowerBounds[fieldId] =
         encoding::Base64::encode(lowerBound.data(), lowerBound.size());
-  }
-  for (const auto& [fieldId, maxStats] : globalMaxStats) {
-    const auto upperBound = maxStats->MaxValue();
     dataFileStats->upperBounds[fieldId] =
         encoding::Base64::encode(upperBound.data(), upperBound.size());
   }
