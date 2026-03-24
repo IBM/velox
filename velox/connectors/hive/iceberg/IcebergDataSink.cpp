@@ -221,7 +221,7 @@ IcebergDataSink::IcebergDataSink(
                              bool skipBounds) -> IcebergDataFileStatsSettings {
     VELOX_CHECK_NOT_NULL(type, "Input column type cannot be null.");
     bool currentSkipBounds = skipBounds || type->isMap() || type->isArray();
-    IcebergDataFileStatsSettings field(f.id, currentSkipBounds);
+    IcebergDataFileStatsSettings field(f.id, currentSkipBounds, type);
     if (!f.children.empty()) {
       VELOX_CHECK_EQ(f.children.size(), type->size());
       field.children.reserve(f.children.size());
