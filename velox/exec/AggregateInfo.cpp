@@ -104,12 +104,6 @@ std::vector<AggregateInfo> toAggregateInfo(
         aggResultType,
         operatorCtx.driverCtx()->queryConfig());
 
-    // Pass constant inputs to the aggregate so it can read constant arguments
-    // (e.g., flags) at initialization time.
-    if (!constants.empty()) {
-      info.function->setConstantInputs(constants);
-    }
-
     auto lambdas = extractLambdaInputs(aggregate);
     if (!lambdas.empty()) {
       if (expressionEvaluator == nullptr) {
