@@ -314,8 +314,10 @@ if(VELOX_ENABLE_REMOTE_FUNCTIONS)
     velox_local_runner_service_runner
     velox_local_runner_service_lib
     velox_functions_prestosql
-    gtest
     gflags
+    glog::glog
+    GTest::gtest
+    GTest::gtest_main
     Folly::folly
   )
 endif()

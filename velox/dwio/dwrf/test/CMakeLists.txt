@@ -430,6 +430,7 @@ target_link_libraries(
   velox_vector_test_lib
   velox_hive_connector
   velox_link_libs
+  velox_hive_connector
   Folly::folly
   fmt::fmt
   lz4::lz4

@@ -74,6 +74,8 @@ velox_add_library(
 
 velox_link_libraries(
   velox_hive_iceberg_splitreader
+  velox_hive_partition_id_generator
+  velox_hive_table_handle
   velox_connector
   velox_core
   velox_functions_iceberg

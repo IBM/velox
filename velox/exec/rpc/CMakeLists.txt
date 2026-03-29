@@ -14,9 +14,9 @@
 
 # RPCNode is part of velox_core (in core/PlanNode.h)
 
-velox_add_library(velox_rpc_error_classification HEADERS RpcErrorClassification.h)
+velox_add_library(velox_rpc_error_classification INTERFACE HEADERS RpcErrorClassification.h)
 
-velox_link_libraries(velox_rpc_error_classification Folly::folly FBThrift::thriftcpp2)
+velox_link_libraries(velox_rpc_error_classification INTERFACE Folly::folly FBThrift::thriftcpp2)
 
 velox_add_library(
   velox_rpc_state
@@ -31,14 +31,13 @@ velox_link_libraries(
   velox_rpc_state
   velox_rpc_types
   velox_common_base
-  velox_future
   velox_vector
   Folly::folly
 )
 
 velox_add_library(velox_rpc_rate_limiter RPCRateLimiter.cpp HEADERS RPCRateLimiter.h)
 
-velox_link_libraries(velox_rpc_rate_limiter velox_future)
+velox_link_libraries(velox_rpc_rate_limiter Folly::folly)
 
 velox_add_library(velox_rpc_operator RPCOperator.cpp HEADERS RPCOperator.h)
 
@@ -52,7 +51,6 @@ velox_link_libraries(
   velox_expression
   velox_vector
   velox_buffer
-  velox_future
   Folly::folly
 )
 

@@ -173,6 +173,14 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
     GTest::gtest
   )
 
+  if(VELOX_ENABLE_PARQUET)
+    target_link_libraries(
+      velox_hive_iceberg_equality_delete_test
+      velox_dwio_parquet_writer
+      velox_dwio_parquet_reader
+    )
+  endif()
+
   add_executable(velox_hive_iceberg_deletion_vector_writer_test DeletionVectorWriterTest.cpp)
   add_test(
     velox_hive_iceberg_deletion_vector_writer_test

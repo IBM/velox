@@ -20,8 +20,8 @@ set(
   velox_functions_spark_aggregates
   velox_functions_spark_window
   velox_functions_window_test_lib
+  velox_functions_spark_aggregates
   velox_vector_fuzzer
-  velox_vector_test_lib
   GTest::gtest
   GTest::gtest_main
 )

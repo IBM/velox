@@ -19,6 +19,25 @@ if(VELOX_ENABLE_PARQUET)
   velox_link_libraries(velox_hive_config velox_dwio_parquet_common)
 endif()
 
+velox_add_library(velox_hive_partition_name HivePartitionName.cpp)
+
+velox_link_libraries(
+  velox_hive_partition_name
+  velox_type
+  velox_vector
+  velox_encode
+  velox_dwio_catalog_fbhive
+)
+
+velox_add_library(velox_hive_table_handle FileColumnHandle.cpp TableHandle.cpp)
+
+velox_link_libraries(
+  velox_hive_table_handle
+  velox_connector
+  velox_core
+  velox_type
+)
+
 add_subdirectory(iceberg)
 add_subdirectory(paimon)
 add_subdirectory(delta)
@@ -29,7 +48,6 @@ velox_add_library(
   BufferedInputBuilder.cpp
   ExtractionUtils.cpp
   ExtractionUtils.h
-  FileColumnHandle.cpp
   FileConfig.cpp
   FileConnectorUtil.cpp
   FileDataSink.cpp
@@ -45,10 +63,7 @@ velox_add_library(
   HiveDataSource.cpp
   HiveIndexSource.cpp
   HiveIndexSourceUtils.cpp
-  HivePartitionName.cpp
   HiveSplitReader.cpp
-  PartitionIdGenerator.cpp
-  TableHandle.cpp
   HEADERS
   BufferedInputBuilder.h
   FileColumnHandle.h
@@ -89,6 +104,8 @@ velox_link_libraries(
     velox_dwio_catalog_fbhive
     velox_exec
     velox_hive_partition_function
+    velox_hive_partition_name
+    velox_hive_table_handle
     velox_key_encoder
   PUBLIC velox_hive_delta_splitreader
 )
@@ -96,6 +113,17 @@ velox_link_libraries(
 if(VELOX_ENABLE_PARQUET)
   velox_link_libraries(velox_hive_connector PRIVATE velox_dwio_parquet_common)
 endif()
+
+velox_add_library(velox_hive_partition_id_generator PartitionIdGenerator.cpp)
+
+velox_link_libraries(
+  velox_hive_partition_id_generator
+  velox_core
+  velox_exec
+  velox_memory
+  velox_dwio_catalog_fbhive
+  velox_hive_partition_name
+)
 
 velox_add_library(velox_hive_partition_function HivePartitionFunction.cpp)
 

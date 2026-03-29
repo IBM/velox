@@ -33,7 +33,7 @@ if(VELOX_ENABLE_REMOTE_FUNCTIONS)
     velox_vector_test_lib
     velox_common_base
     Folly::folly
-    gtest
-    gtest_main
+    GTest::gtest
+    GTest::gtest_main
   )
 endif()
