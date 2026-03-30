@@ -2126,13 +2126,13 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
         
         for (auto i = 0; i < hashers_.size(); ++i) {
           auto mergeStart = std::chrono::high_resolution_clock::now();
-          auto beforeRows = hashers_[i]->rows();
+          auto beforeRows = hashers_[i]->numUniqueValues();
           hashers_[i]->merge(*otherTables_[tableIdx]->hashers_[i], vectorHasherMaxNumDistinct);
-          auto afterRows = hashers_[i]->rows();
+          auto afterRows = hashers_[i]->numUniqueValues();
           auto mergeEnd = std::chrono::high_resolution_clock::now();
           auto mergeMs = std::chrono::duration_cast<std::chrono::milliseconds>(mergeEnd - mergeStart).count();
           std::cout << "      * hasher[" << i << "]->merge()耗时: " << mergeMs << "ms"
-                    << ", rows变化: " << beforeRows << " -> " << afterRows << std::endl;
+                    << ", 唯一值数量变化: " << beforeRows << " -> " << afterRows << std::endl;
           
           if (!hashers_[i]->mayUseValueIds()) {
             std::cout << "      * hasher[" << i << "]不再支持ValueIds, 退出" << std::endl;
