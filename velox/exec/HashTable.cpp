@@ -981,34 +981,52 @@ bool HashTable<false>::bloomFilterSupported() const {
 
 template <bool ignoreNullKeys>
 bool HashTable<ignoreNullKeys>::canApplyParallelJoinBuild() const {
-  std::cout << "[canApplyParallelJoinBuild] 检查是否可以并行构建..." << std::endl;
-  std::cout << "  - isJoinBuild_: " << isJoinBuild_ << std::endl;
-  std::cout << "  - buildExecutor_: " << (buildExecutor_ != nullptr ? "非空" : "空") << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[canApplyParallelJoinBuild] 检查是否可以并行构建..." << std::endl;
+    std::cout << "  - isJoinBuild_: " << isJoinBuild_ << std::endl;
+    std::cout << "  - buildExecutor_: " << (buildExecutor_ != nullptr ? "非空" : "空") << std::endl;
+  }
   
   if (!isJoinBuild_ || buildExecutor_ == nullptr) {
-    std::cout << "  - 结果: false (isJoinBuild或buildExecutor检查失败)" << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  - 结果: false (isJoinBuild或buildExecutor检查失败)" << std::endl;
+    }
     return false;
   }
   
-  std::cout << "  - hashMode_: " << modeString(hashMode_) << std::endl;
+  if (verboseLogs_) {
+    std::cout << "  - hashMode_: " << modeString(hashMode_) << std::endl;
+  }
   if (hashMode_ == HashMode::kArray) {
-    std::cout << "  - 结果: false (hashMode是kArray)" << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  - 结果: false (hashMode是kArray)" << std::endl;
+    }
     return false;
   }
   
-  std::cout << "  - otherTables_.size(): " << otherTables_.size() << std::endl;
+  if (verboseLogs_) {
+    std::cout << "  - otherTables_.size(): " << otherTables_.size() << std::endl;
+  }
   if (otherTables_.empty()) {
-    std::cout << "  - 结果: false (otherTables为空)" << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  - 结果: false (otherTables为空)" << std::endl;
+    }
     return false;
   }
   
-  std::cout << "  - capacity_: " << capacity_ << std::endl;
-  std::cout << "  - minTableSizeForParallelJoinBuild_: " << minTableSizeForParallelJoinBuild_ << std::endl;
+  if (verboseLogs_) {
+    std::cout << "  - capacity_: " << capacity_ << std::endl;
+    std::cout << "  - minTableSizeForParallelJoinBuild_: " << minTableSizeForParallelJoinBuild_ << std::endl;
+  }
   auto avgCapacity = capacity_ / (1 + otherTables_.size());
-  std::cout << "  - 平均capacity (capacity_/(1+otherTables_.size())): " << avgCapacity << std::endl;
+  if (verboseLogs_) {
+    std::cout << "  - 平均capacity (capacity_/(1+otherTables_.size())): " << avgCapacity << std::endl;
+  }
   
   bool result = avgCapacity > minTableSizeForParallelJoinBuild_;
-  std::cout << "  - 结果: " << (result ? "true (可以并行构建)" : "false (平均capacity不足)") << std::endl;
+  if (verboseLogs_) {
+    std::cout << "  - 结果: " << (result ? "true (可以并行构建)" : "false (平均capacity不足)") << std::endl;
+  }
   return result;
 }
 
@@ -1538,9 +1556,11 @@ template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::rehash(
     bool initNormalizedKeys,
     int8_t spillInputStartPartitionBit) {
-  std::cout << "\n[rehash] 开始rehash, numRehashes_: " << numRehashes_ << std::endl;
-  std::cout << "  - initNormalizedKeys: " << initNormalizedKeys << std::endl;
-  std::cout << "  - spillInputStartPartitionBit: " << (int)spillInputStartPartitionBit << std::endl;
+  if (verboseLogs_) {
+    std::cout << "\n[rehash] 开始rehash, numRehashes_: " << numRehashes_ << std::endl;
+    std::cout << "  - initNormalizedKeys: " << initNormalizedKeys << std::endl;
+    std::cout << "  - spillInputStartPartitionBit: " << (int)spillInputStartPartitionBit << std::endl;
+  }
   
   ++numRehashes_;
   
@@ -1548,18 +1568,26 @@ void HashTable<ignoreNullKeys>::rehash(
   bool canParallel = canApplyParallelJoinBuild();
   auto checkEnd = std::chrono::high_resolution_clock::now();
   auto checkUs = std::chrono::duration_cast<std::chrono::microseconds>(checkEnd - checkStart).count();
-  std::cout << "[rehash] canApplyParallelJoinBuild检查耗时: " << checkUs << "us" << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[rehash] canApplyParallelJoinBuild检查耗时: " << checkUs << "us" << std::endl;
+  }
   
   if (canParallel) {
-    std::cout << "[rehash] 使用并行构建模式 (parallelJoinBuild)" << std::endl;
+    if (verboseLogs_) {
+      std::cout << "[rehash] 使用并行构建模式 (parallelJoinBuild)" << std::endl;
+    }
     auto parallelStart = std::chrono::high_resolution_clock::now();
     parallelJoinBuild();
     auto parallelEnd = std::chrono::high_resolution_clock::now();
     auto parallelMs = std::chrono::duration_cast<std::chrono::milliseconds>(parallelEnd - parallelStart).count();
-    std::cout << "[rehash] parallelJoinBuild耗时: " << parallelMs << "ms" << std::endl;
+    if (verboseLogs_) {
+      std::cout << "[rehash] parallelJoinBuild耗时: " << parallelMs << "ms" << std::endl;
+    }
     return;
   }
-  std::cout << "[rehash] 使用串行构建模式" << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[rehash] 使用串行构建模式" << std::endl;
+  }
   raw_vector<uint64_t> hashes(pool_);
   hashes.resize(kHashBatchSize);
   char* groups[kHashBatchSize];
@@ -1746,10 +1774,23 @@ uint64_t HashTable<ignoreNullKeys>::setHasherMode(
   uint64_t multiplier = 1;
   // A group by leaves 50% space for values not yet seen.
   for (int i = 0; i < hashers.size(); ++i) {
+    if (verboseLogs_) {
+      std::cout << "  [setHasherMode] hasher[" << i << "] useRange=" << (useRange.size() > i && useRange[i] ? 1 : 0)
+                << ", rangeSizes=" << (rangeSizes.size() > i ? rangeSizes[i] : 0)
+                << ", distinctSizes=" << (distinctSizes.size() > i ? distinctSizes[i] : 0)
+                << ", 进入前multiplier=" << multiplier
+                << ", reservePct()=" << reservePct() << std::endl;
+    }
     multiplier = useRange.size() > i && useRange[i]
         ? hashers[i]->enableValueRange(multiplier, reservePct())
         : hashers[i]->enableValueIds(multiplier, reservePct());
+    if (verboseLogs_) {
+      std::cout << "    - 处理后multiplier=" << multiplier << std::endl;
+    }
     VELOX_CHECK_NE(multiplier, VectorHasher::kRangeTooLarge);
+  }
+  if (verboseLogs_) {
+    std::cout << "  [setHasherMode] 完成, 最终multiplier=" << multiplier << std::endl;
   }
   return multiplier;
 }
@@ -1766,6 +1807,15 @@ void HashTable<ignoreNullKeys>::decideHashMode(
     int32_t numNew,
     int8_t spillInputStartPartitionBit,
     bool disableRangeArrayHash) {
+  if (verboseLogs_) {
+    std::cout << "[decideHashMode] 开始, numNew=" << numNew
+              << ", spillInputStartPartitionBit=" << (int)spillInputStartPartitionBit
+              << ", disableRangeArrayHash=" << disableRangeArrayHash
+              << ", 当前hashMode=" << modeString(hashMode_)
+              << ", numDistinct_=" << numDistinct_
+              << ", reservePct()=" << reservePct()
+              << std::endl;
+  }
   std::vector<uint64_t> rangeSizes(hashers_.size());
   std::vector<uint64_t> distinctSizes(hashers_.size());
   std::vector<bool> useRange(hashers_.size());
@@ -1791,24 +1841,50 @@ void HashTable<ignoreNullKeys>::decideHashMode(
     hashers_[i]->cardinality(reservePct(), rangeSizes[i], distinctSizes[i]);
     distinctsWithReserve = safeMul(distinctsWithReserve, distinctSizes[i]);
     rangesWithReserve = safeMul(rangesWithReserve, rangeSizes[i]);
+    if (verboseLogs_) {
+      std::cout << "  [decideHashMode] hasher[" << i << "] rangeSizes=" << rangeSizes[i]
+                << ", distinctSizes=" << distinctSizes[i] << std::endl;
+    }
     if (distinctSizes[i] == VectorHasher::kRangeTooLarge &&
         rangeSizes[i] != VectorHasher::kRangeTooLarge) {
       useRange[i] = true;
       bestWithReserve = safeMul(bestWithReserve, rangeSizes[i]);
+      if (verboseLogs_) {
+        std::cout << "    - 选择range: distinct溢出且range可用, bestWithReserve累乘=" << bestWithReserve << std::endl;
+      }
     } else if (
         rangeSizes[i] != VectorHasher::kRangeTooLarge &&
         rangeSizes[i] <= distinctSizes[i] * 20) {
       useRange[i] = true;
       bestWithReserve = safeMul(bestWithReserve, rangeSizes[i]);
+      if (verboseLogs_) {
+        std::cout << "    - 选择range: range <= 20 * distinct, bestWithReserve累乘=" << bestWithReserve << std::endl;
+      }
     } else {
       bestWithReserve = safeMul(bestWithReserve, distinctSizes[i]);
+      if (verboseLogs_) {
+        std::cout << "    - 选择distinct, bestWithReserve累乘=" << bestWithReserve << std::endl;
+      }
     }
+  }
+
+  if (verboseLogs_) {
+    std::cout << "  [decideHashMode] 统计汇总: distinctsWithReserve=" << distinctsWithReserve
+              << ", rangesWithReserve=" << rangesWithReserve
+              << ", bestWithReserve=" << bestWithReserve
+              << ", disableRangeArrayHash_=" << disableRangeArrayHash_
+              << ", kArrayHashMaxSize=" << BaseHashTable::kArrayHashMaxSize
+              << std::endl;
   }
 
   if (rangesWithReserve < kArrayHashMaxSize && !disableRangeArrayHash_) {
     std::fill(useRange.begin(), useRange.end(), true);
     capacity_ = setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
     setHashMode(HashMode::kArray, numNew, spillInputStartPartitionBit);
+    if (verboseLogs_) {
+      std::cout << "  [decideHashMode] 进入ARRAY: 依据rangesWithReserve < kArrayHashMaxSize, capacity_=" << capacity_
+                << std::endl;
+    }
     return;
   }
 
@@ -1816,18 +1892,29 @@ void HashTable<ignoreNullKeys>::decideHashMode(
       (disableRangeArrayHash_ && bestWithReserve < numDistinct_ * 2)) {
     capacity_ = setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
     setHashMode(HashMode::kArray, numNew, spillInputStartPartitionBit);
+    if (verboseLogs_) {
+      std::cout << "  [decideHashMode] 进入ARRAY: 依据bestWithReserve阈值判断"
+                << " (disableRangeArrayHash_=" << disableRangeArrayHash_
+                << "), capacity_=" << capacity_ << std::endl;
+    }
     return;
   }
   if (rangesWithReserve != VectorHasher::kRangeTooLarge) {
     std::fill(useRange.begin(), useRange.end(), true);
     setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
     setHashMode(HashMode::kNormalizedKey, numNew, spillInputStartPartitionBit);
+    if (verboseLogs_) {
+      std::cout << "  [decideHashMode] 进入NORMALIZED_KEY: rangesWithReserve可用" << std::endl;
+    }
     return;
   }
   if (hashers_.size() == 1 && distinctsWithReserve > 10000) {
     // A single part group by that does not go by range or become an array
     // does not make sense as a normalized key unless it is very small.
     setHashMode(HashMode::kHash, numNew, spillInputStartPartitionBit);
+    if (verboseLogs_) {
+      std::cout << "  [decideHashMode] 进入HASH: 单键且distinctsWithReserve较大" << std::endl;
+    }
     return;
   }
 
@@ -1835,11 +1922,18 @@ void HashTable<ignoreNullKeys>::decideHashMode(
     clearUseRange(useRange);
     capacity_ = setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
     setHashMode(HashMode::kArray, numNew, spillInputStartPartitionBit);
+    if (verboseLogs_) {
+      std::cout << "  [decideHashMode] 进入ARRAY: 依据distinctsWithReserve < kArrayHashMaxSize, capacity_=" << capacity_
+                << std::endl;
+    }
     return;
   }
   if (distinctsWithReserve == VectorHasher::kRangeTooLarge &&
       rangesWithReserve == VectorHasher::kRangeTooLarge) {
     setHashMode(HashMode::kHash, numNew, spillInputStartPartitionBit);
+    if (verboseLogs_) {
+      std::cout << "  [decideHashMode] 进入HASH: distinct与range均溢出" << std::endl;
+    }
     return;
   }
   // The key concatenation fits in 64 bits.
@@ -1850,6 +1944,9 @@ void HashTable<ignoreNullKeys>::decideHashMode(
   }
   setHasherMode(hashers_, useRange, rangeSizes, distinctSizes);
   setHashMode(HashMode::kNormalizedKey, numNew, spillInputStartPartitionBit);
+  if (verboseLogs_) {
+    std::cout << "  [decideHashMode] 进入NORMALIZED_KEY: 64位拼接可用" << std::endl;
+  }
 }
 
 template <bool ignoreNullKeys>
@@ -2005,20 +2102,26 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
     int8_t spillInputStartPartitionBit,
     size_t vectorHasherMaxNumDistinct,
     bool dropDuplicates,
-    folly::Executor* executor) {
+    folly::Executor* executor,
+    bool printLogs) {
+  verboseLogs_ = printLogs;
   auto startTime = std::chrono::high_resolution_clock::now();
-  std::cout << "\n========== prepareJoinTable 开始 ==========" << std::endl;
-  std::cout << "参数: tables.size=" << tables.size()
-            << ", dropDuplicates=" << dropDuplicates
-            << ", vectorHasherMaxNumDistinct=" << vectorHasherMaxNumDistinct
-            << ", spillInputStartPartitionBit=" << (int)spillInputStartPartitionBit << std::endl;
+  if (verboseLogs_) {
+    std::cout << "\n========== prepareJoinTable 开始 ==========" << std::endl;
+    std::cout << "参数: tables.size=" << tables.size()
+              << ", dropDuplicates=" << dropDuplicates
+              << ", vectorHasherMaxNumDistinct=" << vectorHasherMaxNumDistinct
+              << ", spillInputStartPartitionBit=" << (int)spillInputStartPartitionBit << std::endl;
+  }
   
   buildExecutor_ = executor;
   
   // 阶段1: dropDuplicates处理
   if (dropDuplicates) {
     auto phase1Start = std::chrono::high_resolution_clock::now();
-    std::cout << "[阶段1] dropDuplicates处理开始..." << std::endl;
+    if (verboseLogs_) {
+      std::cout << "[阶段1] dropDuplicates处理开始..." << std::endl;
+    }
     
     if (table_ != nullptr) {
       auto resetStart = std::chrono::high_resolution_clock::now();
@@ -2028,26 +2131,36 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
       capacity_ = 0;
       auto resetEnd = std::chrono::high_resolution_clock::now();
       auto resetMs = std::chrono::duration_cast<std::chrono::milliseconds>(resetEnd - resetStart).count();
-      std::cout << "  - 重置table耗时: " << resetMs << "ms" << std::endl;
+      if (verboseLogs_) {
+        std::cout << "  - 重置table耗时: " << resetMs << "ms" << std::endl;
+      }
     }
     
     // Call analyze to insert all unique values in row container to the
     // table hashers' uniqueValues_;
     auto analyzeStart = std::chrono::high_resolution_clock::now();
-    std::cout << "  - 调用analyze()..." << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  - 调用analyze()..." << std::endl;
+    }
     analyze();
     auto analyzeEnd = std::chrono::high_resolution_clock::now();
     auto analyzeMs = std::chrono::duration_cast<std::chrono::milliseconds>(analyzeEnd - analyzeStart).count();
-    std::cout << "  - analyze()耗时: " << analyzeMs << "ms" << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  - analyze()耗时: " << analyzeMs << "ms" << std::endl;
+    }
     
     auto phase1End = std::chrono::high_resolution_clock::now();
     auto phase1Ms = std::chrono::duration_cast<std::chrono::milliseconds>(phase1End - phase1Start).count();
-    std::cout << "[阶段1] 总耗时: " << phase1Ms << "ms" << std::endl;
+    if (verboseLogs_) {
+      std::cout << "[阶段1] 总耗时: " << phase1Ms << "ms" << std::endl;
+    }
   }
   
   // 阶段2: 转移其他表
   auto phase2Start = std::chrono::high_resolution_clock::now();
-  std::cout << "[阶段2] 转移其他表开始, 数量: " << tables.size() << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[阶段2] 转移其他表开始, 数量: " << tables.size() << std::endl;
+  }
   otherTables_.reserve(tables.size());
   for (size_t idx = 0; idx < tables.size(); ++idx) {
     auto tableStart = std::chrono::high_resolution_clock::now();
@@ -2056,15 +2169,21 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
             dynamic_cast<HashTable<ignoreNullKeys>*>(tables[idx].release())));
     auto tableEnd = std::chrono::high_resolution_clock::now();
     auto tableUs = std::chrono::duration_cast<std::chrono::microseconds>(tableEnd - tableStart).count();
-    std::cout << "  - 表" << idx << "转移耗时: " << tableUs << "us" << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  - 表" << idx << "转移耗时: " << tableUs << "us" << std::endl;
+    }
   }
   auto phase2End = std::chrono::high_resolution_clock::now();
   auto phase2Ms = std::chrono::duration_cast<std::chrono::milliseconds>(phase2End - phase2Start).count();
-  std::cout << "[阶段2] 总耗时: " << phase2Ms << "ms" << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[阶段2] 总耗时: " << phase2Ms << "ms" << std::endl;
+  }
 
   // 阶段3: 合并columnHasNulls标志
   auto phase3Start = std::chrono::high_resolution_clock::now();
-  std::cout << "[阶段3] 合并columnHasNulls标志开始, 列数: " << rows_->columnTypes().size() << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[阶段3] 合并columnHasNulls标志开始, 列数: " << rows_->columnTypes().size() << std::endl;
+  }
   // If there are multiple tables, we need to merge the 'columnHasNulls' flags
   // from the containers of each table and store them in the main table. This
   // is necessary because, when extracting results, 'rows' may contain row
@@ -2079,49 +2198,69 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
   }
   auto phase3End = std::chrono::high_resolution_clock::now();
   auto phase3Ms = std::chrono::duration_cast<std::chrono::milliseconds>(phase3End - phase3Start).count();
-  std::cout << "[阶段3] 总耗时: " << phase3Ms << "ms" << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[阶段3] 总耗时: " << phase3Ms << "ms" << std::endl;
+  }
 
   // 阶段4: ValueIds检查和合并
   auto phase4Start = std::chrono::high_resolution_clock::now();
-  std::cout << "[阶段4] ValueIds检查和合并开始..." << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[阶段4] ValueIds检查和合并开始..." << std::endl;
+  }
   bool useValueIds = mayUseValueIds(*this);
-  std::cout << "  - 主表mayUseValueIds: " << useValueIds << std::endl;
+  if (verboseLogs_) {
+    std::cout << "  - 主表mayUseValueIds: " << useValueIds << std::endl;
+  }
   
   if (useValueIds) {
     CpuWallTimer timer(vectorHasherMergeTiming_);
     
     // 子阶段4.1: 检查其他表是否支持ValueIds
     auto check4Start = std::chrono::high_resolution_clock::now();
-    std::cout << "  [子阶段4.1] 检查其他表ValueIds支持..." << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  [子阶段4.1] 检查其他表ValueIds支持..." << std::endl;
+    }
     for (size_t idx = 0; idx < otherTables_.size(); ++idx) {
       if (!mayUseValueIds(*otherTables_[idx])) {
-        std::cout << "    - 表" << idx << "不支持ValueIds, 退出" << std::endl;
+        if (verboseLogs_) {
+          std::cout << "    - 表" << idx << "不支持ValueIds, 退出" << std::endl;
+        }
         useValueIds = false;
         break;
       }
     }
     auto check4End = std::chrono::high_resolution_clock::now();
     auto check4Ms = std::chrono::duration_cast<std::chrono::milliseconds>(check4End - check4Start).count();
-    std::cout << "  [子阶段4.1] 耗时: " << check4Ms << "ms" << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  [子阶段4.1] 耗时: " << check4Ms << "ms" << std::endl;
+    }
     
     if (useValueIds) {
       // 子阶段4.2: 合并hashers
       auto merge4Start = std::chrono::high_resolution_clock::now();
-      std::cout << "  [子阶段4.2] 合并hashers开始, hashers数量: " << hashers_.size() << std::endl;
+      if (verboseLogs_) {
+        std::cout << "  [子阶段4.2] 合并hashers开始, hashers数量: " << hashers_.size() << std::endl;
+      }
       
       for (size_t tableIdx = 0; tableIdx < otherTables_.size(); ++tableIdx) {
         auto tableStart = std::chrono::high_resolution_clock::now();
-        std::cout << "    - 处理表" << tableIdx << "..." << std::endl;
+        if (verboseLogs_) {
+          std::cout << "    - 处理表" << tableIdx << "..." << std::endl;
+        }
         
         if (dropDuplicates) {
           // Before merging with the current hashers, all values in the row
           // containers of other table need to be inserted into uniqueValues_.
           auto analyzeStart = std::chrono::high_resolution_clock::now();
-          std::cout << "      * 调用other->analyze()..." << std::endl;
+          if (verboseLogs_) {
+            std::cout << "      * 调用other->analyze()..." << std::endl;
+          }
           otherTables_[tableIdx]->analyze();
           auto analyzeEnd = std::chrono::high_resolution_clock::now();
           auto analyzeMs = std::chrono::duration_cast<std::chrono::milliseconds>(analyzeEnd - analyzeStart).count();
-          std::cout << "      * other->analyze()耗时: " << analyzeMs << "ms" << std::endl;
+          if (verboseLogs_) {
+            std::cout << "      * other->analyze()耗时: " << analyzeMs << "ms" << std::endl;
+          }
         }
         
         for (auto i = 0; i < hashers_.size(); ++i) {
@@ -2131,11 +2270,15 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
           auto afterRows = hashers_[i]->numUniqueValues();
           auto mergeEnd = std::chrono::high_resolution_clock::now();
           auto mergeMs = std::chrono::duration_cast<std::chrono::milliseconds>(mergeEnd - mergeStart).count();
-          std::cout << "      * hasher[" << i << "]->merge()耗时: " << mergeMs << "ms"
-                    << ", 唯一值数量变化: " << beforeRows << " -> " << afterRows << std::endl;
+          if (verboseLogs_) {
+            std::cout << "      * hasher[" << i << "]->merge()耗时: " << mergeMs << "ms"
+                      << ", 唯一值数量变化: " << beforeRows << " -> " << afterRows << std::endl;
+          }
           
           if (!hashers_[i]->mayUseValueIds()) {
-            std::cout << "      * hasher[" << i << "]不再支持ValueIds, 退出" << std::endl;
+            if (verboseLogs_) {
+              std::cout << "      * hasher[" << i << "]不再支持ValueIds, 退出" << std::endl;
+            }
             useValueIds = false;
             break;
           }
@@ -2143,7 +2286,9 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
         
         auto tableEnd = std::chrono::high_resolution_clock::now();
         auto tableMs = std::chrono::duration_cast<std::chrono::milliseconds>(tableEnd - tableStart).count();
-        std::cout << "    - 表" << tableIdx << "处理总耗时: " << tableMs << "ms" << std::endl;
+        if (verboseLogs_) {
+          std::cout << "    - 表" << tableIdx << "处理总耗时: " << tableMs << "ms" << std::endl;
+        }
         
         if (!useValueIds) {
           break;
@@ -2152,64 +2297,98 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
       
       auto merge4End = std::chrono::high_resolution_clock::now();
       auto merge4Ms = std::chrono::duration_cast<std::chrono::milliseconds>(merge4End - merge4Start).count();
-      std::cout << "  [子阶段4.2] 总耗时: " << merge4Ms << "ms" << std::endl;
+      if (verboseLogs_) {
+        std::cout << "  [子阶段4.2] 总耗时: " << merge4Ms << "ms" << std::endl;
+      }
     }
   }
   auto phase4End = std::chrono::high_resolution_clock::now();
   auto phase4Ms = std::chrono::duration_cast<std::chrono::milliseconds>(phase4End - phase4Start).count();
-  std::cout << "[阶段4] 总耗时: " << phase4Ms << "ms, 最终useValueIds=" << useValueIds << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[阶段4] 总耗时: " << phase4Ms << "ms, 最终useValueIds=" << useValueIds << std::endl;
+  }
   
   // 阶段5: 计算numDistinct
   auto phase5Start = std::chrono::high_resolution_clock::now();
-  std::cout << "[阶段5] 计算numDistinct开始..." << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[阶段5] 计算numDistinct开始..." << std::endl;
+  }
   numDistinct_ = rows()->numRows();
-  std::cout << "  - 主表行数: " << numDistinct_ << std::endl;
+  if (verboseLogs_) {
+    std::cout << "  - 主表行数: " << numDistinct_ << std::endl;
+  }
   for (size_t idx = 0; idx < otherTables_.size(); ++idx) {
     auto otherRows = otherTables_[idx]->rows()->numRows();
-    std::cout << "  - 表" << idx << "行数: " << otherRows << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  - 表" << idx << "行数: " << otherRows << std::endl;
+    }
     numDistinct_ += otherRows;
   }
-  std::cout << "  - 总行数: " << numDistinct_ << std::endl;
+  if (verboseLogs_) {
+    std::cout << "  - 总行数: " << numDistinct_ << std::endl;
+  }
   auto phase5End = std::chrono::high_resolution_clock::now();
   auto phase5Ms = std::chrono::duration_cast<std::chrono::milliseconds>(phase5End - phase5Start).count();
-  std::cout << "[阶段5] 总耗时: " << phase5Ms << "ms" << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[阶段5] 总耗时: " << phase5Ms << "ms" << std::endl;
+  }
   
   // 阶段6: 设置HashMode
   auto phase6Start = std::chrono::high_resolution_clock::now();
-  std::cout << "[阶段6] 设置HashMode开始, useValueIds=" << useValueIds << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[阶段6] 设置HashMode开始, useValueIds=" << useValueIds << std::endl;
+  }
   if (!useValueIds) {
-    std::cout << "  - 当前hashMode: " << modeString(hashMode_) << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  - 当前hashMode: " << modeString(hashMode_) << std::endl;
+    }
     if (hashMode_ != HashMode::kHash) {
       auto setModeStart = std::chrono::high_resolution_clock::now();
-      std::cout << "  - 调用setHashMode(kHash)..." << std::endl;
+      if (verboseLogs_) {
+        std::cout << "  - 调用setHashMode(kHash)..." << std::endl;
+      }
       setHashMode(HashMode::kHash, 0, spillInputStartPartitionBit);
       auto setModeEnd = std::chrono::high_resolution_clock::now();
       auto setModeMs = std::chrono::duration_cast<std::chrono::milliseconds>(setModeEnd - setModeStart).count();
-      std::cout << "  - setHashMode()耗时: " << setModeMs << "ms" << std::endl;
+      if (verboseLogs_) {
+        std::cout << "  - setHashMode()耗时: " << setModeMs << "ms" << std::endl;
+      }
     } else {
       auto checkStart = std::chrono::high_resolution_clock::now();
-      std::cout << "  - 调用checkSize()..." << std::endl;
+      if (verboseLogs_) {
+        std::cout << "  - 调用checkSize()..." << std::endl;
+      }
       checkSize(0, true, spillInputStartPartitionBit);
       auto checkEnd = std::chrono::high_resolution_clock::now();
       auto checkMs = std::chrono::duration_cast<std::chrono::milliseconds>(checkEnd - checkStart).count();
-      std::cout << "  - checkSize()耗时: " << checkMs << "ms" << std::endl;
+      if (verboseLogs_) {
+        std::cout << "  - checkSize()耗时: " << checkMs << "ms" << std::endl;
+      }
     }
   } else {
     auto decideStart = std::chrono::high_resolution_clock::now();
-    std::cout << "  - 调用decideHashMode()..." << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  - 调用decideHashMode()..." << std::endl;
+    }
     decideHashMode(0, spillInputStartPartitionBit);
     auto decideEnd = std::chrono::high_resolution_clock::now();
     auto decideMs = std::chrono::duration_cast<std::chrono::milliseconds>(decideEnd - decideStart).count();
-    std::cout << "  - decideHashMode()耗时: " << decideMs << "ms" << std::endl;
-    std::cout << "  - 最终hashMode: " << modeString(hashMode_) << std::endl;
+    if (verboseLogs_) {
+      std::cout << "  - decideHashMode()耗时: " << decideMs << "ms" << std::endl;
+      std::cout << "  - 最终hashMode: " << modeString(hashMode_) << std::endl;
+    }
   }
   auto phase6End = std::chrono::high_resolution_clock::now();
   auto phase6Ms = std::chrono::duration_cast<std::chrono::milliseconds>(phase6End - phase6Start).count();
-  std::cout << "[阶段6] 总耗时: " << phase6Ms << "ms" << std::endl;
+  if (verboseLogs_) {
+    std::cout << "[阶段6] 总耗时: " << phase6Ms << "ms" << std::endl;
+  }
   
   auto endTime = std::chrono::high_resolution_clock::now();
   auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-  std::cout << "========== prepareJoinTable 完成, 总耗时: " << totalMs << "ms ==========" << std::endl << std::endl;
+  if (verboseLogs_) {
+    std::cout << "========== prepareJoinTable 完成, 总耗时: " << totalMs << "ms ==========" << std::endl << std::endl;
+  }
 }
 
 template <bool ignoreNullKeys>

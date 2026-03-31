@@ -351,7 +351,8 @@ class BaseHashTable {
       int8_t spillInputStartPartitionBit,
       size_t vectorHasherMaxNumDistinct,
       bool dropDuplicates = false,
-      folly::Executor* executor = nullptr) = 0;
+      folly::Executor* executor = nullptr,
+      bool printLogs = false) = 0;
 
   /// The hash table used for join build in left semi and anti join may not
   /// retain duplicate join keys when allowDuplicates_ is false. This is
@@ -709,7 +710,8 @@ class HashTable : public BaseHashTable {
       int8_t spillInputStartPartitionBit,
       size_t vectorHasherMaxNumDistinct,
       bool dropDuplicates = false,
-      folly::Executor* executor = nullptr) override;
+      folly::Executor* executor = nullptr,
+      bool printLogs = false) override;
 
   void prepareForJoinProbe(
       HashLookup& lookup,
@@ -1167,6 +1169,7 @@ class HashTable : public BaseHashTable {
   int8_t sizeBits_;
   bool isJoinBuild_ = false;
   bool allowDuplicates_ = true;
+  bool verboseLogs_{false};
 
   // Set at join build time if the table has duplicates, meaning that
   // the join can be cardinality increasing. Atomic for tsan because
