@@ -254,6 +254,7 @@ class OutputBuffer {
     /// Stats of the OutputBuffer's destinations.
     std::vector<DestinationBuffer::Stats> buffersStats;
 
+    void add(const Stats& other);
     std::string toString() const;
   };
 

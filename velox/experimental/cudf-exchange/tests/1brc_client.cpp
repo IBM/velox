@@ -139,11 +139,15 @@ int main(int argc, char** argv) {
   aggregate::prestosql::registerAllAggregateFunctions();
   parse::registerTypeResolver();
   text::registerTextWriterFactory();
+  const auto prestoSerdeKind =
+      VectorSerde::kindName(VectorSerde::Kind::kPresto);
+  const auto compactRowSerdeKind =
+      VectorSerde::kindName(VectorSerde::Kind::kCompactRow);
   // Register the presto serialized/deserializer.
-  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kPresto)) {
+  if (!isRegisteredNamedVectorSerde(prestoSerdeKind)) {
     serializer::presto::PrestoVectorSerde::registerNamedVectorSerde();
   }
-  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kCompactRow)) {
+  if (!isRegisteredNamedVectorSerde(compactRowSerdeKind)) {
     facebook::velox::serializer::CompactRowVectorSerde::
         registerNamedVectorSerde();
   }
@@ -197,7 +201,7 @@ int main(int argc, char** argv) {
   core::PlanNodeId exchangeNodeId;
   auto processorPlan =
       exec::test::PlanBuilder()
-          .exchange(selectedRowType, VectorSerde::Kind::kCompactRow)
+          .exchange(selectedRowType, compactRowSerdeKind)
           .capturePlanNodeId(exchangeNodeId)
           .partialAggregation(
               {"station_name"},

@@ -591,7 +591,7 @@ TEST_F(PlanNodeTest, exchangeNodeTransportTypeSerialization) {
     auto node = std::make_shared<ExchangeNode>(
         "exchange1",
         rowType_,
-        VectorSerde::Kind::kPresto,
+        VectorSerde::kindName(VectorSerde::Kind::kPresto),
         ExchangeNode::TransportType::kUcx);
     auto serialized = node->serialize();
     ASSERT_EQ(serialized["transportType"].asString(), "UCX");
@@ -605,7 +605,7 @@ TEST_F(PlanNodeTest, exchangeNodeTransportTypeSerialization) {
     auto node = std::make_shared<ExchangeNode>(
         "exchange2",
         rowType_,
-        VectorSerde::Kind::kPresto,
+        VectorSerde::kindName(VectorSerde::Kind::kPresto),
         ExchangeNode::TransportType::kHttp);
     auto serialized = node->serialize();
     ASSERT_EQ(serialized["transportType"].asString(), "HTTP");
@@ -620,7 +620,7 @@ TEST_F(PlanNodeTest, exchangeNodeTransportTypeSerialization) {
     auto node = std::make_shared<ExchangeNode>(
         "exchange3",
         rowType_,
-        VectorSerde::Kind::kPresto,
+        VectorSerde::kindName(VectorSerde::Kind::kPresto),
         ExchangeNode::TransportType::kUcx);
     auto serialized = node->serialize();
     serialized.erase("transportType");
@@ -633,7 +633,7 @@ TEST_F(PlanNodeTest, exchangeNodeTransportTypeSerialization) {
 
 TEST_F(PlanNodeTest, partitionedOutputNodeTransportTypeSerialization) {
   auto source = std::make_shared<ValuesNode>("source", rowData_);
-  const auto serdeKind = VectorSerde::Kind::kPresto;
+  const auto serdeKind = VectorSerde::kindName(VectorSerde::Kind::kPresto);
 
   // Round-trip with kUcx transport.
   {

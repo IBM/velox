@@ -20,6 +20,7 @@
 #include "velox/exec/Driver.h"
 #include "velox/exec/Operator.h"
 #include "velox/experimental/cudf/vector/CudfVector.h"
+#include "velox/exec/OutputBufferManagerRegistry.h"
 
 #include <cudf/concatenate.hpp>
 #include <cudf/contiguous_split.hpp>
@@ -64,7 +65,7 @@ CudfPartitionedOutput::CudfPartitionedOutput(
           nvtx3::rgb{255, 215, 0}, // Gold
           operatorId,
           fmt::format("[{}]", planNode->id())),
-      queueManager_(CudfOutputQueueManager::getInstanceRef()),
+      queueManager_(exec::OutputBufferManagerRegistry::getManagerAs<CudfOutputQueueManager>("cudf")),
       numPartitions_(planNode->numPartitions()),
       pipelineId_(ctx->pipelineId),
       driverId_(ctx->driverId),

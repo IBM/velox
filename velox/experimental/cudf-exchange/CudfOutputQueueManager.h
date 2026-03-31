@@ -20,10 +20,11 @@
 #include <functional>
 #include <unordered_set>
 #include "velox/experimental/cudf-exchange/CudfQueues.h"
+#include "velox/exec/IOutputBufferManager.h"
 
 namespace facebook::velox::cudf_exchange {
 
-class CudfOutputQueueManager {
+class CudfOutputQueueManager : public exec::IOutputBufferManager {
  public:
   /// Factory method to retrieve a reference to the output queue manager.
   static std::shared_ptr<CudfOutputQueueManager> getInstanceRef();
@@ -47,15 +48,15 @@ class CudfOutputQueueManager {
       std::shared_ptr<exec::Task> task,
       core::PartitionedOutputNode::Kind kind,
       int numDestinations,
-      int numDrivers);
+      int numDrivers) override;
 
   /// @brief Updates the number of destination buffers for a task.
   /// For broadcast mode, new destinations are backfilled with previously
   /// broadcast data.
-  void updateOutputBuffers(
+  bool updateOutputBuffers(
       const std::string& taskId,
       int numBuffers,
-      bool noMoreBuffers);
+      bool noMoreBuffers) override;
 
   /// @brief Enqueues a cudf packed column into the queue.
   /// @param taskId The unique task Id.
@@ -109,11 +110,12 @@ class CudfOutputQueueManager {
 
   /// @brief Removes the queue for the given task from the queue manager.
   /// Calls "terminate" on the queue to awake waiting producers.
-  void removeTask(const std::string& taskId);
+  void removeTask(const std::string& taskId) override;
 
   /// @brief Returns the queue statistics of the queue associated with the given
   /// task. Returns nullopt when the specified output queue doesn't exist.
-  std::optional<exec::OutputBuffer::Stats> stats(const std::string& taskId);
+  std::optional<exec::OutputBuffer::Stats> stats(const std::string& taskId)
+      override;
 
  private:
   // Retrieves the queue for a task if it exists.

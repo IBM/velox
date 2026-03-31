@@ -143,6 +143,10 @@ int main(int argc, char** argv) {
   functions::prestosql::registerAllScalarFunctions();
   aggregate::prestosql::registerAllAggregateFunctions();
   parse::registerTypeResolver();
+  const auto prestoSerdeKind =
+      VectorSerde::kindName(VectorSerde::Kind::kPresto);
+  const auto compactRowSerdeKind =
+      VectorSerde::kindName(VectorSerde::Kind::kCompactRow);
 
   // The following registers a LocalExchangeSource that directly taps into the
   // node's OutputBufferManager to request pages for the given destination.
@@ -150,10 +154,10 @@ int main(int argc, char** argv) {
       facebook::velox::exec::test::createLocalExchangeSource);
 
   // Register the presto serialized/deserializer.
-  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kPresto)) {
+  if (!isRegisteredNamedVectorSerde(prestoSerdeKind)) {
     serializer::presto::PrestoVectorSerde::registerNamedVectorSerde();
   }
-  if (!isRegisteredNamedVectorSerde(VectorSerde::Kind::kCompactRow)) {
+  if (!isRegisteredNamedVectorSerde(compactRowSerdeKind)) {
     facebook::velox::serializer::CompactRowVectorSerde::
         registerNamedVectorSerde();
   }
@@ -183,7 +187,7 @@ int main(int argc, char** argv) {
                             kNumDestinations, // just one destination.
                             std::vector<std::string>{
                                 "station_name", "measurement"}, // output layout
-                            VectorSerde::Kind::kCompactRow)
+                            compactRowSerdeKind)
                         .planFragment();
 
   std::shared_ptr<folly::Executor> executor(

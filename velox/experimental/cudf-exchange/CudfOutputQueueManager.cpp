@@ -21,16 +21,22 @@
 #include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 #include "velox/experimental/cudf-exchange/IntraNodeTransferRegistry.h"
+#include "velox/exec/OutputBufferManagerRegistry.h"
 
 namespace facebook::velox::cudf_exchange {
 
 /* static */
 std::shared_ptr<CudfOutputQueueManager>
 CudfOutputQueueManager::getInstanceRef() {
-  // In C++11, the static local variable is guaranteed to only be initialized
-  // once even in a multi-threaded context.
   static std::shared_ptr<CudfOutputQueueManager> instance =
       std::make_shared<CudfOutputQueueManager>();
+  static const bool registered = [] {
+    if (!exec::OutputBufferManagerRegistry::hasManager("cudf")) {
+      exec::OutputBufferManagerRegistry::registerManager("cudf", instance);
+    }
+    return true;
+  }();
+  (void)registered;
   return instance;
 }
 
@@ -61,11 +67,12 @@ void CudfOutputQueueManager::initializeTask(
   IntraNodeTransferRegistry::getInstance()->clearCancelledTask(taskId);
 }
 
-void CudfOutputQueueManager::updateOutputBuffers(
+bool CudfOutputQueueManager::updateOutputBuffers(
     const std::string& taskId,
     int numBuffers,
     bool noMoreBuffers) {
   getQueue(taskId)->updateOutputBuffers(numBuffers, noMoreBuffers);
+  return true;
 }
 
 void CudfOutputQueueManager::enqueue(
