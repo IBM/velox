@@ -1822,6 +1822,35 @@ void HashTable<ignoreNullKeys>::decideHashMode(
   uint64_t bestWithReserve = 1;
   uint64_t distinctsWithReserve = 1;
   uint64_t rangesWithReserve = 1;
+  // 优先尝试基于“小基数”直接进入 ARRAY 的保护分支：如果所有hasher的唯一值乘积（含null）很小，则强制ARRAY。
+  uint64_t smallCardinalityProduct = 1;
+  bool smallCardinalityAvailable = true;
+  for (int i = 0; i < hashers_.size(); ++i) {
+    const uint64_t n = hashers_[i]->numUniqueValues();
+    if (n == 0) {
+      smallCardinalityAvailable = false;
+      break;
+    }
+    if (__builtin_mul_overflow(smallCardinalityProduct, (n + 1), &smallCardinalityProduct)) {
+      smallCardinalityAvailable = false;
+      break;
+    }
+  }
+  if (verboseLogs_) {
+    std::cout << "  [decideHashMode] smallCardinalityProduct=" << smallCardinalityProduct
+              << ", kArrayHashMaxSize=" << BaseHashTable::kArrayHashMaxSize
+              << ", available=" << (smallCardinalityAvailable ? 1 : 0) << std::endl;
+  }
+  if (smallCardinalityAvailable && smallCardinalityProduct < kArrayHashMaxSize) {
+    std::vector<bool> useRange(hashers_.size(), false);
+    capacity_ = setHasherMode(hashers_, useRange, /*rangeSizes*/{}, /*distinctSizes*/{});
+    setHashMode(HashMode::kArray, numNew, spillInputStartPartitionBit);
+    if (verboseLogs_) {
+      std::cout << "  [decideHashMode] 进入ARRAY: 小基数保护分支, product=" << smallCardinalityProduct
+                << ", capacity_=" << capacity_ << std::endl;
+    }
+    return;
+  }
   // Permanently turn off kArray hash mode with key value ranges after this is
   // first requested.
   if (disableRangeArrayHash && numNew == 0 && disableRangeArrayHash_) {
@@ -1843,7 +1872,8 @@ void HashTable<ignoreNullKeys>::decideHashMode(
     rangesWithReserve = safeMul(rangesWithReserve, rangeSizes[i]);
     if (verboseLogs_) {
       std::cout << "  [decideHashMode] hasher[" << i << "] rangeSizes=" << rangeSizes[i]
-                << ", distinctSizes=" << distinctSizes[i] << std::endl;
+                << ", distinctSizes=" << distinctSizes[i]
+                << ", state=" << hashers_[i]->toString() << std::endl;
     }
     if (distinctSizes[i] == VectorHasher::kRangeTooLarge &&
         rangeSizes[i] != VectorHasher::kRangeTooLarge) {
@@ -2236,21 +2266,42 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
     }
     
     if (useValueIds) {
-      // 子阶段4.2: 合并hashers
+      // 子阶段4.2: 并行执行其他表的 analyze，然后串行 merge
       auto merge4Start = std::chrono::high_resolution_clock::now();
       if (verboseLogs_) {
         std::cout << "  [子阶段4.2] 合并hashers开始, hashers数量: " << hashers_.size() << std::endl;
       }
-      
+      if (dropDuplicates && buildExecutor_ != nullptr && !otherTables_.empty()) {
+        std::vector<std::shared_ptr<AsyncSource<bool>>> analyzeSteps;
+        auto runAnalyzeStep = [&](auto&& work, bool runInCurrentThread) {
+          auto step = std::make_shared<AsyncSource<bool>>([w = std::move(work)] {
+            w();
+            return std::make_unique<bool>(true);
+          });
+          analyzeSteps.push_back(step);
+          if (runInCurrentThread) {
+            step->prepare();
+          } else {
+            buildExecutor_->add([step]() { step->prepare(); });
+          }
+        };
+        for (size_t tableIdx = 0; tableIdx < otherTables_.size(); ++tableIdx) {
+          bool last = tableIdx == otherTables_.size() - 1;
+          runAnalyzeStep(
+              [this, tableIdx]() {
+                otherTables_[tableIdx]->analyze();
+              },
+              last);
+        }
+        std::vector<CpuWallTiming> analyzeTimings;
+        syncWorkItems(analyzeSteps, analyzeTimings, true);
+      }
       for (size_t tableIdx = 0; tableIdx < otherTables_.size(); ++tableIdx) {
         auto tableStart = std::chrono::high_resolution_clock::now();
         if (verboseLogs_) {
           std::cout << "    - 处理表" << tableIdx << "..." << std::endl;
         }
-        
-        if (dropDuplicates) {
-          // Before merging with the current hashers, all values in the row
-          // containers of other table need to be inserted into uniqueValues_.
+        if (dropDuplicates && (buildExecutor_ == nullptr)) {
           auto analyzeStart = std::chrono::high_resolution_clock::now();
           if (verboseLogs_) {
             std::cout << "      * 调用other->analyze()..." << std::endl;
@@ -2262,7 +2313,6 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
             std::cout << "      * other->analyze()耗时: " << analyzeMs << "ms" << std::endl;
           }
         }
-        
         for (auto i = 0; i < hashers_.size(); ++i) {
           auto mergeStart = std::chrono::high_resolution_clock::now();
           auto beforeRows = hashers_[i]->numUniqueValues();
@@ -2274,7 +2324,6 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
             std::cout << "      * hasher[" << i << "]->merge()耗时: " << mergeMs << "ms"
                       << ", 唯一值数量变化: " << beforeRows << " -> " << afterRows << std::endl;
           }
-          
           if (!hashers_[i]->mayUseValueIds()) {
             if (verboseLogs_) {
               std::cout << "      * hasher[" << i << "]不再支持ValueIds, 退出" << std::endl;
@@ -2283,18 +2332,15 @@ void HashTable<ignoreNullKeys>::prepareJoinTable(
             break;
           }
         }
-        
         auto tableEnd = std::chrono::high_resolution_clock::now();
         auto tableMs = std::chrono::duration_cast<std::chrono::milliseconds>(tableEnd - tableStart).count();
         if (verboseLogs_) {
           std::cout << "    - 表" << tableIdx << "处理总耗时: " << tableMs << "ms" << std::endl;
         }
-        
         if (!useValueIds) {
           break;
         }
       }
-      
       auto merge4End = std::chrono::high_resolution_clock::now();
       auto merge4Ms = std::chrono::duration_cast<std::chrono::milliseconds>(merge4End - merge4Start).count();
       if (verboseLogs_) {
