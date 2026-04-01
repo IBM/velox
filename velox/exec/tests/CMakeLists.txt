@@ -156,6 +156,7 @@ set(
   FileExchangeTest.cpp
   CursorTest.cpp
   SplitLifecycleTest.cpp
+  OptimizedPartitionedOutputTest.cpp
 )
 
 set(
