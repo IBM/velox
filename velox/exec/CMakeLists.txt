@@ -70,6 +70,7 @@ velox_add_library(
   OperatorTraceScan.cpp
   OperatorTraceWriter.cpp
   OperatorUtils.cpp
+  OptimizedPartitionedOutput.cpp
   OrderBy.cpp
   OutputBuffer.cpp
   OutputBufferManager.cpp
