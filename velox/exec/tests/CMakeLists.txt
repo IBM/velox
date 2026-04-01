@@ -150,6 +150,7 @@ set(
   FilterProjectTest.cpp
   AsyncConnectorTest.cpp
   VectorWindowPartitionTest.cpp
+  OptimizedPartitionedOutputTest.cpp
 )
 
 set(
