@@ -1300,8 +1300,7 @@ std::unique_ptr<exec::Aggregate> createAggregateFunction(
     const std::string& functionName,
     const std::vector<TypePtr>& inputTypes,
     HashStringAllocator& allocator,
-    const std::unordered_map<std::string, std::string>& config,
-    const std::vector<VectorPtr>& rawInputs = {}) {
+    const std::unordered_map<std::string, std::string>& config) {
   auto finalType = exec::resolveResultType(functionName, inputTypes);
   auto intermediateType =
       exec::resolveIntermediateType(functionName, inputTypes);
@@ -1312,17 +1311,6 @@ std::unique_ptr<exec::Aggregate> createAggregateFunction(
       inputTypes,
       finalType,
       queryConfig);
-  // Pass constant inputs so aggregates can read constant arguments at
-  // initialization time (e.g., ignoreNulls flag for collect_set).
-  if (!rawInputs.empty()) {
-    std::vector<VectorPtr> constantInputs(rawInputs.size());
-    for (size_t i = 0; i < rawInputs.size(); ++i) {
-      if (rawInputs[i] && rawInputs[i]->isConstantEncoding()) {
-        constantInputs[i] = rawInputs[i];
-      }
-    }
-    func->setConstantInputs(constantInputs);
-  }
   func->setAllocator(&allocator);
   func->setOffsets(kOffset, 0, 1, 0, 2, kRowSizeOffset);
 
@@ -1426,8 +1414,8 @@ VectorPtr AggregationTestBase::testStreaming(
       [](const VectorPtr& vec) { return vec->type(); });
 
   HashStringAllocator allocator(pool());
-  auto func = createAggregateFunction(
-      functionName, rawInputTypes, allocator, config, rawInput1);
+  auto func =
+      createAggregateFunction(functionName, rawInputTypes, allocator, config);
   int maxRowCount = std::max(rawInput1Size, rawInput2Size);
   std::vector<char> group(kOffset + func->accumulatorFixedWidthSize());
   std::vector<char*> groups(maxRowCount, group.data());
@@ -1453,8 +1441,8 @@ VectorPtr AggregationTestBase::testStreaming(
   }
 
   // Create a new function picking up the intermediate result.
-  auto func2 = createAggregateFunction(
-      functionName, rawInputTypes, allocator, config, rawInput1);
+  auto func2 =
+      createAggregateFunction(functionName, rawInputTypes, allocator, config);
   func2->initializeNewGroups(groups.data(), indices);
   if (testGlobal) {
     func2->addSingleGroupIntermediateResults(
