@@ -16,12 +16,9 @@ set(
   ICEBERG_SOURCES
   IcebergConnector.cpp
   DataFileStatsCollector.cpp
-  EqualityDeleteFileReader.cpp
-  FilterUtil.cpp
-  IcebergColumnHandle.cpp
+        IcebergColumnHandle.cpp
   IcebergDataSink.cpp
-  IcebergDeleteFile.cpp
-  IcebergPartitionIdGenerator.cpp
+        IcebergPartitionIdGenerator.cpp
   IcebergSplit.cpp
   IcebergSplitReader.cpp
   Murmur3.cpp

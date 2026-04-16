@@ -19,7 +19,6 @@
 #include "velox/connectors/Connector.h"
 #include "velox/connectors/hive/HiveSplitReader.h"
 #include "velox/connectors/hive/iceberg/PositionalDeleteFileReader.h"
-#include "velox/exec/OperatorUtils.h"
 
 namespace facebook::velox::connector::hive::iceberg {
 
@@ -40,8 +39,6 @@ class IcebergSplitReader : public HiveSplitReader {
       FileHandleFactory* fileHandleFactory,
       folly::Executor* executor,
       const std::shared_ptr<common::ScanSpec>& scanSpec,
-      core::ExpressionEvaluator* expressionEvaluator,
-      std::atomic<uint64_t>& totalRemainingFilterTime,
       const std::unordered_map<std::string, FileColumnHandlePtr>* infoColumns = nullptr,
       std::vector<column_index_t> bucketChannels = {},
       const common::SubfieldFilters* subfieldFiltersForValidation = nullptr);
@@ -55,8 +52,6 @@ class IcebergSplitReader : public HiveSplitReader {
       override;
 
   uint64_t next(uint64_t size, VectorPtr& output) override;
-
-  std::shared_ptr<const dwio::common::TypeWithId> baseFileSchema();
 
  private:
   /// Adapts the data file schema to match the table schema expected by the
@@ -112,14 +107,5 @@ class IcebergSplitReader : public HiveSplitReader {
   std::list<std::unique_ptr<PositionalDeleteFileReader>>
       positionalDeleteFileReaders_;
   BufferPtr deleteBitmap_;
-
-  std::unique_ptr<exec::ExprSet> deleteExprSet_;
-  core::ExpressionEvaluator* expressionEvaluator_;
-  std::atomic<uint64_t>& totalRemainingFilterMs_;
-
-  // Reusable memory for remaining filter evaluation.
-  VectorPtr filterResult_;
-  SelectivityVector filterRows_;
-  exec::FilterEvalCtx filterEvalCtx_;
 };
 } // namespace facebook::velox::connector::hive::iceberg

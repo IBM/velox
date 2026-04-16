@@ -95,8 +95,6 @@ class FileSplitReader {
       FileHandleFactory* fileHandleFactory,
       folly::Executor* ioExecutor,
       const std::shared_ptr<common::ScanSpec>& scanSpec,
-      core::ExpressionEvaluator* expressionEvaluator,
-      std::atomic<uint64_t>& totalRemainingFilterTime,
       const common::SubfieldFilters* subfieldFiltersForValidation = nullptr);
 
   virtual ~FileSplitReader() = default;

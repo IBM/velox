@@ -45,8 +45,6 @@ class HiveSplitReader : public FileSplitReader {
       FileHandleFactory* fileHandleFactory,
       folly::Executor* ioExecutor,
       const std::shared_ptr<common::ScanSpec>& scanSpec,
-      core::ExpressionEvaluator* expressionEvaluator,
-      std::atomic<uint64_t>& totalRemainingFilterTime,
       const std::unordered_map<std::string, FileColumnHandlePtr>* infoColumns,
       std::vector<column_index_t> bucketChannels = {},
       const common::SubfieldFilters* subfieldFiltersForValidation = nullptr);

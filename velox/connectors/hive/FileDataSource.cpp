@@ -366,8 +366,6 @@ std::unique_ptr<FileSplitReader> FileDataSource::createSplitReader() {
       fileHandleFactory_,
       ioExecutor_,
       scanSpec_,
-      expressionEvaluator_,
-      totalRemainingFilterTime_,
       /*subfieldFiltersForValidation=*/&filters_);
 }
 

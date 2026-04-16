@@ -351,8 +351,6 @@ void IcebergSplitReaderBenchmark::readSingleColumn(
             &fileHandleFactory,
             ioExecutor.get(),
             scanSpec,
-            connectorQueryCtx_->expressionEvaluator(),
-            totalRemainingFilterMs,
             nullptr,                      // infoColumns
             std::vector<column_index_t>{}, // bucketChannels
             nullptr);                     // subfieldFiltersForValidation

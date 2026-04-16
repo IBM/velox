@@ -134,12 +134,11 @@ class ReaderBase {
     schema_ = std::move(newSchema);
   }
 
-  const std::shared_ptr<const dwio::common::TypeWithId>& schemaWithId(
-      const std::unordered_set<int32_t>& requiredExtraFieldIds = {}) const {
+  const std::shared_ptr<const dwio::common::TypeWithId>& schemaWithId() const {
     if (!schemaWithId_) {
       if (options_.scanSpec()) {
-        schemaWithId_ = dwio::common::TypeWithId::create(
-            schema_, *options_.scanSpec(), requiredExtraFieldIds);
+        schemaWithId_ =
+            dwio::common::TypeWithId::create(schema_, *options_.scanSpec());
       } else {
         schemaWithId_ = dwio::common::TypeWithId::create(schema_);
       }
