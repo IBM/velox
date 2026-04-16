@@ -54,6 +54,9 @@ function install_folly {
   if [[ ${VELOX_BUILD_SHARED} != "ON" ]]; then
     FOLLY_FLAGS+=(-DGFLAGS_SHARED=FALSE)
   fi
+  # Add BLAKE3 library path for linking
+  FOLLY_FLAGS+=(-DCMAKE_EXE_LINKER_FLAGS="-L${INSTALL_PREFIX}/lib -lblake3")
+  FOLLY_FLAGS+=(-DCMAKE_SHARED_LINKER_FLAGS="-L${INSTALL_PREFIX}/lib -lblake3")
   cmake_install_dir folly "${FOLLY_FLAGS[@]}"
 }
 
@@ -65,6 +68,11 @@ function install_fizz {
 function install_fast_float {
   wget_and_untar https://github.com/fastfloat/fast_float/archive/refs/tags/"${FAST_FLOAT_VERSION}".tar.gz fast_float
   cmake_install_dir fast_float -DBUILD_TESTS=OFF
+}
+
+function install_blake3 {
+  wget_and_untar https://github.com/BLAKE3-team/BLAKE3/archive/refs/tags/"${BLAKE3_VERSION}".tar.gz BLAKE3
+  cmake_install_dir BLAKE3/c -DBUILD_SHARED_LIBS=ON
 }
 
 function install_wangle {
