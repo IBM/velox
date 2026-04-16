@@ -301,8 +301,8 @@ class S3FileSystem::Impl {
 
     auto credentialsProvider = getCredentialsProvider(*s3Config_);
 
-    if (s3Config.maxAttempts().has_value()) {
-      maxAttempts_ = s3Config.maxAttempts().value();
+    if (s3Config_->maxAttempts().has_value()) {
+      maxAttempts_ = s3Config_->maxAttempts().value();
     }
 
     client_ = std::make_shared<Aws::S3::S3Client>(
@@ -445,7 +445,7 @@ class S3FileSystem::Impl {
   }
 
   const S3Config& s3Config() const {
-    return s3Config_;
+    return *s3Config_;
   }
 
   std::string getLogLevelName() const {
