@@ -21,6 +21,7 @@
 #include "velox/functions/lib/DateTimeFormatter.h"
 #include "velox/functions/lib/TimeUtils.h"
 #include "velox/functions/sparksql/TimestampUtils.h"
+#include "velox/functions/sparksql/types/TimestampNTZType.h"
 #include "velox/type/TimestampConversion.h"
 #include "velox/type/tz/TimeZoneMap.h"
 
@@ -886,11 +887,27 @@ struct NextDayFunction {
 template <typename T>
 struct HourFunction : public InitSessionTimezone<T> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
+  using InitSessionTimezone<T>::initialize;
+
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& /*inputTypes*/,
+      const core::QueryConfig& /*config*/,
+      const arg_type<TimestampNTZ>* /*timestamp*/) {
+    // TIMESTAMP_NTZ represents local wall-clock time and must not use
+    // session timezone adjustment.
+    this->timeZone_ = nullptr;
+  }
 
   FOLLY_ALWAYS_INLINE void call(
       int32_t& result,
       const arg_type<Timestamp>& timestamp) {
     result = getDateTime(timestamp, this->timeZone_).tm_hour;
+  }
+
+  FOLLY_ALWAYS_INLINE void call(
+      int32_t& result,
+      const arg_type<TimestampNTZ>& timestamp) {
+    result = getDateTime(Timestamp::fromMicros(timestamp), nullptr).tm_hour;
   }
 };
 

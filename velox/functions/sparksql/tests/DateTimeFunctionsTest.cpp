@@ -16,6 +16,7 @@
 
 #include "velox/common/base/tests/GTestUtils.h"
 #include "velox/functions/sparksql/tests/SparkFunctionBaseTest.h"
+#include "velox/functions/sparksql/types/TimestampNTZType.h"
 #include "velox/type/Timestamp.h"
 #include "velox/type/tz/TimeZoneMap.h"
 
@@ -941,6 +942,29 @@ TEST_F(DateTimeFunctionsTest, hour) {
   EXPECT_EQ(14, hour("2024-01-08 01:23:00.001"));
   EXPECT_EQ(2, hour("2024-01-20 13:23:00.001"));
   EXPECT_EQ(2, hour("1969-01-01 13:23:00.001"));
+}
+
+TEST_F(DateTimeFunctionsTest, hourTimestampNTZ) {
+  const auto hourNtz = [&](const StringView timestampStr) {
+    auto micros = std::make_optional(parseTimestamp(timestampStr).toMicros());
+    return evaluateOnce<int32_t>("hour(c0)", TIMESTAMP_NTZ(), micros);
+  };
+
+  EXPECT_EQ(
+      std::nullopt,
+      evaluateOnce<int32_t>(
+          "hour(c0)", TIMESTAMP_NTZ(), std::optional<int64_t>{}));
+
+  EXPECT_EQ(0, hourNtz("2024-01-08 00:23:00.001"));
+  EXPECT_EQ(1, hourNtz("2024-01-08 01:23:00.001"));
+  EXPECT_EQ(13, hourNtz("2024-01-20 13:23:00.001"));
+
+  // TIMESTAMP_NTZ should not be affected by session timezone.
+  setQueryTimeZone("Pacific/Apia");
+
+  EXPECT_EQ(0, hourNtz("2024-01-08 00:23:00.001"));
+  EXPECT_EQ(1, hourNtz("2024-01-08 01:23:00.001"));
+  EXPECT_EQ(13, hourNtz("2024-01-20 13:23:00.001"));
 }
 
 TEST_F(DateTimeFunctionsTest, minute) {

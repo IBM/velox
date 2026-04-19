@@ -16,6 +16,7 @@
 #include "velox/functions/sparksql/registration/Register.h"
 #include "velox/expression/SimpleFunctionRegistry.h"
 #include "velox/expression/SpecialFormRegistry.h"
+#include "velox/functions/sparksql/types/TimestampNTZRegistration.h"
 
 namespace facebook::velox::functions::sparksql {
 
@@ -34,6 +35,7 @@ extern void registerStringFunctions(const std::string& prefix);
 extern void registerUrlFunctions(const std::string& prefix);
 
 void registerFunctions(const std::string& prefix) {
+  registerTimestampNTZType();
   registerArrayFunctions(prefix);
   registerBinaryFunctions(prefix);
   registerBitwiseFunctions(prefix);
