@@ -69,7 +69,17 @@ OptimizedPartitionedOutput::OptimizedPartitionedOutput(
 
   serializer_ = std::make_unique<
       serializer::presto::PrestoIterativePartitioningSerializer>(
-      inputType_, numDestinations_, options, pool_);
+      inputType_,
+      numDestinations_,
+      options,
+      pool_,
+      [bufferManager =
+           bufferManager_]() -> std::unique_ptr<OutputStreamListener> {
+        auto lockedBufferManager = bufferManager.lock();
+        VELOX_CHECK_NOT_NULL(
+            lockedBufferManager, "OutputBufferManager was already destructed");
+        return lockedBufferManager->newListener();
+      });
 }
 
 void OptimizedPartitionedOutput::addInput(RowVectorPtr input) {

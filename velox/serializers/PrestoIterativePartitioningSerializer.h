@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <vector>
@@ -38,11 +39,20 @@ using SerdeOpts = PrestoVectorSerde::PrestoOptions;
 /// internal state so the serializer can be reused for the next cycle.
 class PrestoIterativePartitioningSerializer {
  public:
+  /// Constructs the serializer. If `listenerFactory` is non-null it is called
+  /// once per non-empty partition on each flush to create an
+  /// OutputStreamListener that accumulates the CRC32 checksum; the checksum
+  /// bit is then set in the Presto page codec byte and the computed value is
+  /// written into the page header. Pass nullptr to skip checksum computation,
+  /// which matches the behavior of kNormal PartitionedOutput when
+  /// OutputBufferManager has no listener factory set.
   PrestoIterativePartitioningSerializer(
       RowTypePtr inputType,
       uint32_t numPartitions,
       const SerdeOpts& opts,
-      memory::MemoryPool* pool);
+      memory::MemoryPool* pool,
+      std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory =
+          nullptr);
 
   /// Routes each row in `input` to the partition indicated by `partitions`.
   /// `partitions.size()` must equal `input->size()`.
@@ -87,7 +97,7 @@ class PrestoIterativePartitioningSerializer {
       uint32_t partition,
       std::streampos beginOffset,
       char codecMask,
-      PrestoOutputStreamListener& listener) const;
+      OutputStreamListener* listener) const;
 
   void flushRowChildren(
       const std::vector<PartitionedVectorPtr>& partitionedVectors,
@@ -162,6 +172,7 @@ class PrestoIterativePartitioningSerializer {
   uint32_t numPartitions_;
   SerdeOpts opts_;
   memory::MemoryPool* pool_;
+  std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory_;
 
   /// Cumulative row count per partition across all appended batches.
   std::vector<vector_size_t> rowsPerPartition_;
