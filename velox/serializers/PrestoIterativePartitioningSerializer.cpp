@@ -51,9 +51,11 @@ inline void writeInt64(OutputStream* out, int64_t value) {
   out->write(reinterpret_cast<const char*>(&value), sizeof(value));
 }
 
-char getCodecMarker() {
+char getCodecMarker(bool checksumEnabled) {
   char marker = 0;
-  marker |= kCheckSumBitMask;
+  if (checksumEnabled) {
+    marker |= kCheckSumBitMask;
+  }
   return marker;
 }
 
@@ -233,11 +235,13 @@ PrestoIterativePartitioningSerializer::PrestoIterativePartitioningSerializer(
     RowTypePtr inputType,
     uint32_t numPartitions,
     const SerdeOpts& opts,
-    memory::MemoryPool* pool)
+    memory::MemoryPool* pool,
+    std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory)
     : type_(std::move(inputType)),
       numPartitions_(numPartitions),
       opts_(opts),
       pool_(pool),
+      listenerFactory_(std::move(listenerFactory)),
       rowsPerPartition_(numPartitions, 0) {
   VELOX_CHECK_GT(numPartitions_, 0);
   VELOX_CHECK_NOT_NULL(pool_);
@@ -306,8 +310,6 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
     return {};
   }
 
-  const char codecMask = getCodecMarker();
-
   // 1. Determine non-empty partitions.
   std::vector<uint32_t> nonEmptyPartitions;
   for (uint32_t p = 0; p < numPartitions_; ++p) {
@@ -335,10 +337,23 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
         numPartitions_);
   }
 
-  // 3. Create output streams sized to the exact bytes each partition will need,
+  // 3. Create per-partition listeners first so the codec mask can be derived
+  // from whether the factory actually produced a listener. The factory may
+  // return nullptr (e.g. when OutputBufferManager has no listener factory
+  // set), in which case checksumming is skipped and the checksum bit must not
+  // be set in the codec byte.
+  std::vector<std::unique_ptr<OutputStreamListener>> listeners(numPartitions_);
+  for (uint32_t p : nonEmptyPartitions) {
+    if (listenerFactory_) {
+      listeners[p] = listenerFactory_();
+    }
+  }
+  const bool checksumEnabled = !nonEmptyPartitions.empty() &&
+      listeners[nonEmptyPartitions[0]] != nullptr;
+  const char codecMask = getCodecMarker(checksumEnabled);
+
+  // 4. Create output streams sized to the exact bytes each partition will need,
   // so that the entire payload fits. This avoids multiple resizing and copying.
-  std::vector<std::unique_ptr<PrestoOutputStreamListener>> listeners(
-      numPartitions_);
   std::vector<std::unique_ptr<IOBufOutputStream>> outputStreams(numPartitions_);
   std::vector<IOBufOutputStream*> rawOutputStreams(numPartitions_);
   std::vector<std::streampos> beginStreamPositions(numPartitions_);
@@ -348,7 +363,6 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
     for (uint32_t col = 0; col < rowSchema.size(); ++col) {
       initialSize += flushSizes_[col][p];
     }
-    listeners[p] = std::make_unique<PrestoOutputStreamListener>();
     outputStreams[p] = std::make_unique<IOBufOutputStream>(
         *pool_, listeners[p].get(), initialSize);
     rawOutputStreams[p] = outputStreams[p].get();
@@ -357,11 +371,11 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
     flushStart(*outputStreams[p], p, codecMask);
   }
 
-  // 4. Flush column data.
+  // 5. Flush column data.
   flushRowChildren(
       partitionedRowVectors_, rowSchema, nonEmptyPartitions, rawOutputStreams);
 
-  // 5. Finalize the page by seeking back to fill in sizes and CRC, and get the
+  // 6. Finalize the page by seeking back to fill in sizes and CRC, and get the
   // IOBuf and numOfRows from each stream.
   std::map<uint32_t, std::pair<std::unique_ptr<folly::IOBuf>, vector_size_t>>
       result;
@@ -371,7 +385,7 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
         p,
         beginStreamPositions[p],
         codecMask,
-        *listeners[p]);
+        listeners[p].get());
     result[p] =
         std::make_pair(outputStreams[p]->getIOBuf(), rowsPerPartition_[p]);
   }
@@ -438,17 +452,23 @@ void PrestoIterativePartitioningSerializer::flushFinish(
     uint32_t partition,
     std::streampos beginOffset,
     char codecMask,
-    PrestoOutputStreamListener& listener) const {
-  listener.pause();
+    OutputStreamListener* listener) const {
+  auto* prestoListener = dynamic_cast<PrestoOutputStreamListener*>(listener);
+  if (prestoListener) {
+    prestoListener->pause();
+  }
 
   const std::streampos totalSize =
       static_cast<int32_t>(out.tellp() - beginOffset);
   const std::streampos uncompressedSize = totalSize - kHeaderSize;
-  const int64_t crc = computeChecksum(
-      listener,
-      static_cast<int8_t>(codecMask),
-      static_cast<int32_t>(rowsPerPartition_[partition]),
-      uncompressedSize);
+  int64_t crc = 0;
+  if (prestoListener) {
+    crc = computeChecksum(
+        *prestoListener,
+        static_cast<int8_t>(codecMask),
+        static_cast<int32_t>(rowsPerPartition_[partition]),
+        uncompressedSize);
+  }
 
   out.seekp(beginOffset + kUncompressedSizeOffset);
   writeInt32(&out, uncompressedSize);

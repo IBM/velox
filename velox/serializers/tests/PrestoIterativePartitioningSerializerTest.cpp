@@ -84,6 +84,42 @@ class PrestoIterativePartitioningSerializerTestBase : public VectorTestBase {
         type, numPartitions, opts, pool_.get());
   }
 
+  /// Builds a serializer that computes a CRC32 checksum on each flush via a
+  /// PrestoOutputStreamListener factory, matching the kOptimized path when
+  /// OutputBufferManager has a listener factory set.
+  std::unique_ptr<PrestoIterativePartitioningSerializer>
+  makeSerializerWithListener(const RowTypePtr& type, uint32_t numPartitions) {
+    SerdeOpts opts;
+    return std::make_unique<PrestoIterativePartitioningSerializer>(
+        type,
+        numPartitions,
+        opts,
+        pool_.get(),
+        []() -> std::unique_ptr<OutputStreamListener> {
+          return std::make_unique<PrestoOutputStreamListener>();
+        });
+  }
+
+  // Presto page header layout: [numRows:4][codec:1][uncompressedSize:4]
+  //                             [compressedSize:4][checksum:8]
+  static constexpr int kCodecByteOffset = 4;
+  static constexpr int kChecksumOffset = 13;
+  static constexpr int8_t kChecksumBitMask = 4;
+
+  /// Returns the codec byte from the Presto page header in `iobuf`.
+  static int8_t codecByte(const folly::IOBuf& iobuf) {
+    VELOX_CHECK_GE(iobuf.length(), kChecksumOffset + 8);
+    return reinterpret_cast<const int8_t*>(iobuf.data())[kCodecByteOffset];
+  }
+
+  /// Returns the 8-byte checksum field from the Presto page header in `iobuf`.
+  static int64_t checksumField(const folly::IOBuf& iobuf) {
+    VELOX_CHECK_GE(iobuf.length(), kChecksumOffset + 8);
+    int64_t value;
+    std::memcpy(&value, iobuf.data() + kChecksumOffset, sizeof(value));
+    return value;
+  }
+
   PrestoVectorSerde serde_;
 };
 
@@ -749,6 +785,39 @@ TEST_F(
     }
   }
 }
+
+// ── Checksum (CRC32)
+// ──────────────────────────────────────────────────────
+
+// Verify the checksum bit is set and a non-zero checksum is written when a
+// PrestoOutputStreamListener factory is provided, and that the standard
+// deserializer (which validates the checksum) accepts the page.
+TEST_P(PrestoIterativePartitioningSerializerParamTest, checksumRoundTrip) {
+  auto colType = GetParam();
+  auto type = ROW({"a"}, {colType});
+  auto col = BaseVector::create(colType, 6, pool_.get());
+  col->setNull(1, true);
+  col->setNull(4, true);
+
+  auto serializer = makeSerializerWithListener(type, 2);
+  serializer->append(makeRowVector({"a"}, {col}), {0, 1, 0, 1, 0, 1});
+  auto ioBufs = serializer->flush();
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  for (auto& [partition, pageData] : ioBufs) {
+    auto& iobuf = *pageData.first;
+    EXPECT_NE(codecByte(iobuf) & kChecksumBitMask, 0)
+        << "checksum bit must be set in codec byte";
+    EXPECT_NE(checksumField(iobuf), 0) << "checksum field must be non-zero";
+    // Deserializer validates the checksum internally; throws if wrong.
+    auto result = deserialize(iobuf, type);
+    EXPECT_GT(result->size(), 0);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Non-typed fixture (TEST_F) — lifecycle, structural, regression
+// ---------------------------------------------------------------------------
 
 // Regression: flushNulls previously wrote null bitmaps by obtaining a raw
 // pointer via writePosition() then advancing the stream via seekp(). This
