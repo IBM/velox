@@ -13,15 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <algorithm>
 
-#include <absl/random/uniform_int_distribution.h>
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
 
-#include <algorithm>
+#include "velox/vector/PartitionedVector.h"
+#include "velox/vector/tests/utils/VectorTestBase.h"
 
-#include "dwio/common/tests/utils/BatchMaker.h"
-#include "vector/PartitionedVector.h"
+// Add the following definitions to allow Clion runs
+DEFINE_bool(gtest_color, false, "");
+DEFINE_string(gtest_filter, "*", "");
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -32,7 +34,7 @@ namespace {
 
 thread_local auto gen = std::mt19937(42);
 
-auto noNulls = [](vector_size_t) { return false; };
+const std::function<bool(vector_size_t)> noNulls;
 
 auto allNulls = [](vector_size_t) { return true; };
 
@@ -92,36 +94,122 @@ auto randomPartitionFunction = [](const RowVectorPtr& vector,
   }
 };
 
-std::shared_ptr<memory::MemoryPool> pool;
-std::vector<uint32_t> partitions;
+/// Builds benchmark row vectors, one column at a time.
+class VectorBuilder : public VectorTestBase {
+ public:
+  RowVectorPtr makeRowVector(
+      const RowTypePtr& rowType,
+      vector_size_t numRows,
+      const std::function<bool(vector_size_t)>& isNullAt) {
+    std::vector<VectorPtr> children;
+    children.reserve(rowType->size());
+    for (auto i = 0; i < rowType->size(); ++i) {
+      children.push_back(makeColumn(rowType->childAt(i), numRows, isNullAt));
+    }
+    return VectorTestBase::makeRowVector(children);
+  }
 
-RowVectorPtr createTestVector(
-    const std::function<RowTypePtr(int32_t)>& rowTypeGenerator,
-    vector_size_t numRows,
-    int32_t numColumns,
-    const std::function<bool(vector_size_t)>& isNullAt) {
-  auto rowType = rowTypeGenerator(numColumns);
-  const auto batch = BatchMaker::createBatch(rowType, numRows, *pool, isNullAt);
-  return std::static_pointer_cast<RowVector>(batch);
-}
+ private:
+  VectorPtr makeColumn(
+      const TypePtr& type,
+      vector_size_t size,
+      const std::function<bool(vector_size_t)>& isNullAt) {
+    switch (type->kind()) {
+      case TypeKind::BOOLEAN:
+        return makeFlatVector<bool>(
+            size, [](auto row) { return row % 2 == 0; }, isNullAt, type);
+      case TypeKind::TINYINT:
+        return makeFlatVector<int8_t>(
+            size,
+            [](auto row) { return static_cast<int8_t>(row); },
+            isNullAt,
+            type);
+      case TypeKind::SMALLINT:
+        return makeFlatVector<int16_t>(
+            size,
+            [](auto row) { return static_cast<int16_t>(row); },
+            isNullAt,
+            type);
+      case TypeKind::INTEGER:
+        if (type->isDate()) {
+          return makeFlatVector<int32_t>(
+              size,
+              [](auto row) { return static_cast<int32_t>(row); },
+              isNullAt,
+              type);
+        }
+        return makeFlatVector<int32_t>(
+            size, [](auto row) { return row; }, isNullAt, type);
+      case TypeKind::BIGINT:
+        return makeFlatVector<int64_t>(
+            size,
+            [](auto row) { return static_cast<int64_t>(row); },
+            isNullAt,
+            type);
+      case TypeKind::HUGEINT:
+        return makeFlatVector<int128_t>(
+            size,
+            [](auto row) { return static_cast<int128_t>(row); },
+            isNullAt,
+            type);
+      case TypeKind::REAL:
+        return makeFlatVector<float>(
+            size,
+            [](auto row) { return static_cast<float>(row); },
+            isNullAt,
+            type);
+      case TypeKind::DOUBLE:
+        return makeFlatVector<double>(
+            size,
+            [](auto row) { return static_cast<double>(row); },
+            isNullAt,
+            type);
+      case TypeKind::TIMESTAMP:
+        return makeFlatVector<Timestamp>(
+            size,
+            [](auto row) { return Timestamp(row, row * 1'000); },
+            isNullAt,
+            type);
+      case TypeKind::VARCHAR:
+      case TypeKind::VARBINARY:
+        // Alternate between short inlined strings (≤12 bytes) and long
+        // out-of-line strings (>12 bytes) to exercise both StringView paths.
+        return makeFlatVector<std::string>(
+            size,
+            [](auto row) -> std::string {
+              if (row % 2 == 0) {
+                return fmt::format("v-{}", row);
+              }
+              return fmt::format("velox_benchmark_string_{:08d}", row);
+            },
+            isNullAt,
+            type);
+      default:
+        VELOX_UNSUPPORTED("Unsupported benchmark type: {}", type->toString());
+    }
+  }
+};
 
 } // namespace
 
+/// Constructs all benchmark state and runs the benchmark. Called once per
+/// benchmark entry; construction is outside the timed region.
 void runBM(
     uint32_t iterations,
     const std::function<RowTypePtr(int32_t)>& rowTypeGenerator,
     int32_t numColumns,
     uint32_t numPartitions,
     const std::function<bool(vector_size_t)>& isNullAt = noNulls,
-    vector_size_t numRows = 10000) {
+    vector_size_t numRows = 10'000) {
   folly::BenchmarkSuspender suspender;
+  VectorBuilder vectorBuilder;
+  auto pool = memory::memoryManager()->addLeafPool();
   PartitionBuildContext ctx;
-  auto vector =
-      createTestVector(rowTypeGenerator, numRows, numColumns, isNullAt);
+  auto vector = vectorBuilder.makeRowVector(
+      rowTypeGenerator(numColumns), numRows, isNullAt);
+  std::vector<uint32_t> partitions;
   randomPartitionFunction(vector, numPartitions, partitions);
   for (uint32_t i = 0; i < iterations; ++i) {
-    // PartitionedVector::create mutates its input, so each iteration needs a
-    // fresh copy to keep inputs consistent.
     const auto vectorCopy = std::static_pointer_cast<RowVector>(
         BaseVector::copy(*vector, pool.get()));
     suspender.dismiss();
@@ -178,7 +266,6 @@ BENCHMARK_TYPE(Mixed, mixedFlatTypeGenerator);
 int main(int argc, char** argv) {
   folly::Init init{&argc, &argv};
   memory::MemoryManager::initialize(memory::MemoryManager::Options{});
-  pool = memory::memoryManager()->addLeafPool();
   folly::runBenchmarks();
   return 0;
 }
