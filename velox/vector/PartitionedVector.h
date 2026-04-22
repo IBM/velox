@@ -72,6 +72,9 @@ inline void ensureCapacity(
 /// All fields are only valid during the PartitionedVector::create() call.
 struct PartitionBuildContext {
   BufferPtr cursorPartitionOffsets = nullptr;
+  /// Scratch buffer reused across columns for the scatter output. Avoids
+  /// repeated allocation during multi-column partitioning.
+  BufferPtr tempBuffer = nullptr;
 
   PartitionBuildContext() = default;
 };

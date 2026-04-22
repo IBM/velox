@@ -29,8 +29,15 @@ inline void countPartitionSizes(
     vector_size_t* rowCounts) {
   VELOX_DCHECK_NOT_NULL(rowCounts);
 
-  for (vector_size_t i = 0; i < partitions.size(); i++) {
-    rowCounts[partitions[i]]++;
+  // Restrict-qualify both pointers: `rowCounts` and the partition ids are
+  // distinct arrays of the same element width, so without this hint the
+  // compiler must assume the histogram store may clobber the next partition
+  // id and reload it on every iteration.
+  vector_size_t* __restrict counts = rowCounts;
+  const uint32_t* __restrict parts = partitions.data();
+  const auto numRows = static_cast<vector_size_t>(partitions.size());
+  for (vector_size_t i = 0; i < numRows; ++i) {
+    ++counts[parts[i]];
   }
 }
 
@@ -78,94 +85,62 @@ void initializeCursorPartitionOffsets(
   cursorPartitionOffsets->setSize(numPartitions * sizeof(vector_size_t));
 }
 
-// In-place partitioning algorithm for fixed-width values
-// This algorithm rearranges elements so that each element ends up in its target
-// partition by repeatedly swapping elements until the current element belongs
-// to the current partition
-template <typename T>
-void partitionFixedWidthValuesInPlace(
-    T* values,
+// Scatter bits from `input` to `output` (which must be pre-zeroed) by reading
+// each bit sequentially and writing it to the position given by
+// cursorOffsets[partitions[i]]++. Sequential reads allow hardware prefetching;
+// with few partitions the write streams stay cache-resident.
+void scatterBits(
+    const uint8_t* input,
+    uint8_t* output,
+    vector_size_t numRows,
     const std::vector<uint32_t>& partitions,
-    uint32_t numPartitions,
-    const BufferPtr& endPartitionOffsets,
-    PartitionBuildContext& ctx,
-    velox::memory::MemoryPool* pool) {
-  VELOX_DCHECK_NOT_NULL(values);
-  VELOX_DCHECK_NOT_NULL(endPartitionOffsets);
-  initializeCursorPartitionOffsets(
-      ctx.cursorPartitionOffsets, endPartitionOffsets, numPartitions, pool);
-  auto* rawCursorOffsets =
-      ctx.cursorPartitionOffsets->asMutable<vector_size_t>();
-  const auto* rawEndOffsets = endPartitionOffsets->as<vector_size_t>();
-
-  for (auto currentPartition = 0; currentPartition < numPartitions;
-       currentPartition++) {
-    auto& offset = rawCursorOffsets[currentPartition];
-    auto endOffset = rawEndOffsets[currentPartition];
-
-    while (offset < endOffset) {
-      uint32_t targetPartition = partitions[offset];
-
-      while (targetPartition != currentPartition) {
-        auto destinationOffset = rawCursorOffsets[targetPartition]++;
-        std::swap(values[destinationOffset], values[offset]);
-        targetPartition = partitions[destinationOffset];
-      }
-      offset = ++rawCursorOffsets[currentPartition];
-    }
+    vector_size_t* cursorOffsets) {
+  for (vector_size_t i = 0; i < numRows; ++i) {
+    const auto destPos = cursorOffsets[partitions[i]]++;
+    const uint8_t bit = (input[i >> 3] >> (i & 7)) & 1;
+    output[destPos >> 3] |= static_cast<uint8_t>(bit << (destPos & 7));
   }
 }
 
-// Swap two bits between two bytes
-void swapBit(Byte& byte1, BitIndex bit1, Byte& byte2, BitIndex bit2) {
-  // Calculate the difference between the bits
-  char bitDiff = ((byte1 >> bit1) & 1) ^ ((byte2 >> bit2) & 1);
-
-  // Apply the difference to toggle the bits
-  byte1 ^= (bitDiff << bit1);
-  byte2 ^= (bitDiff << bit2);
+// Scatter-in-place: scatter bits from `inout` into `temp`, then copy back.
+void scatterBitsInPlace(
+    uint8_t* inout,
+    uint8_t* temp,
+    vector_size_t numRows,
+    const std::vector<uint32_t>& partitions,
+    vector_size_t* cursorOffsets) {
+  const auto numBytes = bits::nbytes(numRows);
+  std::memset(temp, 0, numBytes);
+  scatterBits(inout, temp, numRows, partitions, cursorOffsets);
+  std::memcpy(inout, temp, numBytes);
 }
 
-void partitionBitsInPlace(
-    Byte* bits,
-    const std::vector<uint32_t>& partitions,
-    uint32_t numPartitions,
-    PartitionBuildContext& ctx,
-    const BufferPtr& endPartitionOffsets,
-    velox::memory::MemoryPool* pool) {
-  initializeCursorPartitionOffsets(
-      ctx.cursorPartitionOffsets, endPartitionOffsets, numPartitions, pool);
-
-  auto* rawCursorOffsets =
-      ctx.cursorPartitionOffsets->asMutable<vector_size_t>();
-  const auto* rawEndOffsets = endPartitionOffsets->as<vector_size_t>();
-
-  for (uint32_t partition = 0; partition < numPartitions; partition++) {
-    auto& offset = rawCursorOffsets[partition];
-    auto endOffset = rawEndOffsets[partition];
-    while (offset < endOffset) {
-      uint32_t p = partitions[offset];
-      while (p != partition) {
-        vector_size_t destinationOffset = rawCursorOffsets[p]++;
-
-        // Calculate the byte address and bit index within the byte for the
-        // source and destination bits. Since each byte contains 8 bits, we
-        // divide the offset by 8 to get the byte address and take the modulus
-        // by 8 to get the bit index within that byte.
-        vector_size_t destinationAddr = destinationOffset >> 3;
-        int8_t destinationBitInByte = destinationOffset & 7;
-        vector_size_t fromAddr = offset >> 3;
-        int8_t fromBitInByte = offset & 7;
-
-        swapBit(
-            bits[destinationAddr],
-            destinationBitInByte,
-            bits[fromAddr],
-            fromBitInByte);
-        p = partitions[destinationOffset];
-      }
-      offset = ++rawCursorOffsets[partition];
-    }
+// Scatters 'numRows' values from 'input' to 'output'. Row i is written to
+// output[cursor[partitions[i]]], after which cursor[partitions[i]] is advanced.
+// cursor[p] holds the next free output slot of partition p and is updated in
+// place. The four pointers reference non-overlapping memory; the '__restrict'
+// qualifiers tell the compiler so, which lets it pipeline the per-row loads
+// instead of reloading the partition id and cursor after every scatter store,
+// which it would otherwise have to assume the store may alias.
+template <typename T>
+void scatterPartition(
+    const T* __restrict input,
+    T* __restrict output,
+    const uint32_t* __restrict partitions,
+    vector_size_t numRows,
+    vector_size_t* __restrict cursor) {
+  vector_size_t i = 0;
+  // Unroll by four so the independent address computations of distinct
+  // partitions issue back to back. Rows that share a partition still serialize
+  // through the cursor[p] read-modify-write.
+  for (; i + 4 <= numRows; i += 4) {
+    output[cursor[partitions[i]]++] = input[i];
+    output[cursor[partitions[i + 1]]++] = input[i + 1];
+    output[cursor[partitions[i + 2]]++] = input[i + 2];
+    output[cursor[partitions[i + 3]]++] = input[i + 3];
+  }
+  for (; i < numRows; ++i) {
+    output[cursor[partitions[i]]++] = input[i];
   }
 }
 
@@ -179,9 +154,23 @@ void partitionFixedWidthValues(
     velox::memory::MemoryPool* pool) {
   VELOX_DCHECK_NOT_NULL(inputBuffer);
 
-  auto input = inputBuffer->asMutable<T>();
-  partitionFixedWidthValuesInPlace<T>(
-      input, partitions, numPartitions, endPartitionOffsets, ctx, pool);
+  const auto numRows = static_cast<vector_size_t>(partitions.size());
+  initializeCursorPartitionOffsets(
+      ctx.cursorPartitionOffsets, endPartitionOffsets, numPartitions, pool);
+  auto* rawCursorOffsets =
+      ctx.cursorPartitionOffsets->asMutable<vector_size_t>();
+
+  ensureCapacity<T>(ctx.tempBuffer, numRows, pool);
+  auto* input = inputBuffer->asMutable<T>();
+  auto* output = ctx.tempBuffer->asMutable<T>();
+  scatterPartition<T>(
+      input, output, partitions.data(), numRows, rawCursorOffsets);
+  // Copy the partitioned bytes back into the caller's buffer rather than
+  // swapping in ctx.tempBuffer. A swap would transfer ctx.tempBuffer (which
+  // was allocated from 'pool') into the caller's FlatVector, and if the
+  // caller's vector outlives 'pool' the buffer would be reported as a leak by
+  // 'pool's destructor.
+  std::memcpy(input, output, BaseVector::byteSize<T>(numRows));
 }
 
 template <>
@@ -194,9 +183,20 @@ void partitionFixedWidthValues<bool>(
     velox::memory::MemoryPool* pool) {
   VELOX_DCHECK_NOT_NULL(inputBuffer);
 
-  auto input = inputBuffer->asMutable<Byte>();
-  partitionBitsInPlace(
-      input, partitions, numPartitions, ctx, endPartitionOffsets, pool);
+  const auto numRows = static_cast<vector_size_t>(partitions.size());
+  const auto numBytes = bits::nbytes(numRows);
+  initializeCursorPartitionOffsets(
+      ctx.cursorPartitionOffsets, endPartitionOffsets, numPartitions, pool);
+  auto* rawCursorOffsets =
+      ctx.cursorPartitionOffsets->asMutable<vector_size_t>();
+
+  ensureCapacity<uint8_t>(ctx.tempBuffer, numBytes, pool);
+  scatterBitsInPlace(
+      inputBuffer->asMutable<uint8_t>(),
+      ctx.tempBuffer->asMutable<uint8_t>(),
+      numRows,
+      partitions,
+      rawCursorOffsets);
 }
 
 template <TypeKind typeKind>
@@ -354,12 +354,24 @@ void PartitionedFlatVector<T>::partition(
     const std::vector<uint32_t>& partitions,
     PartitionBuildContext& ctx) {
   if (vector_->rawNulls()) {
-    Byte* rawNulls = reinterpret_cast<Byte*>(vector_->mutableRawNulls());
-    partitionBitsInPlace(
-        rawNulls, partitions, numPartitions_, ctx, endPartitionOffsets_, pool_);
+    const auto numRows = static_cast<vector_size_t>(partitions.size());
+    const auto numBytes = bits::nbytes(numRows);
+    initializeCursorPartitionOffsets(
+        ctx.cursorPartitionOffsets,
+        endPartitionOffsets_,
+        numPartitions_,
+        pool_);
+    ensureCapacity<uint8_t>(ctx.tempBuffer, numBytes, pool_);
+    scatterBitsInPlace(
+        reinterpret_cast<uint8_t*>(vector_->mutableRawNulls()),
+        ctx.tempBuffer->asMutable<uint8_t>(),
+        numRows,
+        partitions,
+        ctx.cursorPartitionOffsets->asMutable<vector_size_t>());
   }
 
-  auto valuesBuffer = vector_->as<FlatVector<T>>()->values();
+  auto* flatVector = vector_->as<FlatVector<T>>();
+  auto valuesBuffer = flatVector->values();
   partitionFixedWidthValues<T>(
       valuesBuffer,
       partitions,
@@ -411,9 +423,20 @@ void PartitionedRowVector::partition(
   }
 
   if (numPartitions_ > 1 && vector_->rawNulls()) {
-    Byte* rawNulls = reinterpret_cast<Byte*>(vector_->mutableRawNulls());
-    partitionBitsInPlace(
-        rawNulls, partitions, numPartitions_, ctx, endPartitionOffsets_, pool_);
+    const auto numRows = static_cast<vector_size_t>(partitions.size());
+    const auto numBytes = bits::nbytes(numRows);
+    initializeCursorPartitionOffsets(
+        ctx.cursorPartitionOffsets,
+        endPartitionOffsets_,
+        numPartitions_,
+        pool_);
+    ensureCapacity<uint8_t>(ctx.tempBuffer, numBytes, pool_);
+    scatterBitsInPlace(
+        reinterpret_cast<uint8_t*>(vector_->mutableRawNulls()),
+        ctx.tempBuffer->asMutable<uint8_t>(),
+        numRows,
+        partitions,
+        ctx.cursorPartitionOffsets->asMutable<vector_size_t>());
   }
 
   // Count nulls per partition from the now-partitioned null bitmap.
