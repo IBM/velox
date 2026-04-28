@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include "velox/common/base/BitUtil.h"
+#include "velox/common/base/tests/GTestUtils.h"
 #include "velox/serializers/PrestoIterativePartitioningSerializer.h"
 
 #include "velox/serializers/PrestoSerializerSerializationUtils.h"
@@ -590,6 +591,69 @@ TEST_F(PrestoIterativePartitioningSerializerTest, bytesBufferedNullFlagGrowth) {
   auto ioBufs = serializer->flush();
   EXPECT_EQ(serializer->bytesBuffered(), 0);
   EXPECT_EQ(bytesBuffered, totalFlushedBytes(ioBufs));
+}
+
+// A flush time output mapping serializes one input colum into multiple output
+// columns.
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    duplicateOutputColumnAtFlush) {
+  auto outputType = ROW({"v1", "v2"}, {BIGINT(), BIGINT()});
+  SerdeOpts opts;
+  auto serializer = std::make_unique<PrestoIterativePartitioningSerializer>(
+      outputType, 2, opts, pool_.get(), std::vector<column_index_t>{0, 0});
+
+  serializer->append(
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({10, 11, 12, 13})}),
+      {0, 1, 0, 1});
+
+  auto ioBufs = serializer->flush();
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  auto r0 = deserialize(*ioBufs.at(0).first, outputType);
+  auto r1 = deserialize(*ioBufs.at(1).first, outputType);
+
+  ASSERT_EQ(r0->size(), 2);
+  ASSERT_EQ(r1->size(), 2);
+
+  EXPECT_EQ(sortedValues<int64_t>(r0, 0), (std::vector<int64_t>{10, 12}));
+  EXPECT_EQ(sortedValues<int64_t>(r0, 1), (std::vector<int64_t>{10, 12}));
+  EXPECT_EQ(sortedValues<int64_t>(r1, 0), (std::vector<int64_t>{11, 13}));
+  EXPECT_EQ(sortedValues<int64_t>(r1, 1), (std::vector<int64_t>{11, 13}));
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    outputInputMappingOutOfRange) {
+  auto outputType = ROW({"v1", "v2"}, {BIGINT(), BIGINT()});
+  SerdeOpts opts;
+  auto serializer = std::make_unique<PrestoIterativePartitioningSerializer>(
+      outputType, 2, opts, pool_.get(), std::vector<column_index_t>{0, 1});
+
+  VELOX_ASSERT_THROW(
+      serializer->append(
+          makeRowVector({"v"}, {makeFlatVector<int64_t>({10, 11})}), {0, 1}),
+      "Output column 1 maps to invalid input column 1");
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    outputInputMappingTypeMismatch) {
+  auto outputType = ROW({"v1", "v2"}, {BIGINT(), BIGINT()});
+  SerdeOpts opts;
+  auto serializer = std::make_unique<PrestoIterativePartitioningSerializer>(
+      outputType, 2, opts, pool_.get(), std::vector<column_index_t>{0, 1});
+
+  VELOX_ASSERT_THROW(
+      serializer->append(
+          makeRowVector(
+              {"v1", "v2"},
+              {
+                  makeFlatVector<int64_t>({10, 11}),
+                  makeFlatVector<int32_t>({12, 13}),
+              }),
+          {0, 1}),
+      "Output column 1 expects BIGINT, got INTEGER from input column 1");
 }
 
 TEST_F(
