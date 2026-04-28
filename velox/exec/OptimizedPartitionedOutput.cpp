@@ -16,6 +16,8 @@
 
 #include "velox/exec/OptimizedPartitionedOutput.h"
 
+#include <unordered_map>
+
 #include "velox/exec/HashPartitionFunction.h"
 #include "velox/exec/SerializedPage.h"
 #include "velox/exec/Task.h"
@@ -67,12 +69,15 @@ OptimizedPartitionedOutput::OptimizedPartitionedOutput(
       operatorCtx_->driverCtx()->queryConfig().shuffleCompressionKind());
   options.minCompressionRatio = 0.8;
 
+  initializeSerializerLayout();
+
   serializer_ = std::make_unique<
       serializer::presto::PrestoIterativePartitioningSerializer>(
-      inputType_,
+      outputType_,
       numDestinations_,
       options,
       pool_,
+      serializerInputByOutput_,
       [bufferManager =
            bufferManager_]() -> std::unique_ptr<OutputStreamListener> {
         auto lockedBufferManager = bufferManager.lock();
@@ -87,7 +92,10 @@ void OptimizedPartitionedOutput::addInput(RowVectorPtr input) {
       !replicateNullsAndAny_,
       "replicateNullsAndAny is not yet supported by OptimizedPartitionedOutput");
 
-  if (serializer_->estimateBytesAfterAppend(input) > maxOutputBufferBytes_) {
+  auto serializerInput = prepareSerializerInput(input);
+
+  if (serializer_->estimateBytesAfterAppend(serializerInput) >
+      maxOutputBufferBytes_) {
     flush();
   }
 
@@ -105,7 +113,7 @@ void OptimizedPartitionedOutput::addInput(RowVectorPtr input) {
     }
   }
 
-  serializer_->append(input, partitions_);
+  serializer_->append(serializerInput, partitions_);
 
   auto lockedStats = stats_.wlock();
   ++numAppends_;
@@ -155,6 +163,72 @@ BlockingReason OptimizedPartitionedOutput::isBlocked(ContinueFuture* future) {
 
 bool OptimizedPartitionedOutput::isFinished() {
   return finished_;
+}
+
+void OptimizedPartitionedOutput::initializeSerializerLayout() {
+  if (outputType_->size() == 0 || outputChannels_.empty()) {
+    serializerInputType_ = outputType_;
+    return;
+  }
+
+  std::unordered_map<column_index_t, column_index_t> outputToSerializerInput;
+  outputToSerializerInput.reserve(outputChannels_.size());
+
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+  names.reserve(outputChannels_.size());
+  types.reserve(outputChannels_.size());
+  serializerInputByOutput_.reserve(outputChannels_.size());
+
+  for (const auto outputChannel : outputChannels_) {
+    auto it = outputToSerializerInput.find(outputChannel);
+    if (it == outputToSerializerInput.end()) {
+      const auto serializerInputChannel =
+          static_cast<column_index_t>(serializerInputChannels_.size());
+      serializerInputChannels_.push_back(outputChannel);
+      names.push_back(inputType_->nameOf(outputChannel));
+      types.push_back(inputType_->childAt(outputChannel));
+      it =
+          outputToSerializerInput.emplace(outputChannel, serializerInputChannel)
+              .first;
+    }
+    serializerInputByOutput_.push_back(it->second);
+  }
+
+  serializerInputType_ = ROW(std::move(names), std::move(types));
+}
+
+RowVectorPtr OptimizedPartitionedOutput::prepareSerializerInput(
+    const RowVectorPtr& input) const {
+  VELOX_CHECK_NOT_NULL(input);
+
+  if (serializerInputType_->size() == 0) {
+    return std::make_shared<RowVector>(
+        input->pool(),
+        serializerInputType_,
+        nullptr /*nulls*/,
+        input->size(),
+        std::vector<VectorPtr>{});
+  }
+
+  if (serializerInputChannels_.empty()) {
+    input->loadedVector();
+    return input;
+  }
+
+  std::vector<VectorPtr> serializerInputColumns;
+  serializerInputColumns.reserve(serializerInputChannels_.size());
+  for (auto channel : serializerInputChannels_) {
+    auto loadedChild = BaseVector::loadedVectorShared(input->childAt(channel));
+    serializerInputColumns.push_back(loadedChild);
+  }
+
+  return std::make_shared<RowVector>(
+      input->pool(),
+      serializerInputType_,
+      nullptr /*nulls*/,
+      input->size(),
+      std::move(serializerInputColumns));
 }
 
 void OptimizedPartitionedOutput::flush() {

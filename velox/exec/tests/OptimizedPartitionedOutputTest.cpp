@@ -244,6 +244,64 @@ class OptimizedPartitionedOutputTest : public OperatorTestBase {
     return result;
   }
 
+  RowTypePtr outputTypeForLayout(
+      const RowTypePtr& inputType,
+      const std::vector<std::string>& outputLayout) {
+    if (outputLayout.empty()) {
+      return inputType;
+    }
+
+    std::vector<TypePtr> types;
+    types.reserve(outputLayout.size());
+    for (const auto& name : outputLayout) {
+      types.push_back(inputType->findChild(name));
+    }
+    return ROW(outputLayout, std::move(types));
+  }
+
+  RowVectorPtr buildOutput(
+      const RowVectorPtr& input,
+      const std::vector<std::string>& outputLayout) {
+    const auto inputType = asRowType(input->type());
+    const auto outputType = outputTypeForLayout(inputType, outputLayout);
+
+    std::vector<VectorPtr> columns;
+    columns.reserve(outputLayout.size());
+    for (const auto& name : outputLayout) {
+      columns.push_back(input->childAt(inputType->getChildIdx(name)));
+    }
+    return std::make_shared<RowVector>(
+        input->pool(), outputType, nullptr, input->size(), std::move(columns));
+  }
+
+  /// Sorts a vector by value for order-independent comparison. Returns a
+  /// dictionary vector with rows sorted in ascending order.
+  VectorPtr canonicalize(const VectorPtr& vector) {
+    const auto numRows = vector->size();
+    auto indices = makeIndices(numRows, [](auto i) { return i; });
+    auto* data = indices->asMutable<vector_size_t>();
+    std::stable_sort(data, data + numRows, [&](auto a, auto b) {
+      return vector->compare(vector.get(), a, b) < 0;
+    });
+    return BaseVector::wrapInDictionary(nullptr, indices, numRows, vector);
+  }
+
+  /// Builds a RowVector by gathering rows from inputBatches at the given
+  /// (batchIdx, rowIdx) positions. Used to construct the per-partition expected
+  /// RowVector.
+  RowVectorPtr gatherRows(
+      const std::vector<RowVectorPtr>& batches,
+      const std::vector<std::pair<int, int>>& rowList,
+      const RowTypePtr& rowType) {
+    const auto numRows = static_cast<vector_size_t>(rowList.size());
+    auto result = std::static_pointer_cast<RowVector>(
+        BaseVector::create(rowType, numRows, pool()));
+    for (vector_size_t r = 0; r < numRows; ++r) {
+      result->copy(batches[rowList[r].first].get(), r, rowList[r].second, 1);
+    }
+    return result;
+  }
+
   int64_t getIntRuntimeStat(Task* task, const std::string& statName) {
     const auto taskStats = task->taskStats();
     const auto& runtimeStats =
@@ -264,14 +322,34 @@ class OptimizedPartitionedOutputTest : public OperatorTestBase {
       int numPartitions,
       std::unordered_map<std::string, std::string> extraConfig = {},
       std::chrono::seconds timeout = std::chrono::seconds{30}) {
+    return runPartitionedOutputWithLayout(
+        taskId,
+        inputBatches,
+        partitionKeys,
+        numPartitions,
+        {},
+        std::move(extraConfig),
+        timeout);
+  }
+
+  PartitionedOutputResult runPartitionedOutputWithLayout(
+      const std::string& taskId,
+      const std::vector<RowVectorPtr>& inputBatches,
+      const std::vector<std::string>& partitionKeys,
+      int numPartitions,
+      const std::vector<std::string>& outputLayout,
+      std::unordered_map<std::string, std::string> extraConfig = {},
+      std::chrono::seconds timeout = std::chrono::seconds{30}) {
     VELOX_CHECK(!inputBatches.empty());
     const auto rowType =
         std::dynamic_pointer_cast<const RowType>(inputBatches[0]->type());
+    const auto outputType = outputTypeForLayout(rowType, outputLayout);
 
-    auto plan = PlanBuilder()
-                    .values(inputBatches)
-                    .partitionedOutput(partitionKeys, numPartitions)
-                    .planNode();
+    auto plan =
+        PlanBuilder()
+            .values(inputBatches)
+            .partitionedOutput(partitionKeys, numPartitions, outputLayout)
+            .planNode();
 
     auto task = Task::create(
         taskId,
@@ -306,7 +384,7 @@ class OptimizedPartitionedOutputTest : public OperatorTestBase {
       if (result.pageCounts[p] > 0) {
         ++result.numNonEmptyPartitions;
       }
-      result.rowCounts[p] = concatPages(result.pages[p], rowType)->size();
+      result.rowCounts[p] = concatPages(result.pages[p], outputType)->size();
     }
 
     result.numAppends = getIntRuntimeStat(task.get(), "numAppends");
@@ -444,34 +522,6 @@ class OptimizedPartitionedOutputParamTest
     }
 
     return makeRowVector(names, vecs);
-  }
-
-  /// Sorts a vector by value for order-independent comparison. Returns a
-  /// dictionary vector with rows sorted in ascending order.
-  VectorPtr canonicalize(const VectorPtr& vector) {
-    const auto numRows = vector->size();
-    auto indices = makeIndices(numRows, [](auto i) { return i; });
-    auto* data = indices->asMutable<vector_size_t>();
-    std::stable_sort(data, data + numRows, [&](auto a, auto b) {
-      return vector->compare(vector.get(), a, b) < 0;
-    });
-    return BaseVector::wrapInDictionary(nullptr, indices, numRows, vector);
-  }
-
-  /// Builds a RowVector by gathering rows from inputBatches at the given
-  /// (batchIdx, rowIdx) positions. Used to construct the per-partition expected
-  /// RowVector.
-  RowVectorPtr gatherRows(
-      const std::vector<RowVectorPtr>& batches,
-      const std::vector<std::pair<int, int>>& rowList,
-      const RowTypePtr& rowType) {
-    const auto numRows = static_cast<vector_size_t>(rowList.size());
-    auto result = std::static_pointer_cast<RowVector>(
-        BaseVector::create(rowType, numRows, pool()));
-    for (vector_size_t r = 0; r < numRows; ++r) {
-      result->copy(batches[rowList[r].first].get(), r, rowList[r].second, 1);
-    }
-    return result;
   }
 
   /// Verifies that the deserialized pages for each partition exactly match the
@@ -920,6 +970,67 @@ TEST_F(OptimizedPartitionedOutputTest, replicateNullsAndAnyUnsupported) {
       task->errorMessage(),
       testing::HasSubstr(
           "replicateNullsAndAny is not yet supported by OptimizedPartitionedOutput"));
+}
+
+TEST_F(OptimizedPartitionedOutputTest, outputLayout) {
+  auto input = makeRowVector(
+      {"p1", "v1", "v2", "unused"},
+      {makeFlatVector<int32_t>({0, 1, 2, 3, 4, 5, 6, 7}),
+       makeFlatVector<int64_t>({10, 11, 12, 13, 14, 15, 16, 17}),
+       makeFlatVector<int8_t>({20, 21, 22, 23, 24, 25, 26, 27}),
+       makeFlatVector<int64_t>({30, 31, 32, 33, 34, 35, 36, 37})});
+  auto inputCopy =
+      std::static_pointer_cast<RowVector>(BaseVector::copy(*input, pool()));
+
+  const std::vector<std::string> outputLayout = {"v2", "v1"};
+  const auto inputType = asRowType(input->type());
+  const auto outputType = outputTypeForLayout(inputType, outputLayout);
+  auto expected = buildOutput(inputCopy, outputLayout);
+
+  auto result = runPartitionedOutputWithLayout(
+      "local://test-optimized-output-layout", {input}, {}, 1, outputLayout);
+
+  auto actual = concatPages(result.pages[0], outputType);
+  velox::test::assertEqualVectors(expected, actual);
+}
+
+TEST_F(OptimizedPartitionedOutputTest, duplicateOutputColumns) {
+  constexpr int kNumPartitions = 4;
+  auto input = makeRowVector(
+      {"p1", "v1"},
+      {makeFlatVector<int32_t>({0, 1, 2, 3, 0, 1, 2, 3}),
+       makeFlatVector<int64_t>({10, 11, 12, 13, 14, 15, 16, 17})});
+  auto inputCopy =
+      std::static_pointer_cast<RowVector>(BaseVector::copy(*input, pool()));
+  const std::vector<std::string> outputLayout = {"v1", "v1"};
+  const auto inputType = asRowType(input->type());
+  const auto outputType = outputTypeForLayout(inputType, outputLayout);
+  auto output = buildOutput(inputCopy, outputLayout);
+
+  auto result = runPartitionedOutputWithLayout(
+      "local://test-optimized-output-layout-duplicated-columns",
+      {input},
+      {"p1"},
+      kNumPartitions,
+      outputLayout);
+
+  std::vector<uint32_t> assignments(inputCopy->size());
+  auto partitionFn = std::make_unique<HashPartitionFunction>(
+      false, kNumPartitions, inputType, std::vector<column_index_t>{0});
+  partitionFn->partition(*inputCopy, assignments);
+
+  std::vector<std::vector<std::pair<int, int>>> expectedRows(kNumPartitions);
+  for (vector_size_t i = 0; i < assignments.size(); ++i) {
+    expectedRows[assignments[i]].emplace_back(0, i);
+  }
+
+  for (int p = 0; p < kNumPartitions; ++p) {
+    auto expected = gatherRows({output}, expectedRows[p], outputType);
+    auto actual = concatPages(result.pages[p], outputType);
+    ASSERT_EQ(expected->size(), actual->size()) << "partition " << p;
+    velox::test::assertEqualVectors(
+        canonicalize(expected), canonicalize(actual));
+  }
 }
 
 } // namespace facebook::velox::exec::test

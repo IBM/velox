@@ -313,7 +313,8 @@ std::unique_ptr<ColumnBufferState> ColumnBufferState::create(
           type->kind());
     default:
       VELOX_UNSUPPORTED(
-          "Unsupported type kind for createColumnBufferState: {}", type->kind());
+          "Unsupported type kind for createColumnBufferState: {}",
+          type->kind());
   }
 }
 
@@ -337,15 +338,20 @@ class BufferState {
       const RowTypePtr& type,
       uint32_t numPartitions);
 
-  void append(const PartitionedVectorPtr& partitionedVector) {
+  void append(
+      const PartitionedVectorPtr& partitionedVector,
+      const std::vector<column_index_t>& outputToInputChannels) {
     auto rowVector =
         std::dynamic_pointer_cast<PartitionedRowVector>(partitionedVector);
     VELOX_CHECK_NOT_NULL(rowVector);
 
     rowsBuffered_ += partitionedVector->baseVector()->size();
 
-    for (auto column = 0; column < children_.size(); ++column) {
-      children_[column]->append(rowVector->childAt(column));
+    for (column_index_t column = 0; column < children_.size(); ++column) {
+      const auto inputColumn = outputToInputChannels.empty()
+          ? column
+          : outputToInputChannels[column];
+      children_[column]->append(rowVector->childAt(inputColumn));
     }
 
     for (auto p = 0; p < numPartitions_; ++p) {
@@ -425,20 +431,26 @@ std::unique_ptr<BufferState> BufferState::create(
 }
 
 PrestoIterativePartitioningSerializer::PrestoIterativePartitioningSerializer(
-    RowTypePtr inputType,
+    RowTypePtr outputType,
     uint32_t numPartitions,
     const SerdeOpts& opts,
     memory::MemoryPool* pool,
+    std::vector<column_index_t> outputToInputChannels,
     std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory)
-    : type_(std::move(inputType)),
+    : outputType_(std::move(outputType)),
+      outputToInputChannels_(std::move(outputToInputChannels)),
       numPartitions_(numPartitions),
       opts_(opts),
       pool_(pool),
       listenerFactory_(std::move(listenerFactory)),
-      numColumns_(type_->size()),
-      bufferState_(BufferState::create(type_, numPartitions_)) {
+      numColumns_(outputType_->size()),
+      bufferState_(BufferState::create(outputType_, numPartitions_)) {
   VELOX_CHECK_GT(numPartitions_, 0);
   VELOX_CHECK_NOT_NULL(pool_);
+  VELOX_CHECK(
+      outputToInputChannels_.empty() ||
+          outputToInputChannels_.size() == outputType_->size(),
+      "outputToInputChannels size must match output column count");
 }
 
 PrestoIterativePartitioningSerializer::
@@ -457,9 +469,41 @@ void PrestoIterativePartitioningSerializer::clear() {
   bufferState_->clear();
 }
 
+void PrestoIterativePartitioningSerializer::validateOutputInputMapping(
+    const RowVectorPtr& input) const {
+  const auto numInputColumns = input->childrenSize();
+  for (column_index_t outputColumn = 0; outputColumn < numColumns_;
+       ++outputColumn) {
+    const auto inputColumn = outputToInputChannel(outputColumn);
+    VELOX_CHECK_LT(
+        inputColumn,
+        numInputColumns,
+        "Output column {} maps to invalid input column {}",
+        outputColumn,
+        inputColumn);
+
+    const auto& child = input->childAt(inputColumn);
+    VELOX_CHECK_NOT_NULL(
+        child,
+        "Output column {} maps to null input column {}",
+        outputColumn,
+        inputColumn);
+
+    const auto type = outputType_->childAt(outputColumn);
+    VELOX_CHECK(
+        child->type()->equivalent(*type),
+        "Output column {} expects {}, got {} from input column {}",
+        outputColumn,
+        type->toString(),
+        child->type()->toString(),
+        inputColumn);
+  }
+}
+
 int64_t PrestoIterativePartitioningSerializer::estimateBytesAfterAppend(
     const RowVectorPtr& input) const {
   VELOX_CHECK_NOT_NULL(input);
+  validateOutputInputMapping(input);
 
   if (input->size() == 0) {
     return bytesBuffered();
@@ -475,8 +519,17 @@ int64_t PrestoIterativePartitioningSerializer::estimateBytesAfterAppend(
   auto estimatedBytes =
       bufferState_->bytesBuffered() + numNewPartitions * (kHeaderSize + 4);
 
-  for (auto column = 0; column < numColumns_; ++column) {
-    const auto& columnType = type_->childAt(column);
+  // Cache per input column. If multiple output columns map to the same input
+  // column, reuse the already computed incremental bytes.
+  std::vector<std::optional<int64_t>> estimatedIncrementalBytes(
+      input->childrenSize());
+  for (column_index_t column = 0; column < numColumns_; ++column) {
+    const auto inputColumn = outputToInputChannel(column);
+    if (estimatedIncrementalBytes[inputColumn].has_value()) {
+      estimatedBytes += *estimatedIncrementalBytes[inputColumn];
+      continue;
+    }
+    const auto& columnType = outputType_->childAt(column);
     if (columnType->isUnknown()) {
       VELOX_UNSUPPORTED(
           "Unsupported type kind for "
@@ -484,7 +537,7 @@ int64_t PrestoIterativePartitioningSerializer::estimateBytesAfterAppend(
           columnType->kind());
     } else if (columnType->isFixedWidth()) {
       const auto* columnState = bufferState_->children()[column].get();
-      const auto inputNulls = countNulls(*input->childAt(column));
+      const auto inputNulls = countNulls(*input->childAt(inputColumn));
       const auto partitionsWithNulls = std::min<uint32_t>(
           bufferState_->numNonEmptyPartitions() + numNewPartitions,
           columnState->numPartitionsWithNulls() + inputNulls.value_or(numRows));
@@ -493,12 +546,13 @@ int64_t PrestoIterativePartitioningSerializer::estimateBytesAfterAppend(
       auto nullBitmapBytesBuffered = columnState->nullBitmapBytesBuffered();
       VELOX_DCHECK_GE(nullBitmapBytes, nullBitmapBytesBuffered);
 
-      estimatedBytes += numNewPartitions *
+      estimatedIncrementalBytes[inputColumn] = numNewPartitions *
               simpleColumnBytes(columnType, 0, 0) + // header growth
           nullBitmapBytes -
           nullBitmapBytesBuffered + // null bitmap growth
           static_cast<int64_t>(numRows - inputNulls.value_or(0)) *
               fixedTypeWidth(columnType->kind()); // value bytes growth
+      estimatedBytes += *estimatedIncrementalBytes[inputColumn];
     } else {
       switch (columnType->kind()) {
         case TypeKind::VARCHAR:
@@ -530,6 +584,8 @@ void PrestoIterativePartitioningSerializer::append(
       partitions.size(),
       "partitions.size() must equal input->size()");
 
+  validateOutputInputMapping(input);
+
   if (input->size() == 0) {
     return;
   }
@@ -542,7 +598,7 @@ void PrestoIterativePartitioningSerializer::append(
       ctx,
       pool_);
 
-  bufferState_->append(partitionedRowVector);
+  bufferState_->append(partitionedRowVector, outputToInputChannels_);
   partitionedRowVectors_.push_back(std::move(partitionedRowVector));
 }
 
@@ -575,7 +631,7 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
       nonEmptyPartitions.push_back(p);
     }
   }
-  const auto& rowSchema = type_->asRow();
+  const auto& rowSchema = outputType_->asRow();
 
   // 2. Create per-partition listeners first so the codec mask can be derived
   // from whether the factory actually produced a listener. The factory may
@@ -599,7 +655,6 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
   std::vector<std::streampos> beginStreamPositions(numPartitions_);
 
   for (uint32_t p : nonEmptyPartitions) {
-    listeners[p] = std::make_unique<PrestoOutputStreamListener>();
     outputStreams[p] = std::make_unique<IOBufOutputStream>(
         *pool_, listeners[p].get(), bufferState_->bytesPerPartition()[p]);
     rawOutputStreams[p] = outputStreams[p].get();
@@ -677,7 +732,8 @@ void PrestoIterativePartitioningSerializer::flushRowChildren(
       const auto& partitionedRowVector =
           std::dynamic_pointer_cast<PartitionedRowVector>(partitionedVector);
       VELOX_DCHECK_NOT_NULL(partitionedRowVector.get());
-      column.push_back(partitionedRowVector->childAt(col));
+      column.push_back(
+          partitionedRowVector->childAt(outputToInputChannel(col)));
     }
 
     flushColumn(
