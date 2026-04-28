@@ -55,6 +55,15 @@ class OptimizedPartitionedOutput : public Operator {
   bool isFinished() override;
 
  private:
+  /// Computes the serializer input columns and the mapping from output columns
+  /// to serializer input columns.
+  void initializeSerializerLayout();
+
+  /// Builds the RowVector consumed by the serializer. When the output layout
+  /// has duplicated columns, this projects only the distinct columns and
+  /// leaves duplication to flush time.
+  RowVectorPtr prepareSerializerInput(const RowVectorPtr& input) const;
+
   /// Serializes all buffered rows into Presto pages and enqueues each page
   /// into the output buffer manager. All destinations are always enqueued;
   /// sets blockingReason_ and records a future if the output buffer is full.
@@ -62,11 +71,9 @@ class OptimizedPartitionedOutput : public Operator {
   void flush();
 
   const std::string taskId_;
-  /// Input row type; also used as output type (column reordering not yet
-  /// applied).
   const RowTypePtr inputType_;
   const std::vector<column_index_t> keyChannels_;
-  /// Non-empty when the output column order differs from the input.
+  /// Non-empty when the output layout differs from the input
   const std::vector<column_index_t> outputChannels_;
   const int32_t numDestinations_;
 
@@ -78,12 +85,23 @@ class OptimizedPartitionedOutput : public Operator {
   const int64_t maxOutputBufferBytes_;
 
   velox::memory::MemoryPool* pool_;
+
   /// Computes per-row partition assignments. Null when numDestinations_ == 1.
   std::unique_ptr<core::PartitionFunction> partitionFunction_;
   /// Reusable buffer for per-row partition assignments.
   std::vector<uint32_t> partitions_;
+
   std::unique_ptr<serializer::presto::PrestoIterativePartitioningSerializer>
       serializer_;
+  /// Row type passed to serializer_->append(). It only includes distinct
+  /// columns from the output layout.
+  RowTypePtr serializerInputType_;
+  /// Input channels that make up the serializer input type. Empty if the output
+  /// layout is the same as the input.
+  std::vector<column_index_t> serializerInputChannels_;
+  /// For each output column index, store the corresponding serializer input
+  /// column.
+  std::vector<column_index_t> serializerInputByOutput_;
 
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
   ContinueFuture future_;

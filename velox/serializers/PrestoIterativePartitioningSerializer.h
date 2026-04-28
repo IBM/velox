@@ -41,6 +41,19 @@ class BufferState;
 /// internal state so the serializer can be reused for the next cycle.
 class PrestoIterativePartitioningSerializer {
  public:
+  PrestoIterativePartitioningSerializer(
+      RowTypePtr outputType,
+      uint32_t numPartitions,
+      const SerdeOpts& opts,
+      memory::MemoryPool* pool)
+      : PrestoIterativePartitioningSerializer(
+            std::move(outputType),
+            numPartitions,
+            opts,
+            pool,
+            {},
+            nullptr) {}
+
   /// Constructs the serializer. If `listenerFactory` is non-null it is called
   /// once per non-empty partition on each flush to create an
   /// OutputStreamListener that accumulates the CRC32 checksum; the checksum
@@ -49,10 +62,29 @@ class PrestoIterativePartitioningSerializer {
   /// which matches the behavior of kNormal PartitionedOutput when
   /// OutputBufferManager has no listener factory set.
   PrestoIterativePartitioningSerializer(
-      RowTypePtr inputType,
+      RowTypePtr outputType,
       uint32_t numPartitions,
       const SerdeOpts& opts,
       memory::MemoryPool* pool,
+      std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory)
+      : PrestoIterativePartitioningSerializer(
+            std::move(outputType),
+            numPartitions,
+            opts,
+            pool,
+            {},
+            std::move(listenerFactory)) {}
+
+  /// Constructs the serializer with an explicit output-column to input-column
+  /// mapping. `outputToInputChannels[i]` indicates which child of the RowVector
+  /// passed to append() should be serialized for output column i. When empty,
+  /// output column i uses input child i.
+  PrestoIterativePartitioningSerializer(
+      RowTypePtr outputType,
+      uint32_t numPartitions,
+      const SerdeOpts& opts,
+      memory::MemoryPool* pool,
+      std::vector<column_index_t> outputToInputChannels,
       std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory =
           nullptr);
 
@@ -84,6 +116,14 @@ class PrestoIterativePartitioningSerializer {
   vector_size_t rowsBuffered() const;
 
  private:
+  void validateOutputInputMapping(const RowVectorPtr&) const;
+
+  column_index_t outputToInputChannel(column_index_t outputColumn) const {
+    return outputToInputChannels_.empty()
+        ? outputColumn
+        : outputToInputChannels_[outputColumn];
+  }
+
   std::map<uint32_t, std::pair<std::unique_ptr<folly::IOBuf>, vector_size_t>>
   flushUncompressed();
   std::map<uint32_t, std::pair<std::unique_ptr<folly::IOBuf>, vector_size_t>>
@@ -170,13 +210,15 @@ class PrestoIterativePartitioningSerializer {
       const std::vector<uint32_t>& nonEmptyPartitions,
       const std::vector<IOBufOutputStream*>& outputStreams) const;
 
-  RowTypePtr type_;
+  RowTypePtr outputType_;
+  std::vector<column_index_t> outputToInputChannels_;
   uint32_t numPartitions_;
   SerdeOpts opts_;
   memory::MemoryPool* pool_;
+
   std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory_;
 
-  /// Number of top-level columns in `type_`.
+  /// Number of top-level columns in `outputType_`.
   uint32_t numColumns_{0};
 
   std::vector<PartitionedVectorPtr> partitionedRowVectors_;
