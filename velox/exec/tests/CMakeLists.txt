@@ -156,6 +156,7 @@ set(
   CursorTest.cpp
   SplitLifecycleTest.cpp
   OptimizedPartitionedOutputTest.cpp
+  OptimizedVectorHasherTest.cpp
 )
 
 set(

@@ -21,6 +21,15 @@ target_link_libraries(
   Folly::follybenchmark
 )
 
+add_executable(velox_exec_optimized_vector_hasher_benchmark OptimizedVectorHasherBenchmark.cpp)
+
+target_link_libraries(
+  velox_exec_optimized_vector_hasher_benchmark
+  velox_exec
+  velox_vector_test_lib
+  Folly::follybenchmark
+)
+
 add_executable(velox_filter_project_benchmark FilterProjectBenchmark.cpp)
 
 target_link_libraries(
