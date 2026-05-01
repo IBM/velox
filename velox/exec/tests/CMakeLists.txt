@@ -154,6 +154,7 @@ set(
   VectorWindowPartitionTest.cpp
   FileExchangeTest.cpp
   OptimizedPartitionedOutputTest.cpp
+  OptimizedVectorHasherTest.cpp
 )
 
 set(
