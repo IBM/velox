@@ -155,6 +155,7 @@ set(
   FileExchangeTest.cpp
   CursorTest.cpp
   OptimizedPartitionedOutputTest.cpp
+  OptimizedVectorHasherTest.cpp
 )
 
 set(
