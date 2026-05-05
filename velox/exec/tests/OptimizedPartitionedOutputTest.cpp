@@ -16,10 +16,12 @@
 
 #include <future>
 #include <random>
+#include <string_view>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "velox/common/base/BitUtil.h"
 #include "velox/common/memory/ByteStream.h"
 #include "velox/exec/HashPartitionFunction.h"
 #include "velox/exec/OptimizedPartitionedOutput.h"
@@ -28,8 +30,27 @@
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/exec/tests/utils/QueryAssertions.h"
 #include "velox/serializers/PrestoSerializer.h"
+#include "velox/serializers/PrestoSerializerSerializationUtils.h"
 
 namespace facebook::velox::exec::test {
+
+namespace {
+
+int64_t simpleColumnPageBytes(
+    std::string_view encodingName,
+    int64_t numRows,
+    int64_t numNulls,
+    int64_t valueWidth) {
+  return serializer::presto::detail::kHeaderSize + // page header
+      4 + // numColumns
+      4 + static_cast<int64_t>(encodingName.size()) + // encoding header
+      4 + // rowCount
+      1 + // null flag
+      (numNulls > 0 ? bits::nbytes(numRows) : 0) + // null bitmap
+      (numRows - numNulls) * valueWidth; // values
+}
+
+} // namespace
 
 /// How null values are distributed in value columns.
 enum class NullMode {
@@ -757,6 +778,116 @@ INSTANTIATE_TEST_SUITE_P(
     });
 
 // ─── non-parameterized tests ─────────────────────────────────────────────────
+
+// In single-partition case, if the second addInput() is estimated to stay
+// below the partitioned-output limit, it doesn't flush before appending.
+TEST_F(OptimizedPartitionedOutputTest, noPreFlushWhenEstimateBelowLimit) {
+  auto rowType = ROW({"v"}, {BIGINT()});
+  std::vector<RowVectorPtr> inputBatches = {
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({10})}),
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({20})})};
+
+  const auto twoRowPageBytes = simpleColumnPageBytes("LONG_ARRAY", 2, 0, 8);
+  auto result = runPartitionedOutput(
+      "local://test-buffer-below-limit",
+      inputBatches,
+      {},
+      1,
+      {{core::QueryConfig::kMaxPartitionedOutputBufferSize,
+        std::to_string(twoRowPageBytes + 1)}});
+
+  EXPECT_EQ(result.numAppends, 2);
+  EXPECT_EQ(result.numFlushes, 1);
+
+  auto expected = makeRowVector({"v"}, {makeFlatVector<int64_t>({10, 20})});
+  auto actual = concatPages(result.pages[0], rowType);
+  velox::test::assertEqualVectors(expected, actual);
+}
+
+// In single-partition case, if the second addInput() is estimated to land
+// exactly on the partitioned-output limit, it doesn't flush before appending.
+TEST_F(OptimizedPartitionedOutputTest, noPreFlushWhenEstimateAtLimit) {
+  auto rowType = ROW({"v"}, {BIGINT()});
+  std::vector<RowVectorPtr> inputBatches = {
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({10})}),
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({20})})};
+
+  const auto twoRowPageBytes = simpleColumnPageBytes("LONG_ARRAY", 2, 0, 8);
+  auto result = runPartitionedOutput(
+      "local://test-buffer-equals-limit",
+      inputBatches,
+      {},
+      1,
+      {{core::QueryConfig::kMaxPartitionedOutputBufferSize,
+        std::to_string(twoRowPageBytes)}});
+
+  EXPECT_EQ(result.numAppends, 2);
+  EXPECT_EQ(result.numFlushes, 1);
+
+  auto expected = makeRowVector({"v"}, {makeFlatVector<int64_t>({10, 20})});
+  auto actual = concatPages(result.pages[0], rowType);
+  velox::test::assertEqualVectors(expected, actual);
+}
+
+// In the single-partition case, if the second addInput() is estimated to
+// exceed the partitioned-output limit, addInput() flushes before appending.
+TEST_F(OptimizedPartitionedOutputTest, preFlushWhenEstimateExceedsLimit) {
+  auto rowType = ROW({"v"}, {BIGINT()});
+  std::vector<RowVectorPtr> inputBatches = {
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({10})}),
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({20})})};
+
+  const auto twoRowPageBytes = simpleColumnPageBytes("LONG_ARRAY", 2, 0, 8);
+  auto result = runPartitionedOutput(
+      "local://test-buffer-exceeds-limit",
+      inputBatches,
+      {},
+      1,
+      {{core::QueryConfig::kMaxPartitionedOutputBufferSize,
+        std::to_string(twoRowPageBytes - 1)}});
+
+  EXPECT_EQ(result.numAppends, 2);
+  EXPECT_EQ(result.numFlushes, 2);
+
+  auto expected = makeRowVector({"v"}, {makeFlatVector<int64_t>({10, 20})});
+  auto actual = concatPages(result.pages[0], rowType);
+  velox::test::assertEqualVectors(expected, actual);
+}
+
+// In multi-partition case, estimateBytesAfterAppend() may conservatively
+// assume an input could go to the last empty partition even when every row
+// actually goes to an existing partition, causing a pre-flush.
+TEST_F(
+    OptimizedPartitionedOutputTest,
+    preFlushWhenConservativeEstimateExceedsLimit) {
+  auto rowType = ROW({"p1"}, {INTEGER()});
+  std::vector<RowVectorPtr> inputBatches = {
+      makeRowVector({"p1"}, {makeFlatVector<int32_t>({5})}),
+      makeRowVector({"p1"}, {makeFlatVector<int32_t>({5})})};
+
+  const auto twoRowPageBytes = simpleColumnPageBytes("INT_ARRAY", 2, 0, 4);
+  auto result = runPartitionedOutput(
+      "local://test-buffer-conservative-exceeds-limit",
+      inputBatches,
+      {"p1"},
+      2,
+      {{core::QueryConfig::kMaxPartitionedOutputBufferSize,
+        std::to_string(
+            twoRowPageBytes)}}); // exact append fits; estimate does not
+
+  EXPECT_EQ(result.numAppends, 2);
+  EXPECT_EQ(result.numFlushes, 2);
+  EXPECT_EQ(result.numNonEmptyPartitions, 1);
+
+  EXPECT_THAT(result.pageCounts, testing::UnorderedElementsAre(2, 0));
+  EXPECT_THAT(result.rowCounts, testing::UnorderedElementsAre(2, 0));
+
+  const auto nonEmptyPartition = result.rowCounts[0] > 0 ? 0 : 1;
+
+  auto expected = makeRowVector({"p1"}, {makeFlatVector<int32_t>({5, 5})});
+  auto actual = concatPages(result.pages[nonEmptyPartition], rowType);
+  velox::test::assertEqualVectors(expected, actual);
+}
 
 // Verifies that replicateNullsAndAny raises an error since it is not yet
 // supported by OptimizedPartitionedOutput.

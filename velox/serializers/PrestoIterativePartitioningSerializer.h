@@ -32,6 +32,8 @@ namespace facebook::velox::serializer::presto {
 /// Convenience alias matching PrestoSerializer.cpp convention.
 using SerdeOpts = PrestoVectorSerde::PrestoOptions;
 
+class BufferState;
+
 /// Serializes a stream of RowVectors into per-partition Presto pages.
 ///
 /// Each call to append() routes rows to their assigned partition. flush()
@@ -54,6 +56,14 @@ class PrestoIterativePartitioningSerializer {
       std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory =
           nullptr);
 
+  ~PrestoIterativePartitioningSerializer();
+
+  /// Returns a conservative estimate of bytesBuffered() after appending
+  /// `input`. The partition assignment of the input is not known at the time of
+  /// the call, so this assumes worst-case growth from new non-empty partitions
+  /// and may overestimate.
+  int64_t estimateBytesAfterAppend(const RowVectorPtr& input) const;
+
   /// Routes each row in `input` to the partition indicated by `partitions`.
   /// `partitions.size()` must equal `input->size()`.
   void append(
@@ -66,28 +76,20 @@ class PrestoIterativePartitioningSerializer {
   std::map<uint32_t, std::pair<std::unique_ptr<folly::IOBuf>, vector_size_t>>
   flush();
 
-  /// Returns the total retained bytes of all appended input vectors.
-  int64_t bytesBuffered() const {
-    return bytesBuffered_;
-  }
+  /// Returns the serialized bytes buffered across all partitions since the last
+  /// flush.
+  int64_t bytesBuffered() const;
 
   /// Returns the total number of rows appended since the last flush.
-  int64_t rowsBuffered() const {
-    return rowsBuffered_;
-  }
-
-  /// Returns the number of rows buffered for the given partition.
-  /// Must be called before flush(), which resets per-partition counts.
-  int64_t rowsPerPartition(uint32_t partition) const {
-    VELOX_DCHECK_LT(partition, numPartitions_);
-    return rowsPerPartition_[partition];
-  }
+  vector_size_t rowsBuffered() const;
 
  private:
   std::map<uint32_t, std::pair<std::unique_ptr<folly::IOBuf>, vector_size_t>>
   flushUncompressed();
   std::map<uint32_t, std::pair<std::unique_ptr<folly::IOBuf>, vector_size_t>>
   flushCompressed();
+
+  void clear();
 
   void flushStart(IOBufOutputStream& out, uint32_t partition, char codecMask)
       const;
@@ -174,19 +176,14 @@ class PrestoIterativePartitioningSerializer {
   memory::MemoryPool* pool_;
   std::function<std::unique_ptr<OutputStreamListener>()> listenerFactory_;
 
-  /// Cumulative row count per partition across all appended batches.
-  std::vector<vector_size_t> rowsPerPartition_;
-
   /// Number of top-level columns in `type_`.
   uint32_t numColumns_{0};
 
   std::vector<PartitionedVectorPtr> partitionedRowVectors_;
 
-  int64_t bytesBuffered_{0};
-  int64_t rowsBuffered_{0};
-
-  /// Per-column, per-partition exact byte counts computed during flush.
-  std::vector<std::vector<int64_t>> flushSizes_;
+  /// Accumulated state for all batches buffered since the last
+  /// flush.
+  std::unique_ptr<BufferState> bufferState_;
 };
 
 } // namespace facebook::velox::serializer::presto
