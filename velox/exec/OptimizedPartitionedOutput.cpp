@@ -87,8 +87,7 @@ void OptimizedPartitionedOutput::addInput(RowVectorPtr input) {
       !replicateNullsAndAny_,
       "replicateNullsAndAny is not yet supported by OptimizedPartitionedOutput");
 
-  if (serializer_->bytesBuffered() + input->retainedSize() >=
-      maxOutputBufferBytes_) {
+  if (serializer_->estimateBytesAfterAppend(input) > maxOutputBufferBytes_) {
     flush();
   }
 

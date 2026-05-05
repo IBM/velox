@@ -15,6 +15,9 @@
  */
 #include "velox/serializers/PrestoIterativePartitioningSerializer.h"
 
+#include <algorithm>
+#include <optional>
+
 #include "velox/common/base/BitUtil.h"
 #include "velox/type/Type.h"
 #include "velox/vector/ComplexVector.h"
@@ -133,32 +136,162 @@ simpleColumnBytes(const TypePtr& colType, int64_t numRows, int64_t numNulls) {
       (numRows - numNulls) * fixedTypeWidth(colType->kind()); // values
 }
 
-/// Returns per-partition exact byte counts for one column (all partitions).
-/// Recurses into nested ROW columns.
-///
-/// Byte layout per column type:
-///   Fixed-width: simpleColumnBytes(colType, numRows, numNulls)
-///   ROW:         7 (header) + 4 (numFields)
-///                + sum(child sizes)
-///                + 4 (numRows) + 4*(numRows+1) (offsets) + 1 (hasNulls)
-///                + (rowNulls>0 ? bits::nbytes(numRows) : 0)
-std::vector<int64_t> computeColumnFlushSizes(
-    const std::vector<PartitionedVectorPtr>& columnVectors,
-    const TypePtr& colType,
-    const std::vector<uint32_t>& nonEmptyPartitions,
-    const std::vector<vector_size_t>& rowsPerPartition,
-    uint32_t numPartitions) {
-  std::vector<int64_t> sizes(numPartitions, 0);
-
-  // Compute per-partition null counts by summing across batches.
-  std::vector<int64_t> nullCounts(numPartitions, 0);
-  for (uint32_t p : nonEmptyPartitions) {
-    for (const auto& pv : columnVectors) {
-      nullCounts[p] += pv->numNullsAt(p);
-    }
+/// Returns the null counts if it can be derived without row-by-row checks,
+/// otherwise returns std::nullopt.
+std::optional<vector_size_t> countNulls(const BaseVector& vector) {
+  if (!vector.mayHaveNulls()) {
+    return 0;
   }
 
-  switch (colType->kind()) {
+  if (const auto nullCount = vector.getNullCount()) {
+    return *nullCount;
+  }
+
+  switch (vector.encoding()) {
+    case VectorEncoding::Simple::FLAT:
+    case VectorEncoding::Simple::ROW:
+      return BaseVector::countNulls(vector.nulls(), vector.size());
+    case VectorEncoding::Simple::CONSTANT:
+      return vector.isNullAt(0) ? vector.size() : 0;
+    case VectorEncoding::Simple::DICTIONARY: {
+      vector_size_t nullCount = 0;
+      for (auto i = 0; i < vector.size(); ++i) {
+        nullCount += vector.isNullAt(i);
+      }
+      return nullCount;
+    }
+    default:
+      return std::nullopt;
+  }
+}
+
+/// Returns the maximum null-bitmap bytes for totalRows distributed across
+/// numPartitionsWithNulls partitions. This occurs when one row is put in each
+/// partition first, then one byte is added for every 8 remaining rows.
+int64_t maxBitmapBytes(int64_t totalRows, int64_t numPartitionsWithNulls) {
+  if (numPartitionsWithNulls == 0) {
+    return 0;
+  }
+  VELOX_DCHECK_LE(numPartitionsWithNulls, totalRows);
+  return numPartitionsWithNulls + (totalRows - numPartitionsWithNulls) / 8;
+}
+
+/// Base class for column nodes in the serializer's per-partition accounting.
+///
+/// A node tracks exact row, null, and byte counts for one column while
+/// appending partitioned vectors.
+class ColumnBufferState {
+ public:
+  ColumnBufferState(TypePtr type, uint32_t numPartitions)
+      : type_(std::move(type)),
+        numPartitions_(numPartitions),
+        rowsPerPartition_(numPartitions, 0),
+        nullsPerPartition_(numPartitions, 0),
+        bytesPerPartition_(numPartitions, 0) {}
+
+  virtual ~ColumnBufferState() = default;
+
+  static std::unique_ptr<ColumnBufferState> create(
+      const TypePtr& type,
+      uint32_t numPartitions);
+
+  virtual void append(const PartitionedVectorPtr& partitionedVector) = 0;
+
+  virtual void clear() {
+    std::fill(rowsPerPartition_.begin(), rowsPerPartition_.end(), 0);
+    std::fill(nullsPerPartition_.begin(), nullsPerPartition_.end(), 0);
+    std::fill(bytesPerPartition_.begin(), bytesPerPartition_.end(), 0);
+    numNonEmptyPartitions_ = 0;
+    numPartitionsWithNulls_ = 0;
+  }
+
+  const std::vector<vector_size_t>& rowsPerPartition() const {
+    return rowsPerPartition_;
+  }
+
+  const std::vector<int64_t>& bytesPerPartition() const {
+    return bytesPerPartition_;
+  }
+
+  uint32_t numNonEmptyPartitions() const {
+    return numNonEmptyPartitions_;
+  }
+
+  uint32_t numPartitionsWithNulls() const {
+    return numPartitionsWithNulls_;
+  }
+
+  int64_t nullBitmapBytesBuffered() const {
+    int64_t total = 0;
+    for (auto p = 0; p < numPartitions_; ++p) {
+      if (nullsPerPartition_[p] > 0) {
+        total += bits::nbytes(rowsPerPartition_[p]);
+      }
+    }
+    return total;
+  }
+
+ protected:
+  const TypePtr type_;
+  const uint32_t numPartitions_;
+  std::vector<vector_size_t> rowsPerPartition_;
+  std::vector<vector_size_t> nullsPerPartition_;
+  std::vector<int64_t> bytesPerPartition_;
+
+  // count of partitions with at least one buffered row
+  uint32_t numNonEmptyPartitions_{0};
+
+  // count of partitions that require a null bitmap
+  uint32_t numPartitionsWithNulls_{0};
+};
+
+/// Buffer state for one fixed-width column.
+class FixedWidthBufferState : public ColumnBufferState {
+ public:
+  FixedWidthBufferState(TypePtr type, uint32_t numPartitions)
+      : ColumnBufferState(std::move(type), numPartitions) {}
+
+  void append(const PartitionedVectorPtr& partitionedVector) override {
+    for (auto p = 0; p < numPartitions_; ++p) {
+      const auto numRows = partitionedVector->numRowsAt(p);
+      if (numRows == 0) {
+        continue;
+      }
+
+      const auto numNulls = partitionedVector->numNullsAt(p);
+      auto& rows = rowsPerPartition_[p];
+      auto& nulls = nullsPerPartition_[p];
+
+      if (rows == 0) {
+        ++numNonEmptyPartitions_;
+      }
+      if (nulls == 0 && numNulls > 0) {
+        ++numPartitionsWithNulls_;
+      }
+      rows += numRows;
+      nulls += numNulls;
+      bytesPerPartition_[p] = simpleColumnBytes(type_, rows, nulls);
+    }
+  }
+};
+
+/// Buffer state for one VARCHAR or VARBINARY column.
+class VariableWidthBufferState : public ColumnBufferState {
+ public:
+  VariableWidthBufferState(TypePtr type, uint32_t numPartitions)
+      : ColumnBufferState(std::move(type), numPartitions) {}
+
+  void append(const PartitionedVectorPtr& partitionedVector) override {
+    VELOX_NYI(
+        "Variable-width columns are not yet supported by "
+        "PrestoIterativePartitioningSerializer::append");
+  }
+};
+
+std::unique_ptr<ColumnBufferState> ColumnBufferState::create(
+    const TypePtr& type,
+    uint32_t numPartitions) {
+  switch (type->kind()) {
     case TypeKind::BOOLEAN:
     case TypeKind::TINYINT:
     case TypeKind::SMALLINT:
@@ -167,69 +300,129 @@ std::vector<int64_t> computeColumnFlushSizes(
     case TypeKind::REAL:
     case TypeKind::DOUBLE:
     case TypeKind::HUGEINT:
-      for (uint32_t p : nonEmptyPartitions) {
-        sizes[p] =
-            simpleColumnBytes(colType, rowsPerPartition[p], nullCounts[p]);
-      }
-      break;
-
-    case TypeKind::TIMESTAMP:
+      return std::make_unique<FixedWidthBufferState>(type, numPartitions);
     case TypeKind::VARCHAR:
     case TypeKind::VARBINARY:
+      return std::make_unique<VariableWidthBufferState>(type, numPartitions);
+    case TypeKind::TIMESTAMP:
+    case TypeKind::ROW:
     case TypeKind::ARRAY:
     case TypeKind::MAP:
       VELOX_NYI(
-          "computeColumnFlushSizes: unsupported type kind {}",
-          TypeKindName::toName(colType->kind()));
-
-    case TypeKind::ROW: {
-      const auto& rowSchema = colType->asRow();
-      const int32_t numFields = static_cast<int32_t>(rowSchema.size());
-
-      // Fixed per-partition overhead: header(7) + numFields(4) + footer:
-      // numRows(4)
-      // + sequential offsets 4*(numRows+1) + hasNulls(1)
-      // + null bitmap for the ROW vector itself if any rows in this partition
-      // are null.
-      for (uint32_t p : nonEmptyPartitions) {
-        const int64_t numRows = rowsPerPartition[p];
-        const int64_t rowNullBitmapBytes =
-            nullCounts[p] > 0 ? bits::nbytes(numRows) : 0;
-        sizes[p] = 7 + 4 + // "ROW" header + numFields
-            4 + 4 * (numRows + 1) + 1 + // footer: numRows + offsets + hasNulls
-            rowNullBitmapBytes;
-      }
-      // Add child column sizes recursively.
-      for (uint32_t col = 0; col < static_cast<uint32_t>(numFields); ++col) {
-        std::vector<PartitionedVectorPtr> childVectors;
-        childVectors.reserve(columnVectors.size());
-        for (const auto& pv : columnVectors) {
-          childVectors.push_back(
-              std::dynamic_pointer_cast<PartitionedRowVector>(pv)->childAt(
-                  col));
-        }
-        const auto childSizes = computeColumnFlushSizes(
-            childVectors,
-            rowSchema.childAt(col),
-            nonEmptyPartitions,
-            rowsPerPartition,
-            numPartitions);
-        for (uint32_t p : nonEmptyPartitions) {
-          sizes[p] += childSizes[p];
-        }
-      }
-      break;
-    }
-
+          "Unsupported type kind for createColumnBufferState: {}",
+          type->kind());
     default:
       VELOX_UNSUPPORTED(
-          "computeColumnFlushSizes: unsupported type kind {}",
-          TypeKindName::toName(colType->kind()));
+          "Unsupported type kind for createColumnBufferState: {}", type->kind());
   }
-  return sizes;
 }
 
 } // namespace
+
+/// Top-level buffer state for one output page.
+///
+/// For each partition, tracks page-level headers and aggregates child column
+/// sizes.
+class BufferState {
+ public:
+  BufferState(
+      uint32_t numPartitions,
+      std::vector<std::unique_ptr<ColumnBufferState>> children)
+      : numPartitions_(numPartitions),
+        rowsPerPartition_(numPartitions, 0),
+        bytesPerPartition_(numPartitions, 0),
+        children_(std::move(children)) {}
+
+  static std::unique_ptr<BufferState> create(
+      const RowTypePtr& type,
+      uint32_t numPartitions);
+
+  void append(const PartitionedVectorPtr& partitionedVector) {
+    auto rowVector =
+        std::dynamic_pointer_cast<PartitionedRowVector>(partitionedVector);
+    VELOX_CHECK_NOT_NULL(rowVector);
+
+    rowsBuffered_ += partitionedVector->baseVector()->size();
+
+    for (auto column = 0; column < children_.size(); ++column) {
+      children_[column]->append(rowVector->childAt(column));
+    }
+
+    for (auto p = 0; p < numPartitions_; ++p) {
+      const auto numRows = partitionedVector->numRowsAt(p);
+      if (numRows == 0) {
+        continue;
+      }
+      if (rowsPerPartition_[p] == 0) {
+        ++numNonEmptyPartitions_;
+      }
+      rowsPerPartition_[p] += numRows;
+
+      int64_t partitionBytes = kHeaderSize + 4;
+      for (const auto& child : children_) {
+        partitionBytes += child->bytesPerPartition()[p];
+      }
+      bytesBuffered_ += partitionBytes - bytesPerPartition_[p];
+      bytesPerPartition_[p] = partitionBytes;
+    }
+  }
+
+  void clear() {
+    std::fill(rowsPerPartition_.begin(), rowsPerPartition_.end(), 0);
+    std::fill(bytesPerPartition_.begin(), bytesPerPartition_.end(), 0);
+    numNonEmptyPartitions_ = 0;
+    rowsBuffered_ = 0;
+    bytesBuffered_ = 0;
+    for (auto& child : children_) {
+      child->clear();
+    }
+  }
+
+  const std::vector<vector_size_t>& rowsPerPartition() const {
+    return rowsPerPartition_;
+  }
+
+  const std::vector<int64_t>& bytesPerPartition() const {
+    return bytesPerPartition_;
+  }
+
+  uint32_t numNonEmptyPartitions() const {
+    return numNonEmptyPartitions_;
+  }
+
+  vector_size_t rowsBuffered() const {
+    return rowsBuffered_;
+  }
+
+  int64_t bytesBuffered() const {
+    return bytesBuffered_;
+  }
+
+  const std::vector<std::unique_ptr<ColumnBufferState>>& children() const {
+    return children_;
+  }
+
+ private:
+  const uint32_t numPartitions_;
+  std::vector<vector_size_t> rowsPerPartition_;
+  std::vector<int64_t> bytesPerPartition_;
+  uint32_t numNonEmptyPartitions_{0};
+  vector_size_t rowsBuffered_{0};
+  int64_t bytesBuffered_{0};
+  std::vector<std::unique_ptr<ColumnBufferState>> children_;
+};
+
+std::unique_ptr<BufferState> BufferState::create(
+    const RowTypePtr& type,
+    uint32_t numPartitions) {
+  std::vector<std::unique_ptr<ColumnBufferState>> children;
+  children.reserve(type->size());
+  for (auto column = 0; column < type->size(); ++column) {
+    children.push_back(
+        ColumnBufferState::create(type->childAt(column), numPartitions));
+  }
+  return std::make_unique<BufferState>(numPartitions, std::move(children));
+}
 
 PrestoIterativePartitioningSerializer::PrestoIterativePartitioningSerializer(
     RowTypePtr inputType,
@@ -242,11 +435,90 @@ PrestoIterativePartitioningSerializer::PrestoIterativePartitioningSerializer(
       opts_(opts),
       pool_(pool),
       listenerFactory_(std::move(listenerFactory)),
-      rowsPerPartition_(numPartitions, 0) {
+      numColumns_(type_->size()),
+      bufferState_(BufferState::create(type_, numPartitions_)) {
   VELOX_CHECK_GT(numPartitions_, 0);
   VELOX_CHECK_NOT_NULL(pool_);
+}
 
-  numColumns_ = type_->size();
+PrestoIterativePartitioningSerializer::
+    ~PrestoIterativePartitioningSerializer() = default;
+
+int64_t PrestoIterativePartitioningSerializer::bytesBuffered() const {
+  return bufferState_->bytesBuffered();
+}
+
+vector_size_t PrestoIterativePartitioningSerializer::rowsBuffered() const {
+  return bufferState_->rowsBuffered();
+}
+
+void PrestoIterativePartitioningSerializer::clear() {
+  partitionedRowVectors_.clear();
+  bufferState_->clear();
+}
+
+int64_t PrestoIterativePartitioningSerializer::estimateBytesAfterAppend(
+    const RowVectorPtr& input) const {
+  VELOX_CHECK_NOT_NULL(input);
+
+  if (input->size() == 0) {
+    return bytesBuffered();
+  }
+
+  const auto numRows = input->size();
+
+  // Worst case: each input row lands in a distinct empty partition, capped by
+  // the number of empty partitions.
+  const auto numNewPartitions = std::min<uint32_t>(
+      numRows, numPartitions_ - bufferState_->numNonEmptyPartitions());
+  // One page header per newly non-empty partition.
+  auto estimatedBytes =
+      bufferState_->bytesBuffered() + numNewPartitions * (kHeaderSize + 4);
+
+  for (auto column = 0; column < numColumns_; ++column) {
+    const auto& columnType = type_->childAt(column);
+    if (columnType->isUnknown()) {
+      VELOX_UNSUPPORTED(
+          "Unsupported type kind for "
+          "PrestoIterativePartitioningSerializer::estimateBytesAfterAppend: {}",
+          columnType->kind());
+    } else if (columnType->isFixedWidth()) {
+      const auto* columnState = bufferState_->children()[column].get();
+      const auto inputNulls = countNulls(*input->childAt(column));
+      const auto partitionsWithNulls = std::min<uint32_t>(
+          bufferState_->numNonEmptyPartitions() + numNewPartitions,
+          columnState->numPartitionsWithNulls() + inputNulls.value_or(numRows));
+      const auto nullBitmapBytes = maxBitmapBytes(
+          bufferState_->rowsBuffered() + numRows, partitionsWithNulls);
+      auto nullBitmapBytesBuffered = columnState->nullBitmapBytesBuffered();
+      VELOX_DCHECK_GE(nullBitmapBytes, nullBitmapBytesBuffered);
+
+      estimatedBytes += numNewPartitions *
+              simpleColumnBytes(columnType, 0, 0) + // header growth
+          nullBitmapBytes -
+          nullBitmapBytesBuffered + // null bitmap growth
+          static_cast<int64_t>(numRows - inputNulls.value_or(0)) *
+              fixedTypeWidth(columnType->kind()); // value bytes growth
+    } else {
+      switch (columnType->kind()) {
+        case TypeKind::VARCHAR:
+        case TypeKind::VARBINARY:
+        case TypeKind::ROW:
+        case TypeKind::ARRAY:
+        case TypeKind::MAP:
+          VELOX_NYI(
+              "Unsupported type kind for "
+              "PrestoIterativePartitioningSerializer::estimateBytesAfterAppend: {}",
+              columnType->kind());
+        default:
+          VELOX_UNSUPPORTED(
+              "Unsupported type kind for "
+              "PrestoIterativePartitioningSerializer::estimateBytesAfterAppend: {}",
+              columnType->kind());
+      }
+    }
+  }
+  return estimatedBytes;
 }
 
 void PrestoIterativePartitioningSerializer::append(
@@ -270,18 +542,8 @@ void PrestoIterativePartitioningSerializer::append(
       ctx,
       pool_);
 
-  const vector_size_t* partitionOffsets =
-      partitionedRowVector->rawPartitionOffsets();
-  vector_size_t prevOffset = 0;
-  for (uint32_t p = 0; p < numPartitions_; ++p) {
-    rowsPerPartition_[p] += partitionOffsets[p] - prevOffset;
-    prevOffset = partitionOffsets[p];
-  }
-
+  bufferState_->append(partitionedRowVector);
   partitionedRowVectors_.push_back(std::move(partitionedRowVector));
-
-  bytesBuffered_ += input->retainedSize();
-  rowsBuffered_ += static_cast<int64_t>(input->size());
 }
 
 // ---------------------------------------------------------------------------
@@ -295,11 +557,7 @@ PrestoIterativePartitioningSerializer::flush() {
       ? flushUncompressed()
       : flushCompressed();
 
-  partitionedRowVectors_.clear();
-  flushSizes_.clear();
-  std::fill(rowsPerPartition_.begin(), rowsPerPartition_.end(), 0);
-  bytesBuffered_ = 0;
-  rowsBuffered_ = 0;
+  clear();
 
   return pages;
 }
@@ -313,31 +571,13 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
   // 1. Determine non-empty partitions.
   std::vector<uint32_t> nonEmptyPartitions;
   for (uint32_t p = 0; p < numPartitions_; ++p) {
-    if (rowsPerPartition_[p] > 0) {
+    if (bufferState_->rowsPerPartition()[p] > 0) {
       nonEmptyPartitions.push_back(p);
     }
   }
-
-  // 2. Pre-compute exact byte sizes per top-level column and partition.
   const auto& rowSchema = type_->asRow();
-  flushSizes_.assign(rowSchema.size(), std::vector<int64_t>(numPartitions_, 0));
-  for (uint32_t col = 0; col < rowSchema.size(); ++col) {
-    std::vector<PartitionedVectorPtr> columnVectors;
-    columnVectors.reserve(partitionedRowVectors_.size());
-    for (const auto& pRowVector : partitionedRowVectors_) {
-      columnVectors.push_back(
-          std::dynamic_pointer_cast<PartitionedRowVector>(pRowVector)
-              ->childAt(col));
-    }
-    flushSizes_[col] = computeColumnFlushSizes(
-        columnVectors,
-        rowSchema.childAt(col),
-        nonEmptyPartitions,
-        rowsPerPartition_,
-        numPartitions_);
-  }
 
-  // 3. Create per-partition listeners first so the codec mask can be derived
+  // 2. Create per-partition listeners first so the codec mask can be derived
   // from whether the factory actually produced a listener. The factory may
   // return nullptr (e.g. when OutputBufferManager has no listener factory
   // set), in which case checksumming is skipped and the checksum bit must not
@@ -352,30 +592,27 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
       listeners[nonEmptyPartitions[0]] != nullptr;
   const char codecMask = getCodecMarker(checksumEnabled);
 
-  // 4. Create output streams sized to the exact bytes each partition will need,
+  // 3. Create output streams sized to the exact bytes each partition will need,
   // so that the entire payload fits. This avoids multiple resizing and copying.
   std::vector<std::unique_ptr<IOBufOutputStream>> outputStreams(numPartitions_);
   std::vector<IOBufOutputStream*> rawOutputStreams(numPartitions_);
   std::vector<std::streampos> beginStreamPositions(numPartitions_);
 
   for (uint32_t p : nonEmptyPartitions) {
-    int64_t initialSize = kHeaderSize + 4; // page header + numCols
-    for (uint32_t col = 0; col < rowSchema.size(); ++col) {
-      initialSize += flushSizes_[col][p];
-    }
+    listeners[p] = std::make_unique<PrestoOutputStreamListener>();
     outputStreams[p] = std::make_unique<IOBufOutputStream>(
-        *pool_, listeners[p].get(), initialSize);
+        *pool_, listeners[p].get(), bufferState_->bytesPerPartition()[p]);
     rawOutputStreams[p] = outputStreams[p].get();
     beginStreamPositions[p] = outputStreams[p]->tellp();
 
     flushStart(*outputStreams[p], p, codecMask);
   }
 
-  // 5. Flush column data.
+  // 4. Flush column data.
   flushRowChildren(
       partitionedRowVectors_, rowSchema, nonEmptyPartitions, rawOutputStreams);
 
-  // 6. Finalize the page by seeking back to fill in sizes and CRC, and get the
+  // 5. Finalize the page by seeking back to fill in sizes and CRC, and get the
   // IOBuf and numOfRows from each stream.
   std::map<uint32_t, std::pair<std::unique_ptr<folly::IOBuf>, vector_size_t>>
       result;
@@ -386,8 +623,8 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
         beginStreamPositions[p],
         codecMask,
         listeners[p].get());
-    result[p] =
-        std::make_pair(outputStreams[p]->getIOBuf(), rowsPerPartition_[p]);
+    result[p] = std::make_pair(
+        outputStreams[p]->getIOBuf(), bufferState_->rowsPerPartition()[p]);
   }
 
   return result;
@@ -412,7 +649,8 @@ void PrestoIterativePartitioningSerializer::flushStart(
   }
 
   // Write 21-byte Presto page header; sizes and CRC are filled in later.
-  const int32_t numRows = static_cast<int32_t>(rowsPerPartition_[partition]);
+  const int32_t numRows =
+      static_cast<int32_t>(bufferState_->rowsPerPartition()[partition]);
   char header[kHeaderSize] = {};
   std::memcpy(&header[0], &numRows, 4);
   std::memcpy(&header[4], &codecMask, 1);
@@ -466,7 +704,7 @@ void PrestoIterativePartitioningSerializer::flushFinish(
     crc = computeChecksum(
         *prestoListener,
         static_cast<int8_t>(codecMask),
-        static_cast<int32_t>(rowsPerPartition_[partition]),
+        static_cast<int32_t>(bufferState_->rowsPerPartition()[partition]),
         uncompressedSize);
   }
 
@@ -694,7 +932,9 @@ void PrestoIterativePartitioningSerializer::flushRowCounts(
     const std::vector<uint32_t>& nonEmptyPartitions,
     const std::vector<IOBufOutputStream*>& outputStreams) const {
   for (uint32_t p : nonEmptyPartitions) {
-    writeInt32(outputStreams[p], static_cast<int32_t>(rowsPerPartition_[p]));
+    writeInt32(
+        outputStreams[p],
+        static_cast<int32_t>(bufferState_->rowsPerPartition()[p]));
   }
 }
 
@@ -726,7 +966,9 @@ void PrestoIterativePartitioningSerializer::flushNulls(
   std::vector<std::vector<uint8_t>> bitmaps(numPartitions_);
   for (uint32_t p : nonEmptyPartitions) {
     if (nullCounts[p] > 0) {
-      bitmaps[p].assign(bits::nbytes(rowsPerPartition_[p]), bits::kNotNullByte);
+      bitmaps[p].assign(
+          bits::nbytes(bufferState_->rowsPerPartition()[p]),
+          bits::kNotNullByte);
     }
   }
 
@@ -761,7 +1003,7 @@ void PrestoIterativePartitioningSerializer::flushNulls(
 
     // Convert Velox format (LSB-first, 1=not-null) to Presto wire format
     // (MSB-first, 1=null) in-place.
-    const int32_t numBytes = bits::nbytes(rowsPerPartition_[p]);
+    const int32_t numBytes = bits::nbytes(bufferState_->rowsPerPartition()[p]);
     for (int32_t i = 0; i < numBytes; ++i) {
       bitmaps[p][i] = ~bitmaps[p][i];
       bits::reverseBits(&bitmaps[p][i], 1);
@@ -857,7 +1099,8 @@ void PrestoIterativePartitioningSerializer::flushSequentialOffsets(
     const std::vector<uint32_t>& nonEmptyPartitions,
     const std::vector<IOBufOutputStream*>& outputStreams) const {
   for (uint32_t p : nonEmptyPartitions) {
-    const int32_t numRows = static_cast<int32_t>(rowsPerPartition_[p]);
+    const int32_t numRows =
+        static_cast<int32_t>(bufferState_->rowsPerPartition()[p]);
     for (int32_t i = 0; i <= numRows; ++i) {
       writeInt32(outputStreams[p], i);
     }
