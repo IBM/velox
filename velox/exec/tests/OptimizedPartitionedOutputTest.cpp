@@ -127,6 +127,13 @@ struct PartitionedOutputResult {
 /// Shared infrastructure for all OptimizedPartitionedOutput tests.
 class OptimizedPartitionedOutputTest : public OperatorTestBase {
  protected:
+  void SetUp() override {
+    OperatorTestBase::SetUp();
+    bufferManager_->setListenerFactory([]() {
+      return std::make_unique<serializer::presto::PrestoOutputStreamListener>();
+    });
+  }
+
   std::shared_ptr<core::QueryCtx> createQueryContext(
       std::unordered_map<std::string, std::string> config) {
     config[core::QueryConfig::kOptimizedPartitionedOutputEnabled] = "true";

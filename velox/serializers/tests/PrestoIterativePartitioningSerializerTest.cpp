@@ -81,7 +81,13 @@ class PrestoIterativePartitioningSerializerTestBase : public VectorTestBase {
       uint32_t numPartitions) {
     SerdeOpts opts;
     return std::make_unique<PrestoIterativePartitioningSerializer>(
-        type, numPartitions, opts, pool_.get());
+        type,
+        numPartitions,
+        opts,
+        pool_.get(),
+        []() -> std::unique_ptr<OutputStreamListener> {
+          return std::make_unique<PrestoOutputStreamListener>();
+        });
   }
 
   /// Builds a serializer that computes a CRC32 checksum on each flush via a
