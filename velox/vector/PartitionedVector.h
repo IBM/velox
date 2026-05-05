@@ -155,6 +155,13 @@ class PartitionedVector {
     return numNullsPerPartition_[partition];
   }
 
+  vector_size_t numRowsAt(uint32_t partition) const {
+    auto beginOffset =
+        partition == 0 ? 0 : rawEndPartitionOffsets_[partition - 1];
+    auto endOffset = rawEndPartitionOffsets_[partition];
+    return endOffset - beginOffset;
+  }
+
   TypeKind typeKind() const {
     return vector_->typeKind();
   }

@@ -15,16 +15,36 @@
  */
 
 #include <random>
+#include <string_view>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "velox/common/base/BitUtil.h"
 #include "velox/serializers/PrestoIterativePartitioningSerializer.h"
+
+#include "velox/serializers/PrestoSerializerSerializationUtils.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
 using namespace facebook::velox;
 using namespace facebook::velox::serializer::presto;
 using namespace facebook::velox::test;
+
+namespace {
+
+int64_t simpleColumnPageBytes(
+    std::string_view encodingName,
+    int64_t numRows,
+    int64_t numNulls,
+    int64_t valueWidth) {
+  return serializer::presto::detail::kHeaderSize + 4 // page header + num cols
+      + 4 + static_cast<int64_t>(encodingName.size()) // column header
+      + 4 // num rows
+      + 1 + (numNulls > 0 ? bits::nbytes(numRows) : 0) // null flags
+      + (numRows - numNulls) * valueWidth; // values
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Shared base fixture
@@ -124,6 +144,18 @@ class PrestoIterativePartitioningSerializerTestBase : public VectorTestBase {
     int64_t value;
     std::memcpy(&value, iobuf.data() + kChecksumOffset, sizeof(value));
     return value;
+  }
+
+  int64_t totalFlushedBytes(
+      std::map<
+          uint32_t,
+          std::pair<std::unique_ptr<folly::IOBuf>, vector_size_t>>& pages)
+      const {
+    int64_t totalBytes = 0;
+    for (const auto& [_, page] : pages) {
+      totalBytes += page.first->computeChainDataLength();
+    }
+    return totalBytes;
   }
 
   PrestoVectorSerde serde_;
@@ -491,9 +523,11 @@ TEST_F(PrestoIterativePartitioningSerializerTest, multipleAppends) {
       {2, 0, 1});
 
   EXPECT_EQ(serializer->rowsBuffered(), 6);
+  const auto bufferedBytes = serializer->bytesBuffered();
 
   auto ioBufs = serializer->flush();
   ASSERT_EQ(ioBufs.size(), 3);
+  EXPECT_EQ(bufferedBytes, totalFlushedBytes(ioBufs));
 
   auto r0 = deserialize(*ioBufs.at(0).first, type);
   auto r1 = deserialize(*ioBufs.at(1).first, type);
@@ -506,6 +540,141 @@ TEST_F(PrestoIterativePartitioningSerializerTest, multipleAppends) {
   EXPECT_EQ(sortedValues<int64_t>(r0, 0), (std::vector<int64_t>{100, 500}));
   EXPECT_EQ(sortedValues<int64_t>(r1, 0), (std::vector<int64_t>{200, 600}));
   EXPECT_EQ(sortedValues<int64_t>(r2, 0), (std::vector<int64_t>{300, 400}));
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    bytesBufferedPartitionGrowth) {
+  auto type = ROW({"v"}, {BIGINT()});
+  auto serializer = makeSerializer(type, 2);
+
+  const auto singleRowPageBytes = simpleColumnPageBytes("LONG_ARRAY", 1, 0, 8);
+
+  serializer->append(
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({10})}), {0});
+  EXPECT_EQ(serializer->bytesBuffered(), singleRowPageBytes);
+
+  auto input = makeRowVector({"v"}, {makeFlatVector<int64_t>({20})});
+  EXPECT_EQ(serializer->bytesBuffered(), singleRowPageBytes);
+
+  serializer->append(input, {1});
+  const auto bytesBuffered = serializer->bytesBuffered();
+  EXPECT_EQ(serializer->bytesBuffered(), 2 * singleRowPageBytes);
+
+  auto ioBufs = serializer->flush();
+  EXPECT_EQ(serializer->bytesBuffered(), 0);
+  EXPECT_EQ(bytesBuffered, totalFlushedBytes(ioBufs));
+}
+
+TEST_F(PrestoIterativePartitioningSerializerTest, bytesBufferedNullFlagGrowth) {
+  auto type = ROW({"v"}, {BIGINT()});
+  auto serializer = makeSerializer(type, 1);
+
+  serializer->append(
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6, 7, 8})}),
+      std::vector<uint32_t>(8, 0));
+  EXPECT_EQ(
+      serializer->bytesBuffered(),
+      simpleColumnPageBytes("LONG_ARRAY", 8, 0, 8));
+
+  auto input =
+      makeRowVector({"v"}, {makeNullableFlatVector<int64_t>({std::nullopt})});
+  EXPECT_EQ(
+      serializer->bytesBuffered(),
+      simpleColumnPageBytes("LONG_ARRAY", 8, 0, 8));
+
+  serializer->append(input, {0});
+  const auto bytesBuffered = serializer->bytesBuffered();
+  EXPECT_EQ(bytesBuffered, simpleColumnPageBytes("LONG_ARRAY", 9, 1, 8));
+
+  auto ioBufs = serializer->flush();
+  EXPECT_EQ(serializer->bytesBuffered(), 0);
+  EXPECT_EQ(bytesBuffered, totalFlushedBytes(ioBufs));
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    estimateBytesAfterAppendExactForSinglePartition) {
+  auto type = ROW({"v"}, {BIGINT()});
+  auto serializer = makeSerializer(type, 1);
+
+  serializer->append(
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6, 7, 8})}),
+      std::vector<uint32_t>(8, 0));
+
+  auto input =
+      makeRowVector({"v"}, {makeNullableFlatVector<int64_t>({std::nullopt})});
+  const auto estimatedAfter = serializer->estimateBytesAfterAppend(input);
+
+  serializer->append(input, {0});
+  EXPECT_EQ(estimatedAfter, serializer->bytesBuffered());
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    estimateBytesAfterAppendExactForConstant) {
+  auto type = ROW({"v"}, {BIGINT()});
+  auto serializer = makeSerializer(type, 1);
+
+  serializer->append(
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({1, 2, 3, 4})}),
+      std::vector<uint32_t>(4, 0));
+
+  auto input = makeRowVector({"v"}, {makeConstant<int64_t>(7, 2)});
+  const auto estimatedAfter = serializer->estimateBytesAfterAppend(input);
+
+  serializer->append(input, std::vector<uint32_t>(2, 0));
+  EXPECT_EQ(estimatedAfter, serializer->bytesBuffered());
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    estimateBytesAfterAppendExactForNullConstant) {
+  auto type = ROW({"v"}, {BIGINT()});
+  auto serializer = makeSerializer(type, 1);
+
+  serializer->append(
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({1, 2, 3, 4, 5, 6, 7, 8})}),
+      std::vector<uint32_t>(8, 0));
+
+  auto input = makeRowVector({"v"}, {makeConstant<int64_t>(std::nullopt, 80)});
+  const auto estimatedAfter = serializer->estimateBytesAfterAppend(input);
+
+  serializer->append(input, std::vector<uint32_t>(80, 0));
+  EXPECT_EQ(estimatedAfter, serializer->bytesBuffered());
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    estimateBytesAfterAppendOverestimatesPartitionedAppend) {
+  auto type = ROW({"a", "b"}, {BIGINT(), INTEGER()});
+  auto serializer = makeSerializer(type, 3);
+
+  serializer->append(
+      makeRowVector(
+          {"a", "b"},
+          {
+              makeFlatVector<int64_t>({10, 20}),
+              makeFlatVector<int32_t>({100, 200}),
+          }),
+      {0, 1});
+
+  auto input = makeRowVector(
+      {"a", "b"},
+      {
+          makeNullableFlatVector<int64_t>({30, std::nullopt, 50, 60}),
+          makeNullableFlatVector<int32_t>({300, 400, std::nullopt, 600}),
+      });
+
+  // All rows land in an already non-empty partition, but
+  // estimateBytesAfterAppend still assume this input could go to the last empty
+  // partition before the real distribution is known.
+  const std::vector<uint32_t> partitions{1, 1, 1, 1};
+
+  const auto estimatedAfter = serializer->estimateBytesAfterAppend(input);
+
+  serializer->append(input, partitions);
+  EXPECT_GT(estimatedAfter, serializer->bytesBuffered());
 }
 
 // Flush twice: second flush on empty state returns an empty map.
