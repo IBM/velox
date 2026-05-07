@@ -883,9 +883,22 @@ struct NextDayFunction {
   bool invalidFormat_{false};
 };
 
-template <typename T>
+template <typename T, typename TTimestamp = Timestamp>
 struct HourFunction : public InitSessionTimezone<T> {
   VELOX_DEFINE_FUNCTION_TYPES(T);
+
+  FOLLY_ALWAYS_INLINE void initialize(
+      const std::vector<TypePtr>& inputTypes,
+      const core::QueryConfig& config,
+      const arg_type<Timestamp>* timestamp) {
+    if constexpr (std::is_same_v<TTimestamp, TimestampUtc>) {
+      // TIMESTAMP UTC represents local wall-clock time and must not use
+      // session timezone adjustment.
+      this->timeZone_ = nullptr;
+    } else {
+      InitSessionTimezone<T>::initialize(inputTypes, config, timestamp);
+    }
+  }
 
   FOLLY_ALWAYS_INLINE void call(
       int32_t& result,

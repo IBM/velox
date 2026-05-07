@@ -173,9 +173,19 @@ These functions support TIMESTAMP and DATE input types.
 
 .. spark:function:: hour(timestamp) -> integer
 
-    Returns the hour of ``timestamp``.::
+    Returns the hour of ``timestamp``, adjusted to the session timezone.
+    For example, with session timezone ``America/Los_Angeles`` (UTC-7),
+    a timestamp stored as ``2009-07-30 19:58:59 UTC`` would return ``12``.::
 
         SELECT hour('2009-07-30 12:58:59'); -- 12
+
+.. spark:function:: hour(timestamp_ntz) -> integer
+
+    Returns the hour of ``timestamp_ntz``. The result is not affected by the
+    session timezone since ``timestamp_ntz`` represents a local time that is
+    independent of time zone.::
+
+        SELECT hour(TIMESTAMP_NTZ '2009-07-30 12:58:59'); -- 12
 
 .. spark:function:: last_day(date) -> date
 
