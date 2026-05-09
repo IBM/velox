@@ -207,28 +207,26 @@ void benchmarkOptimizedVectorHasher(
       iterations, nullMode, encodingMode, mix, size, dictionarySize);
 }
 
-#define REGISTER_HASHER_PAIR(                                                      \
-    T,                                                                             \
-    TYPE_NAME,                                                                     \
-    NULL_MODE,                                                                     \
-    NULL_NAME,                                                                     \
-    ENCODING_MODE,                                                                 \
-    ENCODING_NAME,                                                                 \
-    MIX,                                                                           \
-    MIX_NAME,                                                                      \
-    SIZE,                                                                          \
-    DICTIONARY_SIZE)                                                               \
-  BENCHMARK(                                                                       \
-      TYPE_NAME##_##ENCODING_NAME##_##NULL_NAME##_##MIX_NAME##_##SIZE, n) {        \
-    benchmarkVectorHasher<T>(                                                      \
-        n, NULL_MODE, ENCODING_MODE, MIX, SIZE, DICTIONARY_SIZE);                  \
-  }                                                                                \
-  BENCHMARK_RELATIVE(                                                              \
-      optimized_##TYPE_NAME##_##ENCODING_NAME##_##NULL_NAME##_##MIX_NAME##_##SIZE, \
-      n) {                                                                         \
-    benchmarkOptimizedVectorHasher<T>(                                             \
-        n, NULL_MODE, ENCODING_MODE, MIX, SIZE, DICTIONARY_SIZE);                  \
-  }                                                                                \
+#define REGISTER_HASHER_PAIR(                                                  \
+    T,                                                                         \
+    TYPE_NAME,                                                                 \
+    NULL_MODE,                                                                 \
+    NULL_NAME,                                                                 \
+    ENCODING_MODE,                                                             \
+    ENCODING_NAME,                                                             \
+    MIX,                                                                       \
+    MIX_NAME,                                                                  \
+    SIZE,                                                                      \
+    DICTIONARY_SIZE)                                                           \
+  BENCHMARK(TYPE_NAME##_##ENCODING_NAME##_##NULL_NAME##_##MIX_NAME, n) {       \
+    benchmarkVectorHasher<T>(                                                  \
+        n, NULL_MODE, ENCODING_MODE, MIX, SIZE, DICTIONARY_SIZE);              \
+  }                                                                            \
+  BENCHMARK_RELATIVE(                                                          \
+      optimized_##TYPE_NAME##_##ENCODING_NAME##_##NULL_NAME##_##MIX_NAME, n) { \
+    benchmarkOptimizedVectorHasher<T>(                                         \
+        n, NULL_MODE, ENCODING_MODE, MIX, SIZE, DICTIONARY_SIZE);              \
+  }                                                                            \
   BENCHMARK_DRAW_LINE();
 
 #define REGISTER_HASHER_NULL_MODES( \
@@ -298,23 +296,13 @@ void benchmarkOptimizedVectorHasher(
       SIZE,                                                                    \
       SIZE)
 
-#define REGISTER_HASHER_SIZES(                                                 \
-    T, TYPE_NAME, ENCODING_MODE, ENCODING_NAME, MIX, MIX_NAME)                 \
-  REGISTER_HASHER_NULL_MODES(                                                  \
-      T, TYPE_NAME, ENCODING_MODE, ENCODING_NAME, MIX, MIX_NAME, 10000, 10000) \
-  REGISTER_HASHER_NULL_MODES(                                                  \
-      T,                                                                       \
-      TYPE_NAME,                                                               \
-      ENCODING_MODE,                                                           \
-      ENCODING_NAME,                                                           \
-      MIX,                                                                     \
-      MIX_NAME,                                                                \
-      1000000,                                                                 \
-      1000000)
+#define REGISTER_HASHER_SIZES(                                 \
+    T, TYPE_NAME, ENCODING_MODE, ENCODING_NAME, MIX, MIX_NAME) \
+  REGISTER_HASHER_NULL_MODES(                                  \
+      T, TYPE_NAME, ENCODING_MODE, ENCODING_NAME, MIX, MIX_NAME, 10000, 10000)
 
-#define REGISTER_HASHER_SIZES_CONSTANT(T, TYPE_NAME, MIX, MIX_NAME)       \
-  REGISTER_HASHER_NULL_MODES_CONSTANT(T, TYPE_NAME, MIX, MIX_NAME, 10000) \
-  REGISTER_HASHER_NULL_MODES_CONSTANT(T, TYPE_NAME, MIX, MIX_NAME, 1000000)
+#define REGISTER_HASHER_SIZES_CONSTANT(T, TYPE_NAME, MIX, MIX_NAME) \
+  REGISTER_HASHER_NULL_MODES_CONSTANT(T, TYPE_NAME, MIX, MIX_NAME, 10000)
 
 #define REGISTER_HASHER_SIZES_DICTIONARY_FOR_PERCENT(         \
     T, TYPE_NAME, MIX, MIX_NAME, SIZE, PERCENT, PERCENT_NAME) \
@@ -338,17 +326,7 @@ void benchmarkOptimizedVectorHasher(
   REGISTER_HASHER_SIZES_DICTIONARY_FOR_PERCENT(                       \
       T, TYPE_NAME, MIX, MIX_NAME, 10000, 20, 20pct)                  \
   REGISTER_HASHER_SIZES_DICTIONARY_FOR_PERCENT(                       \
-      T, TYPE_NAME, MIX, MIX_NAME, 10000, 5, 5pct)                    \
-  REGISTER_HASHER_SIZES_DICTIONARY_FOR_PERCENT(                       \
-      T, TYPE_NAME, MIX, MIX_NAME, 1000000, 80, 80pct)                \
-  REGISTER_HASHER_SIZES_DICTIONARY_FOR_PERCENT(                       \
-      T, TYPE_NAME, MIX, MIX_NAME, 1000000, 60, 60pct)                \
-  REGISTER_HASHER_SIZES_DICTIONARY_FOR_PERCENT(                       \
-      T, TYPE_NAME, MIX, MIX_NAME, 1000000, 40, 40pct)                \
-  REGISTER_HASHER_SIZES_DICTIONARY_FOR_PERCENT(                       \
-      T, TYPE_NAME, MIX, MIX_NAME, 1000000, 20, 20pct)                \
-  REGISTER_HASHER_SIZES_DICTIONARY_FOR_PERCENT(                       \
-      T, TYPE_NAME, MIX, MIX_NAME, 1000000, 5, 5pct)
+      T, TYPE_NAME, MIX, MIX_NAME, 10000, 5, 5pct)
 
 #define REGISTER_HASHER_ENCODINGS(T, TYPE_NAME, MIX, MIX_NAME)  \
   REGISTER_HASHER_SIZES(                                        \
@@ -361,6 +339,8 @@ void benchmarkOptimizedVectorHasher(
   REGISTER_HASHER_ENCODINGS(T, TYPE_NAME, true, mix)
 
 REGISTER_HASHER_TYPE(bool, boolean)
+REGISTER_HASHER_TYPE(int8_t, tinyint)
+REGISTER_HASHER_TYPE(int16_t, smallint)
 REGISTER_HASHER_TYPE(int32_t, integer)
 REGISTER_HASHER_TYPE(int64_t, bigint)
 REGISTER_HASHER_TYPE(int128_t, hugeint)
