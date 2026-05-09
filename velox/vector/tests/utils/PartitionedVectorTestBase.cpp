@@ -98,8 +98,12 @@ std::vector<VectorPtr> PartitionedVectorTestBase::partitionRowVectors(
   std::vector<uint32_t> partitions(totalNumRows, 0);
   if (numPartitions > 1) {
     auto rowType = asRowType(mergedRowVector->type());
-    //    auto partitionFunction = createPartitionFunction(rowType, {0});
-    partitionFunction->partition(*mergedRowVector->as<RowVector>(), partitions);
+    std::optional<uint32_t> singlePartition = partitionFunction->partition(
+        *mergedRowVector->as<RowVector>(), partitions);
+    if (singlePartition.has_value()) {
+      // All rows go to the same partition
+      std::fill(partitions.begin(), partitions.end(), singlePartition.value());
+    }
   }
 
   std::vector<VectorPtr> partitionedVectors =
