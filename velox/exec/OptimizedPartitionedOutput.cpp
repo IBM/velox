@@ -54,9 +54,11 @@ OptimizedPartitionedOutput::OptimizedPartitionedOutput(
                                 .maxPartitionedOutputBufferSize()),
       pool_(pool()),
       partitionFunction_(
-          numDestinations_ == 1
-              ? nullptr
-              : planNode->partitionFunctionSpec().create(numDestinations_)) {
+          numDestinations_ == 1 ? nullptr
+                                : planNode->partitionFunctionSpec().create(
+                                      numDestinations_,
+                                      /*localExchange=*/false,
+                                      true)) {
   if (!planNode->isPartitioned()) {
     VELOX_USER_CHECK_EQ(numDestinations_, 1);
   }

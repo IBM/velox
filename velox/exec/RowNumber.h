@@ -149,7 +149,7 @@ class RowNumber : public Operator {
   SpillPartitionSet spillInputPartitionSet_;
 
   // Used to calculate the spill partition numbers of the inputs.
-  std::unique_ptr<HashPartitionFunction> spillHashFunction_;
+  std::unique_ptr<HashPartitionFunctionBase> spillHashFunction_;
 
   // The cpu may be voluntarily yield after running too long when processing
   // input from spilled file.

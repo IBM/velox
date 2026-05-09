@@ -133,7 +133,8 @@ void HiveConnector::registerSerDe() {
 
 std::unique_ptr<core::PartitionFunction> HivePartitionFunctionSpec::create(
     int numPartitions,
-    bool localExchange) const {
+    bool localExchange,
+    bool /*useOptimizedPartitionFunction*/) const {
   std::vector<int> bucketToPartitions;
   if (bucketToPartition_.empty()) {
     // NOTE: if hive partition function spec doesn't specify bucket to partition

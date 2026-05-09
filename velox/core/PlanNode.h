@@ -2605,9 +2605,13 @@ class PartitionFunctionSpec : public ISerializable {
  public:
   /// If 'localExchange' is true, the partition function is used for local
   /// exchange within a velox task.
+  /// TODO: useOptimizedPartitionFunction = true is only supported in
+  /// HashPartitionFunction now. Will extend the optimization to other
+  /// PartitionFunctions soon.
   virtual std::unique_ptr<PartitionFunction> create(
       int numPartitions,
-      bool localExchange = false) const = 0;
+      bool localExchange = false,
+      bool useOptimizedPartitionFunction = false) const = 0;
 
   virtual ~PartitionFunctionSpec() = default;
 
@@ -2620,7 +2624,8 @@ class GatherPartitionFunctionSpec : public PartitionFunctionSpec {
  public:
   std::unique_ptr<PartitionFunction> create(
       int /*numPartitions*/,
-      bool /*localExchange*/) const override {
+      bool /*localExchange*/,
+      bool /*useOptimizedPartitionFunction*/ = false) const override {
     VELOX_UNREACHABLE();
   }
 

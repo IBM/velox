@@ -339,10 +339,13 @@ LocalPartition::LocalPartition(
           ctx->task->getLocalExchangeQueues(ctx->splitGroupId, planNode->id())},
       numPartitions_{queues_.size()},
       partitionFunction_(
-          numPartitions_ == 1 ? nullptr
-                              : planNode->partitionFunctionSpec().create(
-                                    numPartitions_,
-                                    /*localExchange=*/true)),
+          numPartitions_ == 1
+              ? nullptr
+              : planNode->partitionFunctionSpec().create(
+                    numPartitions_,
+                    /*localExchange=*/true,
+                    ctx->queryConfig()
+                        .optimizedHashPartitionFunctionEnabled())),
       singlePartitionBufferSize_{
           (numPartitions_ <
                ctx->queryConfig()

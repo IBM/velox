@@ -454,6 +454,16 @@ class QueryConfig {
       false,
       "Flush PartitionedOutput rows eagerly without buffering.")
 
+  /// If true, use OptimizedHashPartitionFunction in place of
+  /// HashPartitionFunction.
+  VELOX_QUERY_CONFIG(
+      kOptimizedHashPartitionFunctionEnabled,
+      optimizedHashPartitionFunctionEnabled,
+      "optimized_hash_partition_function_enabled",
+      bool,
+      false,
+      "Use OptimizedHashPartitionFunction instead of HashPartitionFunction.")
+
   /// The maximum number of bytes to buffer in PartitionedOutput operator to
   /// avoid creating tiny SerializedPages.
   VELOX_QUERY_CONFIG(

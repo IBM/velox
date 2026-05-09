@@ -57,7 +57,10 @@ ScaleWriterPartitioningLocalPartition::ScaleWriterPartitioningLocalPartition(
       ? nullptr
       : planNode->partitionFunctionSpec().create(
             numTablePartitions_,
-            /*localExchange=*/true);
+            /*localExchange=*/true,
+            operatorCtx_->driverCtx()
+                ->queryConfig()
+                .optimizedHashPartitionFunctionEnabled());
 }
 
 void ScaleWriterPartitioningLocalPartition::initialize() {
