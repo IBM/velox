@@ -52,6 +52,10 @@ bool hasAvx2();
 /// path is unconditionally enabled.
 bool hasSimd();
 
+/// True if the machine has Intel AVX512F instructions and these are not
+/// disabled by flag.
+bool hasAvx512f();
+
 /// True if the machine has Intel BMI2 instructions and these are not disabled
 /// by flag.
 bool hasBmi2();
