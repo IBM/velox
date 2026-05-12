@@ -52,8 +52,7 @@ static void getRemapping(
 UcxPartitionedOutput::UcxPartitionedOutput(
     int32_t operatorId,
     exec::DriverCtx* ctx,
-    const std::shared_ptr<const core::PartitionedOutputNode>& planNode,
-    bool eagerFlush)
+    const std::shared_ptr<const core::PartitionedOutputNode>& planNode)
     : Operator(
           ctx,
           planNode->outputType(),
