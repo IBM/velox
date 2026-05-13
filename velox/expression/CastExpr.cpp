@@ -877,6 +877,11 @@ void CastExpr::applyPeeled(
             toType);
     }
   } else if (
+      fromType->isTimestampUtc() &&
+      (toType->kind() == TypeKind::VARCHAR ||
+       toType->kind() == TypeKind::VARBINARY)) {
+    result = applyTimestampUtcToVarcharCast(toType, rows, context, input);
+  } else if (
       fromType->kind() == TypeKind::VARCHAR && toType->isTimestampUtc()) {
     result = applyVarcharToTimestampUtcCast(rows, context, input);
   } else if (
@@ -1018,6 +1023,43 @@ VectorPtr CastExpr::applyVarcharToTimestampUtcCast(
     resultVector->set(row, conversionResult.value().timestamp);
   });
 
+  return result;
+}
+
+static const TimestampToStringOptions kTimestampUtcToStringOptions = {
+    .precision = TimestampToStringOptions::Precision::kMicroseconds,
+    .leadingPositiveSign = true,
+    .skipTrailingZeros = true,
+    .zeroPaddingYear = true,
+    .dateTimeSeparator = ' ',
+    .timeZone = nullptr,
+};
+
+VectorPtr CastExpr::applyTimestampUtcToVarcharCast(
+    const TypePtr& toType,
+    const SelectivityVector& rows,
+    exec::EvalCtx& context,
+    const BaseVector& input) {
+  VectorPtr result;
+  context.ensureWritable(rows, toType, result);
+  (*result).clearNulls(rows);
+  auto* flatResult = result->asFlatVector<StringView>();
+  const auto& inputVector = *input.as<SimpleVector<Timestamp>>();
+
+  const uint32_t rowSize = getMaxStringLength(kTimestampUtcToStringOptions);
+  Buffer* buffer =
+      flatResult->getBufferWithSpace(rows.countSelected() * rowSize, true);
+  char* rawBuffer = buffer->asMutable<char>() + buffer->size();
+
+  applyToSelectedNoThrowLocal(context, rows, result, [&](vector_size_t row) {
+    // No timezone adjustment: Timestamp represents wall-clock time.
+    const auto stringView = Timestamp::tsToStringView(
+        inputVector.valueAt(row), kTimestampUtcToStringOptions, rawBuffer);
+    flatResult->setNoCopy(row, stringView);
+    rawBuffer += stringView.size();
+  });
+
+  buffer->setSize(rawBuffer - buffer->asMutable<char>());
   return result;
 }
 
