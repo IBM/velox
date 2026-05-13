@@ -306,6 +306,19 @@ class CastExpr : public SpecialForm {
       exec::EvalCtx& context,
       const BaseVector& input);
 
+  /// Casts VARCHAR to TIMESTAMP UTC, ignoring any timezone in the input string.
+  VectorPtr applyVarcharToTimestampUtcCast(
+      const SelectivityVector& rows,
+      exec::EvalCtx& context,
+      const BaseVector& input);
+
+  /// Casts TIMESTAMP UTC to VARCHAR without session timezone adjustment.
+  VectorPtr applyTimestampUtcToVarcharCast(
+      const TypePtr& toType,
+      const SelectivityVector& rows,
+      exec::EvalCtx& context,
+      const BaseVector& input);
+
   // Casts basic numeric types to wider types.
   template <TypeKind ToKind, TypeKind FromKind>
   void applyNumericUpcast(

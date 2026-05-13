@@ -656,6 +656,8 @@ class Type : public Tree<const TypePtr>, public velox::ISerializable {
 
   bool isDate() const;
 
+  bool isTimestampUtc() const;
+
   bool containsUnknown() const;
 
   template <typename T>
@@ -1610,6 +1612,11 @@ FOLLY_ALWAYS_INLINE bool isDateName(const std::string& name) {
 FOLLY_ALWAYS_INLINE bool Type::isDate() const {
   // The pointers can be compared since DATE is a singleton.
   return this == DATE().get();
+}
+
+FOLLY_ALWAYS_INLINE bool Type::isTimestampUtc() const {
+  // The pointers can be compared since TIMESTAMP_UTC is a singleton.
+  return this == TIMESTAMP_UTC().get();
 }
 
 enum class TimePrecision : int8_t {
