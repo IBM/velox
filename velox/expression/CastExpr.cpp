@@ -26,7 +26,9 @@
 #include "velox/expression/ScopedVarSetter.h"
 #include "velox/external/tzdb/time_zone.h"
 #include "velox/functions/lib/RowsTranslationUtil.h"
+#include "velox/functions/lib/string/StringImpl.h"
 #include "velox/type/CastRegistry.h"
+#include "velox/type/TimestampConversion.h"
 #include "velox/type/Type.h"
 #include "velox/type/tz/TimeZoneMap.h"
 #include "velox/vector/ComplexVector.h"
@@ -875,6 +877,9 @@ void CastExpr::applyPeeled(
             toType);
     }
   } else if (
+      fromType->kind() == TypeKind::VARCHAR && toType->isTimestampUtc()) {
+    result = applyVarcharToTimestampUtcCast(rows, context, input);
+  } else if (
       fromType->kind() == TypeKind::TIMESTAMP &&
       (toType->kind() == TypeKind::VARCHAR ||
        toType->kind() == TypeKind::VARBINARY)) {
@@ -976,6 +981,43 @@ VectorPtr CastExpr::applyTimestampToVarcharCast(
 
   // Update the exact buffer size.
   buffer->setSize(rawBuffer - buffer->asMutable<char>());
+  return result;
+}
+
+VectorPtr CastExpr::applyVarcharToTimestampUtcCast(
+    const SelectivityVector& rows,
+    exec::EvalCtx& context,
+    const BaseVector& input) {
+  VectorPtr result;
+  context.ensureWritable(rows, TIMESTAMP_UTC(), result);
+  (*result).clearNulls(rows);
+  auto* resultVector = result->asFlatVector<Timestamp>();
+  const auto& inputVector = *input.as<SimpleVector<StringView>>();
+
+  applyToSelectedNoThrowLocal(context, rows, result, [&](vector_size_t row) {
+    StringView view = inputVector.valueAt(row);
+    StringView trimmed;
+    stringImpl::trimUnicodeWhiteSpace<true, true, StringView, StringView>(
+        trimmed, view);
+
+    if (trimmed.size() == 0) {
+      VELOX_USER_FAIL(
+          "Cannot cast VARCHAR '{}' to TIMESTAMP UTC. Empty string", view);
+    }
+
+    // Spark allows timezone in the input string for TIMESTAMP UTC but ignores
+    // it — use fromTimestampWithTimezoneString and discard the zone.
+    auto conversionResult = util::fromTimestampWithTimezoneString(
+        trimmed.data(), trimmed.size(), util::TimestampParseMode::kSparkCast);
+    if (conversionResult.hasError()) {
+      VELOX_USER_FAIL(
+          "Cannot cast VARCHAR '{}' to TIMESTAMP UTC. {}",
+          view,
+          conversionResult.error().message());
+    }
+    resultVector->set(row, conversionResult.value().timestamp);
+  });
+
   return result;
 }
 
