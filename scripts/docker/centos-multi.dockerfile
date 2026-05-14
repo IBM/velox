@@ -174,6 +174,9 @@ ENV CUDA_VERSION=${CUDA_VERSION:-12.9}
 RUN bash /setup-centos-adapters.sh install_cuda && \
       dnf clean all
 
+ARG UCX_VERSION
+ENV UCX_VERSION=${UCX_VERSION:-1.20.1}
+
 RUN bash /setup-centos-adapters.sh install_ucx && \
       dnf clean all
 
