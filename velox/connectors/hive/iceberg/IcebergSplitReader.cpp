@@ -692,6 +692,9 @@ std::vector<TypePtr> IcebergSplitReader::adaptColumns(
           readTimestampAsLocalTime,
           false);
       childSpec->setConstantValue(constant);
+    } else if (auto partitionIt = fileSplit_->partitionKeys.find(fieldName);
+               partitionIt != fileSplit_->partitionKeys.end()) {
+      setPartitionValue(childSpec.get(), fieldName, partitionIt->second);
     } else {
       auto fileTypeIdx = fileType->getChildIdxIfExists(fieldName);
       auto outputTypeIdx = readerOutputType_->getChildIdxIfExists(fieldName);
@@ -766,9 +769,6 @@ std::vector<TypePtr> IcebergSplitReader::adaptColumns(
           // Constant already set (equality-delete partition column, or set on
           // a previous prepareSplit call for the same scanSpec). Nothing to do.
           continue;
-        } else if (auto partitionIt = fileSplit_->partitionKeys.find(fieldName);
-                   partitionIt != fileSplit_->partitionKeys.end()) {
-          setPartitionValue(childSpec.get(), fieldName, partitionIt->second);
         } else {
           // Check if column has an initial-default value (Iceberg V3)
           bool hasDefaultValue = false;
