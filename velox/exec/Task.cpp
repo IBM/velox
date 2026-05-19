@@ -40,10 +40,22 @@
 #include "velox/exec/TableScan.h"
 #include "velox/exec/Task.h"
 
+#ifdef VELOX_ENABLE_CUDF
+#include "velox/experimental/cudf/CudfConfig.h"
+#include "velox/experimental/ucx-exchange/UcxOutputQueueManager.h"
+#endif
+
 using facebook::velox::common::testutil::TestValue;
 
 namespace facebook::velox::exec {
 namespace {
+
+#ifdef VELOX_ENABLE_CUDF
+bool isUcxExchangeEnabled() {
+  const auto& config = velox::cudf_velox::CudfConfig::getInstance();
+  return config.enabled && config.exchange;
+}
+#endif
 
 // RAII helper class to satisfy given promises and notify listeners of an event
 // connected to the promises outside of the mutex that guards the promises.
@@ -1197,6 +1209,17 @@ void Task::initializePartitionOutput() {
         partitionedOutputNode->kind(),
         partitionedOutputNode->numPartitions(),
         numOutputDrivers);
+#ifdef VELOX_ENABLE_CUDF
+    if (isUcxExchangeEnabled()) {
+      auto queueMgr = facebook::velox::ucx_exchange::UcxOutputQueueManager::
+          getInstanceRef();
+      queueMgr->initializeTask(
+          shared_from_this(),
+          partitionedOutputNode->kind(),
+          partitionedOutputNode->numPartitions(),
+          numOutputDrivers);
+    }
+#endif
   }
 }
 
@@ -2201,7 +2224,16 @@ bool Task::updateOutputBuffers(int numBuffers, bool noMoreBuffers) {
       noMoreOutputBuffers_ = true;
     }
   }
-  return bufferManager->updateOutputBuffers(taskId_, numBuffers, noMoreBuffers);
+  auto result =
+      bufferManager->updateOutputBuffers(taskId_, numBuffers, noMoreBuffers);
+#ifdef VELOX_ENABLE_CUDF
+  if (isUcxExchangeEnabled()) {
+    auto queueMgr =
+        facebook::velox::ucx_exchange::UcxOutputQueueManager::getInstanceRef();
+    queueMgr->updateOutputBuffers(taskId_, numBuffers, noMoreBuffers);
+  }
+#endif
+  return result;
 }
 
 int Task::getOutputPipelineId() const {
@@ -2704,6 +2736,22 @@ void Task::maybeRemoveFromOutputBufferManager() {
       }
       bufferManager->removeTask(taskId_);
     }
+#ifdef VELOX_ENABLE_CUDF
+    if (isUcxExchangeEnabled()) {
+      // UCX stats replace HTTP stats when present, since the UCX path is the
+      // actual data transfer path when exchange is enabled.
+      auto queueMgr = facebook::velox::ucx_exchange::UcxOutputQueueManager::
+          getInstanceRef();
+      {
+        std::lock_guard<std::timed_mutex> l(mutex_);
+        auto optStats = queueMgr->stats(taskId_);
+        if (optStats.has_value() && optStats.value().totalPagesSent > 0) {
+          taskStats_.outputBufferStats = optStats;
+        }
+      }
+      queueMgr->removeTask(taskId_);
+    }
+#endif
   }
 }
 
