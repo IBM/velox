@@ -501,6 +501,18 @@ class QueryConfig {
       10000,
       "Maximum number of rows in output batches.")
 
+  /// Minimum number of rows to accumulate in UCX partitioned output before
+  /// flushing. Small inputs are buffered and concatenated into a single merged
+  /// table when this threshold is reached, avoiding pathologically small
+  /// exchange chunks. Set to 0 to disable accumulation.
+  VELOX_QUERY_CONFIG(
+      kUcxPartitionedOutputBatchRows,
+      ucxPartitionedOutputBatchRows,
+      "cudf.partitioned_output_batch_rows",
+      int64_t,
+      10'000,
+      "Minimum number of rows to accumulate in UCX partitioned output before flushing.")
+
   /// Initial output batch size in rows for MergeJoin operator.
   VELOX_QUERY_CONFIG_PROPERTY(
       kMergeJoinOutputBatchStartSize,

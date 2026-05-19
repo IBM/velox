@@ -270,6 +270,9 @@ const std::vector<config::ConfigProperty>& QueryConfig::registeredProperties() {
     // Mark sorted.
     VELOX_REGISTER_QUERY_CONFIG(kMarkSortedZeroCopyThreshold);
 
+    // UCX exchange.
+    VELOX_REGISTER_QUERY_CONFIG(kUcxPartitionedOutputBatchRows);
+
 #undef VELOX_REGISTER_QUERY_CONFIG
 
     return properties;
