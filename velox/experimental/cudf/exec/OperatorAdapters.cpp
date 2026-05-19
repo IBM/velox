@@ -1035,12 +1035,12 @@ class ExchangeAdapter : public OperatorAdapter {
 
   bool canRunOnGPU(
       const exec::Operator* /*op*/,
-      const core::PlanNodePtr& /*planNode*/,
+      const core::PlanNodePtr& planNode,
       exec::DriverCtx* ctx) const override {
     if (!CudfConfig::getInstance().exchange) {
       return false;
     }
-    return ctx->task->queryCtx()->inputTransportType() ==
+    return ctx->task->queryCtx()->inputTransportType(planNode->id()) ==
         core::ExchangeTransportType::kUcx;
   }
 
@@ -1092,12 +1092,12 @@ class ExchangeAdapter : public OperatorAdapter {
 
   bool keepOperator(
       const exec::Operator* /*op*/,
-      const core::PlanNodePtr& /*planNode*/,
+      const core::PlanNodePtr& planNode,
       exec::DriverCtx* ctx) const override {
     if (!CudfConfig::getInstance().exchange) {
       return true;
     }
-    return ctx->task->queryCtx()->inputTransportType() !=
+    return ctx->task->queryCtx()->inputTransportType(planNode->id()) !=
         core::ExchangeTransportType::kUcx;
   }
 };
@@ -1115,12 +1115,12 @@ class MergeExchangeAdapter : public OperatorAdapter {
 
   bool canRunOnGPU(
       const exec::Operator* /*op*/,
-      const core::PlanNodePtr& /*planNode*/,
+      const core::PlanNodePtr& planNode,
       exec::DriverCtx* ctx) const override {
     if (!CudfConfig::getInstance().exchange) {
       return false;
     }
-    return ctx->task->queryCtx()->inputTransportType() ==
+    return ctx->task->queryCtx()->inputTransportType(planNode->id()) ==
         core::ExchangeTransportType::kUcx;
   }
 
@@ -1151,12 +1151,12 @@ class MergeExchangeAdapter : public OperatorAdapter {
 
   bool keepOperator(
       const exec::Operator* /*op*/,
-      const core::PlanNodePtr& /*planNode*/,
+      const core::PlanNodePtr& planNode,
       exec::DriverCtx* ctx) const override {
     if (!CudfConfig::getInstance().exchange) {
       return true;
     }
-    return ctx->task->queryCtx()->inputTransportType() !=
+    return ctx->task->queryCtx()->inputTransportType(planNode->id()) !=
         core::ExchangeTransportType::kUcx;
   }
 };
@@ -1174,12 +1174,12 @@ class PartitionedOutputAdapter : public OperatorAdapter {
 
   bool canRunOnGPU(
       const exec::Operator* /*op*/,
-      const core::PlanNodePtr& /*planNode*/,
+      const core::PlanNodePtr& planNode,
       exec::DriverCtx* ctx) const override {
     if (!CudfConfig::getInstance().exchange) {
       return false;
     }
-    return ctx->task->queryCtx()->outputTransportType() ==
+    return ctx->task->queryCtx()->outputTransportType(planNode->id()) ==
         core::ExchangeTransportType::kUcx;
   }
 
@@ -1211,12 +1211,12 @@ class PartitionedOutputAdapter : public OperatorAdapter {
 
   bool keepOperator(
       const exec::Operator* /*op*/,
-      const core::PlanNodePtr& /*planNode*/,
+      const core::PlanNodePtr& planNode,
       exec::DriverCtx* ctx) const override {
     if (!CudfConfig::getInstance().exchange) {
       return true;
     }
-    return ctx->task->queryCtx()->outputTransportType() !=
+    return ctx->task->queryCtx()->outputTransportType(planNode->id()) !=
         core::ExchangeTransportType::kUcx;
   }
 };
