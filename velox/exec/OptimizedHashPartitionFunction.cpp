@@ -170,6 +170,18 @@ void applyHashBitRange(
   }
 }
 
+bool allConstantKeys(
+    const RowVector& input,
+    const std::vector<std::unique_ptr<OptimizedVectorHasher>>& hashers) {
+  for (const auto& hasher : hashers) {
+    if (hasher->channel() != kConstantChannel &&
+        !input.childAt(hasher->channel())->isConstantEncoding()) {
+      return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 void rangeReduction(
@@ -222,6 +234,28 @@ std::optional<uint32_t> OptimizedHashPartitionFunction::partition(
 
   rows_.resize(size);
   rows_.setAll();
+
+  if (allConstantKeys(input, hashers_)) {
+    uint64_t hash{0};
+    for (auto i = 0; i < hashers_.size(); ++i) {
+      auto& hasher = hashers_[i];
+      if (hasher->channel() != kConstantChannel) {
+        hasher->decode(*input.childAt(hasher->channel()), rows_);
+        const auto hashValue = hasher->hashConstant(i > 0, hash);
+        VELOX_DCHECK(hashValue.has_value());
+        hash = hashValue.value();
+      } else {
+        hash = hasher->hashPrecomputed(i > 0, hash);
+      }
+    }
+
+    if (localExchange_) {
+      hash = localExchangeHash(hash);
+    }
+
+    return hashBitRange_.has_value() ? hashBitRange_->partition(hash)
+                                     : reduceRange(hash, numPartitions_);
+  }
 
   hashes_.resize(size);
   for (auto i = 0; i < hashers_.size(); ++i) {

@@ -578,12 +578,11 @@ int64_t PrestoIterativePartitioningSerializer::estimateBytesAfterAppend(
 void PrestoIterativePartitioningSerializer::append(
     const RowVectorPtr& input,
     const std::vector<uint32_t>& partitions) {
-  VELOX_CHECK_NOT_NULL(input);
-  VELOX_CHECK_EQ(
+  VELOX_DCHECK_NOT_NULL(input);
+  VELOX_DCHECK_EQ(
       input->size(),
       partitions.size(),
       "partitions.size() must equal input->size()");
-
   validateOutputInputMapping(input);
 
   if (input->size() == 0) {
@@ -594,6 +593,29 @@ void PrestoIterativePartitioningSerializer::append(
   auto partitionedRowVector = PartitionedVector::create(
       std::static_pointer_cast<BaseVector>(input),
       partitions,
+      numPartitions_,
+      ctx,
+      pool_);
+
+  bufferState_->append(partitionedRowVector, outputToInputChannels_);
+  partitionedRowVectors_.push_back(std::move(partitionedRowVector));
+}
+
+void PrestoIterativePartitioningSerializer::append(
+    const RowVectorPtr& input,
+    uint32_t singlePartition) {
+  VELOX_DCHECK_NOT_NULL(input);
+  VELOX_DCHECK_LT(singlePartition, numPartitions_);
+  validateOutputInputMapping(input);
+
+  if (input->size() == 0) {
+    return;
+  }
+
+  PartitionBuildContext ctx;
+  auto partitionedRowVector = PartitionedVector::create(
+      std::static_pointer_cast<BaseVector>(input),
+      singlePartition,
       numPartitions_,
       ctx,
       pool_);

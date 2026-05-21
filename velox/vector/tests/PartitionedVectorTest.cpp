@@ -227,6 +227,51 @@ TEST_P(PartitioningVectorTest, testConstantVector) {
       numValues));
 }
 
+TEST_P(PartitioningVectorTest, singlePartitionWithoutAssignments) {
+  const int numValues = GetParam();
+  if (numValues == 0) {
+    return;
+  }
+
+  auto row = makeRowVector(
+      {makeFlatVector<int32_t>(numValues, [](auto row) { return row; }),
+       makeFlatVector<bool>(numValues, [](auto row) { return row % 2 == 0; })});
+  auto expected = BaseVector::copy(*row, pool_.get());
+
+  auto partitionedVector = PartitionedVector::create(
+      row,
+      /*singlePartition=*/2u,
+      4,
+      ctx_,
+      pool_.get());
+
+  EXPECT_EQ(partitionedVector->rawPartitionOffsets()[0], 0);
+  EXPECT_EQ(partitionedVector->rawPartitionOffsets()[1], 0);
+  EXPECT_EQ(partitionedVector->rawPartitionOffsets()[2], numValues);
+  EXPECT_EQ(partitionedVector->rawPartitionOffsets()[3], numValues);
+
+  EXPECT_EQ(partitionedVector->partitionAt(0)->size(), 0);
+  EXPECT_EQ(partitionedVector->partitionAt(1)->size(), 0);
+  test::assertEqualVectors(
+      expected, canonicalize(partitionedVector->partitionAt(2)));
+  EXPECT_EQ(partitionedVector->partitionAt(3)->size(), 0);
+
+  EXPECT_EQ(partitionedVector->numNullsAt(2), 0);
+
+  auto nullableFlat = makeFlatVector<int32_t>(
+      numValues, [](auto row) { return row; }, nullEvery(3));
+  auto partitionedNullableFlat = PartitionedVector::create(
+      nullableFlat,
+      /*singlePartition=*/2u,
+      4,
+      ctx_,
+      pool_.get());
+
+  EXPECT_EQ(
+      partitionedNullableFlat->numNullsAt(2),
+      BaseVector::countNulls(nullableFlat->nulls(), 0, numValues));
+}
+
 // Partitioning a null-free vector must not allocate a null buffer.
 TEST_P(PartitioningVectorTest, noNullBufferAllocatedForNullFreeFlat) {
   const int numValues = GetParam();

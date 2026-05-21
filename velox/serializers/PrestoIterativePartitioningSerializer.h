@@ -18,6 +18,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <folly/io/IOBuf.h>
@@ -101,6 +102,11 @@ class PrestoIterativePartitioningSerializer {
   void append(
       const RowVectorPtr& input,
       const std::vector<uint32_t>& partitions);
+
+  /// Routes all rows in `input` to `singlePartition`. Use this overload when
+  /// every row in `input` has the same destination — it skips the per-row
+  /// partition lookup.
+  void append(const RowVectorPtr& input, uint32_t singlePartition);
 
   /// Serializes all buffered data into one Presto page per non-empty partition
   /// and resets internal state. Returns an empty map if nothing has been

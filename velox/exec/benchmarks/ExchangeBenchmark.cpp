@@ -256,7 +256,7 @@ ExchangeInputSpec makeInputSpec(ExchangeInputKind kind) {
 
 ExchangeInputSpec makeInputSpec(SimpleColType colType, int32_t numCols) {
   return {
-      fmt::format("Simple10K_{}_col{}", simpleColTypeName(colType), numCols),
+      fmt::format("10K_{}_col{}", simpleColTypeName(colType), numCols),
       makeSimpleType(simpleColTypeToType(colType), numCols),
       10,
       10'000};
@@ -407,13 +407,27 @@ class ExchangeBenchmark : public VectorTestBase {
     }
   }
 
+  VectorPtr makeConstantColumn(
+      const TypePtr& type,
+      int32_t numRows,
+      int32_t nullPct,
+      int32_t vectorIndex) {
+    const auto baseNullPct =
+        nullPct > 0 && (vectorIndex % 100) < nullPct ? 100 : 0;
+    return BaseVector::wrapInConstant(
+        numRows, 0, makeColumn(type, 1, baseNullPct));
+  }
+
   /// Generates input batches for the exchange benchmark.
   ///
   /// `dictPct` is the percentage of vectors for each column that should be
   /// wrapped in dictionary encoding across the full set of generated batches.
+  /// `constantPct` works similarly, but creates ConstantVector columns.
+  /// Constant vectors take precedence over dictionary wrapping.
   /// For example, with `numVectors = 10` and `dictPct = 30`, each top-level
-  /// column will have 3 dictionary-encoded vectors and 7 simple vectors.
-  /// Nested children of complex columns use the same rule recursively.
+  /// column will have 3 dictionary-encoded vectors and 7 simple vectors,
+  /// unless those vectors are selected for constant encoding. Nested children
+  /// of complex columns use the same rule recursively.
   ///
   /// `nullPct` controls what fraction of values in each column are null:
   /// 0 = no nulls, 50 = half the rows null, 100 = all rows null.
@@ -422,18 +436,25 @@ class ExchangeBenchmark : public VectorTestBase {
       int32_t numVectors,
       int32_t rowsPerVector,
       int32_t dictPct = 0,
+      int32_t constantPct = 0,
       int32_t nullPct = 0) {
     std::vector<RowVectorPtr> vectors;
     vectors.reserve(numVectors);
     for (int32_t i = 0; i < numVectors; ++i) {
+      const auto useConstant = shouldWrapVector(i, numVectors, constantPct);
       std::vector<VectorPtr> children;
       children.reserve(type->size());
       for (int32_t col = 0; col < type->size(); ++col) {
-        children.push_back(
-            makeColumn(type->childAt(col), rowsPerVector, nullPct));
+        if (useConstant) {
+          children.push_back(makeConstantColumn(
+              type->childAt(col), rowsPerVector, nullPct, i));
+        } else {
+          children.push_back(
+              makeColumn(type->childAt(col), rowsPerVector, nullPct));
+        }
       }
       auto vector = makeRowVector(type->names(), children);
-      if (shouldWrapVector(i, numVectors, dictPct)) {
+      if (!useConstant && shouldWrapVector(i, numVectors, dictPct)) {
         for (auto child = 0; child < vector->childrenSize(); ++child) {
           wrapDictionaryRecursive(vector->childAt(child));
         }
@@ -616,18 +637,25 @@ void benchmarkExchange(
     int32_t numDestinations,
     ExchangeMode mode,
     int32_t dictPct,
+    int32_t constantPct,
     int32_t nullPct) {
   auto vectors = bm->makeRows(
-      input.type, input.numVectors, input.rowsPerVector, dictPct, nullPct);
+      input.type,
+      input.numVectors,
+      input.rowsPerVector,
+      dictPct,
+      constantPct,
+      nullPct);
   auto stats = runBenchmarkIterations(iters, [&]() {
     return bm->run(vectors, numDestinations, FLAGS_task_width, mode);
   });
   benchmarkResults.push_back(
       {fmt::format(
-           "{}_p{}_dict{}_null{}",
+           "{}_p{}_d{}_c{}_n{}",
            input.name,
            numDestinations,
            dictPct,
+           constantPct,
            nullPct),
        mode,
        std::move(stats)});
@@ -656,141 +684,315 @@ void benchmarkExchange(
     name(iters, ##__VA_ARGS__);                                        \
   }
 
-// ── Benchmarks: input spec × p (numDestinations) × nullPct × mode ─────────
+// ── Benchmarks: input spec × p (numDestinations) × dictPct × constantPct ×
+// nullPct × mode ─
 
-#define EXCHANGE_BENCHMARK_INPUT(                                                           \
-    _case_name,                                                                             \
-    _input_expr,                                                                            \
-    _num_destinations,                                                                      \
-    _mode_name,                                                                             \
-    _dict_pct,                                                                              \
-    _null_pct,                                                                              \
-    _mode)                                                                                  \
-  EXCHANGE_BENCHMARK_NAMED_PARAM(                                                           \
-      benchmarkExchange,                                                                    \
-      _case_name##_p##_num_destinations##_dict##_dict_pct##_null##_null_pct##_##_mode_name, \
-      _input_expr,                                                                          \
-      _num_destinations,                                                                    \
-      ExchangeMode::_mode,                                                                  \
-      _dict_pct,                                                                            \
+#define EXCHANGE_BENCHMARK_INPUT_IMPL(                                                                   \
+    _register,                                                                                           \
+    _case_name,                                                                                          \
+    _input_expr,                                                                                         \
+    _num_destinations,                                                                                   \
+    _mode_name,                                                                                          \
+    _dict_pct,                                                                                           \
+    _constant_pct,                                                                                       \
+    _null_pct,                                                                                           \
+    _mode)                                                                                               \
+  _register(                                                                                             \
+      benchmarkExchange,                                                                                 \
+      _case_name##_p##_num_destinations##_d##_dict_pct##_c##_constant_pct##_n##_null_pct##_##_mode_name, \
+      _input_expr,                                                                                       \
+      _num_destinations,                                                                                 \
+      ExchangeMode::_mode,                                                                               \
+      _dict_pct,                                                                                         \
+      _constant_pct,                                                                                     \
       _null_pct)
 
-#define EXCHANGE_BENCHMARK_INPUT_RELATIVE(                                                  \
-    _case_name,                                                                             \
-    _input_expr,                                                                            \
-    _num_destinations,                                                                      \
-    _mode_name,                                                                             \
-    _dict_pct,                                                                              \
-    _null_pct,                                                                              \
-    _mode)                                                                                  \
-  EXCHANGE_BENCHMARK_NAMED_PARAM_RELATIVE(                                                  \
-      benchmarkExchange,                                                                    \
-      _case_name##_p##_num_destinations##_dict##_dict_pct##_null##_null_pct##_##_mode_name, \
-      _input_expr,                                                                          \
-      _num_destinations,                                                                    \
-      ExchangeMode::_mode,                                                                  \
-      _dict_pct,                                                                            \
-      _null_pct)
+#define EXCHANGE_BENCHMARK_INPUT(     \
+    _case_name,                       \
+    _input_expr,                      \
+    _num_destinations,                \
+    _mode_name,                       \
+    _dict_pct,                        \
+    _constant_pct,                    \
+    _null_pct,                        \
+    _mode)                            \
+  EXCHANGE_BENCHMARK_INPUT_IMPL(      \
+      EXCHANGE_BENCHMARK_NAMED_PARAM, \
+      _case_name,                     \
+      _input_expr,                    \
+      _num_destinations,              \
+      _mode_name,                     \
+      _dict_pct,                      \
+      _constant_pct,                  \
+      _null_pct,                      \
+      _mode)
+
+#define EXCHANGE_BENCHMARK_RELATIVE_INPUT(     \
+    _case_name,                                \
+    _input_expr,                               \
+    _num_destinations,                         \
+    _mode_name,                                \
+    _dict_pct,                                 \
+    _constant_pct,                             \
+    _null_pct,                                 \
+    _mode)                                     \
+  EXCHANGE_BENCHMARK_INPUT_IMPL(               \
+      EXCHANGE_BENCHMARK_NAMED_PARAM_RELATIVE, \
+      _case_name,                              \
+      _input_expr,                             \
+      _num_destinations,                       \
+      _mode_name,                              \
+      _dict_pct,                               \
+      _constant_pct,                           \
+      _null_pct,                               \
+      _mode)
 
 // `normal` is the baseline (regular BENCHMARK); `optimized` is reported
 // relative to it via the "%" prefix folly recognizes, so the "relative"
 // column in the output shows optimized's speedup over normal.
-#define EXCHANGE_BENCHMARK_MODES(                                     \
-    _case_name, _input_expr, _num_destinations, _dict_pct, _null_pct) \
-  EXCHANGE_BENCHMARK_INPUT(                                           \
-      _case_name,                                                     \
-      _input_expr,                                                    \
-      _num_destinations,                                              \
-      normal,                                                         \
-      _dict_pct,                                                      \
-      _null_pct,                                                      \
-      kNormal);                                                       \
-  EXCHANGE_BENCHMARK_INPUT_RELATIVE(                                  \
-      _case_name,                                                     \
-      _input_expr,                                                    \
-      _num_destinations,                                              \
-      optimized,                                                      \
-      _dict_pct,                                                      \
-      _null_pct,                                                      \
+#define EXCHANGE_BENCHMARK_MODES(    \
+    _case_name,                      \
+    _input_expr,                     \
+    _num_destinations,               \
+    _dict_pct,                       \
+    _constant_pct,                   \
+    _null_pct)                       \
+  EXCHANGE_BENCHMARK_INPUT(          \
+      _case_name,                    \
+      _input_expr,                   \
+      _num_destinations,             \
+      normal,                        \
+      _dict_pct,                     \
+      _constant_pct,                 \
+      _null_pct,                     \
+      kNormal);                      \
+  EXCHANGE_BENCHMARK_RELATIVE_INPUT( \
+      _case_name,                    \
+      _input_expr,                   \
+      _num_destinations,             \
+      optimized,                     \
+      _dict_pct,                     \
+      _constant_pct,                 \
+      _null_pct,                     \
       kOptimized)
 
-#define EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, _num_destinations)   \
-  EXCHANGE_BENCHMARK_MODES(_case_name, _input_expr, _num_destinations, 0, 0);  \
-  EXCHANGE_BENCHMARK_MODES(_case_name, _input_expr, _num_destinations, 0, 50); \
-  EXCHANGE_BENCHMARK_MODES(_case_name, _input_expr, _num_destinations, 0, 100)
+#define EXCHANGE_BENCHMARK_DESTINATIONS(                                  \
+    _case_name, _input_expr, _dict_pct, _constant_pct, _null_pct)         \
+  EXCHANGE_BENCHMARK_MODES(                                               \
+      _case_name, _input_expr, 1, _dict_pct, _constant_pct, _null_pct);   \
+  EXCHANGE_BENCHMARK_MODES(                                               \
+      _case_name, _input_expr, 4, _dict_pct, _constant_pct, _null_pct);   \
+  EXCHANGE_BENCHMARK_MODES(                                               \
+      _case_name, _input_expr, 16, _dict_pct, _constant_pct, _null_pct);  \
+  EXCHANGE_BENCHMARK_MODES(                                               \
+      _case_name, _input_expr, 100, _dict_pct, _constant_pct, _null_pct); \
+  EXCHANGE_BENCHMARK_MODES(                                               \
+      _case_name, _input_expr, 1000, _dict_pct, _constant_pct, _null_pct)
 
-#define EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr) \
-  EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, 1);          \
-  EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, 4);          \
-  EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, 16);         \
-  EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, 100);        \
-  EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, 1000)
+#define EXCHANGE_BENCHMARK_CASE(_case_name, _input_expr)               \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 0, 0, 0);   \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 0, 0, 50);  \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 0, 0, 100); \
+  BENCHMARK_DRAW_LINE();
 
-#define EXCHANGE_BENCHMARK_CASE(_case_name, _input_expr) \
-  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr)
+#define EXCHANGE_BENCHMARK_CONSTANT_CASE(_case_name, _input_expr)        \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 0, 100, 0);   \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 0, 100, 100); \
+  BENCHMARK_DRAW_LINE();
+
+#define EXCHANGE_BENCHMARK_DICTIONARY_CASE(_case_name, _input_expr)      \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 100, 0, 0);   \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 100, 0, 100); \
+  BENCHMARK_DRAW_LINE();
 
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Boolean_col1,
+    10K_Boolean_col1,
     makeInputSpec(SimpleColType::kBoolean, 1));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Boolean_col4,
+    10K_Boolean_col4,
     makeInputSpec(SimpleColType::kBoolean, 4));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Boolean_col16,
+    10K_Boolean_col16,
+    makeInputSpec(SimpleColType::kBoolean, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Boolean_col1,
+    makeInputSpec(SimpleColType::kBoolean, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Boolean_col4,
+    makeInputSpec(SimpleColType::kBoolean, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Boolean_col16,
+    makeInputSpec(SimpleColType::kBoolean, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Boolean_col1,
+    makeInputSpec(SimpleColType::kBoolean, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Boolean_col4,
+    makeInputSpec(SimpleColType::kBoolean, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Boolean_col16,
     makeInputSpec(SimpleColType::kBoolean, 16));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Tinyint_col1,
+    10K_Tinyint_col1,
     makeInputSpec(SimpleColType::kTinyint, 1));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Tinyint_col4,
+    10K_Tinyint_col4,
     makeInputSpec(SimpleColType::kTinyint, 4));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Tinyint_col16,
+    10K_Tinyint_col16,
+    makeInputSpec(SimpleColType::kTinyint, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Tinyint_col1,
+    makeInputSpec(SimpleColType::kTinyint, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Tinyint_col4,
+    makeInputSpec(SimpleColType::kTinyint, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Tinyint_col16,
+    makeInputSpec(SimpleColType::kTinyint, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Tinyint_col1,
+    makeInputSpec(SimpleColType::kTinyint, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Tinyint_col4,
+    makeInputSpec(SimpleColType::kTinyint, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Tinyint_col16,
     makeInputSpec(SimpleColType::kTinyint, 16));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Integer_col1,
+    10K_Integer_col1,
     makeInputSpec(SimpleColType::kInteger, 1));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Integer_col4,
+    10K_Integer_col4,
     makeInputSpec(SimpleColType::kInteger, 4));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Integer_col16,
+    10K_Integer_col16,
+    makeInputSpec(SimpleColType::kInteger, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Integer_col1,
+    makeInputSpec(SimpleColType::kInteger, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Integer_col4,
+    makeInputSpec(SimpleColType::kInteger, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Integer_col16,
+    makeInputSpec(SimpleColType::kInteger, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Integer_col1,
+    makeInputSpec(SimpleColType::kInteger, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Integer_col4,
+    makeInputSpec(SimpleColType::kInteger, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Integer_col16,
     makeInputSpec(SimpleColType::kInteger, 16));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Bigint_col1,
+    10K_Bigint_col1,
     makeInputSpec(SimpleColType::kBigint, 1));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Bigint_col4,
+    10K_Bigint_col4,
     makeInputSpec(SimpleColType::kBigint, 4));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Bigint_col16,
+    10K_Bigint_col16,
+    makeInputSpec(SimpleColType::kBigint, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Bigint_col1,
+    makeInputSpec(SimpleColType::kBigint, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Bigint_col4,
+    makeInputSpec(SimpleColType::kBigint, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Bigint_col16,
+    makeInputSpec(SimpleColType::kBigint, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Bigint_col1,
+    makeInputSpec(SimpleColType::kBigint, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Bigint_col4,
+    makeInputSpec(SimpleColType::kBigint, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Bigint_col16,
     makeInputSpec(SimpleColType::kBigint, 16));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Hugeint_col1,
+    10K_Hugeint_col1,
     makeInputSpec(SimpleColType::kHugeint, 1));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Hugeint_col4,
+    10K_Hugeint_col4,
     makeInputSpec(SimpleColType::kHugeint, 4));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Hugeint_col16,
+    10K_Hugeint_col16,
+    makeInputSpec(SimpleColType::kHugeint, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Hugeint_col1,
+    makeInputSpec(SimpleColType::kHugeint, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Hugeint_col4,
+    makeInputSpec(SimpleColType::kHugeint, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Hugeint_col16,
+    makeInputSpec(SimpleColType::kHugeint, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Hugeint_col1,
+    makeInputSpec(SimpleColType::kHugeint, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Hugeint_col4,
+    makeInputSpec(SimpleColType::kHugeint, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Hugeint_col16,
     makeInputSpec(SimpleColType::kHugeint, 16));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_LongDecimal_col1,
+    10K_LongDecimal_col1,
     makeInputSpec(SimpleColType::kLongDecimal, 1));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_LongDecimal_col4,
+    10K_LongDecimal_col4,
     makeInputSpec(SimpleColType::kLongDecimal, 4));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_LongDecimal_col16,
+    10K_LongDecimal_col16,
+    makeInputSpec(SimpleColType::kLongDecimal, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_LongDecimal_col1,
+    makeInputSpec(SimpleColType::kLongDecimal, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_LongDecimal_col4,
+    makeInputSpec(SimpleColType::kLongDecimal, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_LongDecimal_col16,
+    makeInputSpec(SimpleColType::kLongDecimal, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_LongDecimal_col1,
+    makeInputSpec(SimpleColType::kLongDecimal, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_LongDecimal_col4,
+    makeInputSpec(SimpleColType::kLongDecimal, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_LongDecimal_col16,
     makeInputSpec(SimpleColType::kLongDecimal, 16));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Double_col1,
+    10K_Double_col1,
     makeInputSpec(SimpleColType::kDouble, 1));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Double_col4,
+    10K_Double_col4,
     makeInputSpec(SimpleColType::kDouble, 4));
 EXCHANGE_BENCHMARK_CASE(
-    Simple10K_Double_col16,
+    10K_Double_col16,
+    makeInputSpec(SimpleColType::kDouble, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Double_col1,
+    makeInputSpec(SimpleColType::kDouble, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Double_col4,
+    makeInputSpec(SimpleColType::kDouble, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Double_col16,
+    makeInputSpec(SimpleColType::kDouble, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Double_col1,
+    makeInputSpec(SimpleColType::kDouble, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Double_col4,
+    makeInputSpec(SimpleColType::kDouble, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Double_col16,
     makeInputSpec(SimpleColType::kDouble, 16));
 
 // The complex type benchmarks are temporarily disabled.
@@ -800,10 +1002,14 @@ EXCHANGE_BENCHMARK_CASE(
 // makeInputSpec(ExchangeInputKind::kStruct1K));
 
 #undef EXCHANGE_BENCHMARK_CASE
+#undef EXCHANGE_BENCHMARK_DICTIONARY_CASE
+#undef EXCHANGE_BENCHMARK_CONSTANT_CASE
 #undef EXCHANGE_BENCHMARK_DESTINATIONS
-#undef EXCHANGE_BENCHMARK_NULLS
 #undef EXCHANGE_BENCHMARK_MODES
+#undef EXCHANGE_BENCHMARK_RELATIVE_INPUT
 #undef EXCHANGE_BENCHMARK_INPUT
+#undef EXCHANGE_BENCHMARK_INPUT_IMPL
+#undef EXCHANGE_BENCHMARK_NAMED_PARAM_RELATIVE
 #undef EXCHANGE_BENCHMARK_NAMED_PARAM
 
 } // namespace
@@ -821,6 +1027,9 @@ int main(int argc, char** argv) {
 
   bm = std::make_unique<ExchangeBenchmark>();
   folly::runBenchmarks();
+  std::fflush(stdout);
+  std::fflush(stderr);
+  std::cout << std::endl << "Exchange detailed stats:" << std::endl;
   printAllExchangeStats();
   bm.reset();
 

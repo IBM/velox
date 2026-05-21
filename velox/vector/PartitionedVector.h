@@ -15,6 +15,7 @@
  */
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "velox/vector/BaseVector.h"
@@ -121,7 +122,8 @@ class PartitionedVector {
   ///   PartitionedVector.
   /// - partitions: a vector of partition IDs for each row in the base vector.
   ///   The length of this vector must be the same as the number of rows in the
-  ///   base vector. Each entry must be a value between 0 and numPartitions - 1.
+  ///   base vector unless singlePartition is set. Each entry must be a value
+  ///   between 0 and numPartitions - 1.
   /// - numPartitions: the total number of partitions. This must be greater than
   ///   0.
   /// - ctx: the context object for building the partitioned vector. This
@@ -135,6 +137,16 @@ class PartitionedVector {
   static PartitionedVectorPtr create(
       const VectorPtr& vector,
       const std::vector<uint32_t>& partitions,
+      uint32_t numPartitions,
+      PartitionBuildContext& ctx,
+      velox::memory::MemoryPool* pool);
+
+  /// Factory method for the case where every row of `vector` belongs to the
+  /// same partition. Skips the per-row partition lookup. `singlePartition`
+  /// must be less than `numPartitions`.
+  static PartitionedVectorPtr create(
+      const VectorPtr& vector,
+      uint32_t singlePartition,
       uint32_t numPartitions,
       PartitionBuildContext& ctx,
       velox::memory::MemoryPool* pool);
@@ -179,11 +191,24 @@ class PartitionedVector {
   virtual std::string toString() const;
 
  protected:
+  // Internal create method used by recursive descent into child columns. The
+  // `singlePartition` optional carries the parent's decision so child columns
+  // inherit the same partition without re-deriving it. When set, `partitions`
+  // is ignored.
+  static PartitionedVectorPtr create(
+      const VectorPtr& vector,
+      const std::vector<uint32_t>& partitions,
+      std::optional<uint32_t> singlePartition,
+      uint32_t numPartitions,
+      PartitionBuildContext& ctx,
+      velox::memory::MemoryPool* pool);
+
   // Internal create method that accepts pre-computed endPartitionOffsets
   // buffer.
   static PartitionedVectorPtr create(
       const VectorPtr& vector,
       const std::vector<uint32_t>& partitions,
+      std::optional<uint32_t> singlePartition,
       uint32_t numPartitions,
       const BufferPtr& partitionOffsetsBuffer,
       PartitionBuildContext& ctx,
@@ -211,6 +236,7 @@ class PartitionedVector {
 
   virtual void partition(
       const std::vector<uint32_t>& partitions,
+      std::optional<uint32_t> singlePartition,
       PartitionBuildContext& ctx) = 0;
 
   // The base vector that is being partitioned. This is modified during
@@ -252,6 +278,7 @@ class PartitionedFlatVector : public PartitionedVector {
 
   void partition(
       const std::vector<uint32_t>& partitions,
+      std::optional<uint32_t> singlePartition,
       PartitionBuildContext& ctx) override;
 
   VectorPtr partitionAt(uint32_t partition) const override;
@@ -275,6 +302,7 @@ class PartitionedRowVector : public PartitionedVector {
 
   void partition(
       const std::vector<uint32_t>& partitions,
+      std::optional<uint32_t> singlePartition,
       PartitionBuildContext& ctx) override;
 
   VectorPtr partitionAt(uint32_t partition) const override;
@@ -311,6 +339,7 @@ class PartitionedConstantVector : public PartitionedVector {
 
   void partition(
       const std::vector<uint32_t>& partitions,
+      std::optional<uint32_t> singlePartition,
       PartitionBuildContext& ctx) override;
 
   VectorPtr partitionAt(uint32_t partition) const override;

@@ -383,6 +383,32 @@ void OptimizedVectorHasher::hashPrecomputed(
   });
 }
 
+uint64_t OptimizedVectorHasher::hashPrecomputed(bool mix, uint64_t previousHash)
+    const {
+  return mix ? bits::hashMix(previousHash, precomputedHash_) : precomputedHash_;
+}
+
+std::optional<uint64_t> OptimizedVectorHasher::hashConstant(
+    bool mix,
+    uint64_t previousHash) const {
+  if (!decoded_.isConstantMapping() || decoded_.size() == 0) {
+    return std::nullopt;
+  }
+
+  uint64_t hash;
+  if (decoded_.isNullAt(0) || typeKind_ == TypeKind::UNKNOWN) {
+    hash = kNullHash;
+  } else if (typeProvidesCustomComparison_) {
+    hash = VELOX_DYNAMIC_TEMPLATE_TYPE_DISPATCH(
+        hashOne, true, typeKind_, decoded_, 0);
+  } else {
+    hash = VELOX_DYNAMIC_TEMPLATE_TYPE_DISPATCH(
+        hashOne, false, typeKind_, decoded_, 0);
+  }
+
+  return mix ? bits::hashMix(previousHash, hash) : hash;
+}
+
 void OptimizedVectorHasher::precompute(const BaseVector& value) {
   if (value.isNullAt(0)) {
     precomputedHash_ = kNullHash;
