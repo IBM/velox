@@ -255,6 +255,24 @@ TEST_P(PrestoIterativePartitioningSerializerParamTest, allRowsToOnePartition) {
   EXPECT_EQ(deserialize(*ioBufs.at(2).first, type)->size(), 5);
 }
 
+// All rows routed to one non-zero partition without materialized assignments.
+TEST_P(
+    PrestoIterativePartitioningSerializerParamTest,
+    allRowsToOnePartitionFastPath) {
+  auto colType = GetParam();
+  auto type = ROW({"x"}, {colType});
+  auto col = BaseVector::create(colType, 5, pool_.get());
+  auto input = makeRowVector({"x"}, {col});
+
+  auto serializer = makeSerializer(type, 4);
+  serializer->append(input, /*singlePartition=*/2);
+  auto ioBufs = serializer->flush();
+
+  ASSERT_EQ(ioBufs.size(), 1);
+  ASSERT_TRUE(ioBufs.count(2));
+  EXPECT_EQ(deserialize(*ioBufs.at(2).first, type)->size(), 5);
+}
+
 // Single partition (numPartitions=1): all rows go to partition 0.
 TEST_P(PrestoIterativePartitioningSerializerParamTest, singlePartition) {
   auto colType = GetParam();
@@ -552,13 +570,14 @@ TEST_F(
   const auto singleRowPageBytes = simpleColumnPageBytes("LONG_ARRAY", 1, 0, 8);
 
   serializer->append(
-      makeRowVector({"v"}, {makeFlatVector<int64_t>({10})}), {0});
+      makeRowVector({"v"}, {makeFlatVector<int64_t>({10})}),
+      std::vector<uint32_t>{0});
   EXPECT_EQ(serializer->bytesBuffered(), singleRowPageBytes);
 
   auto input = makeRowVector({"v"}, {makeFlatVector<int64_t>({20})});
   EXPECT_EQ(serializer->bytesBuffered(), singleRowPageBytes);
 
-  serializer->append(input, {1});
+  serializer->append(input, std::vector<uint32_t>{1});
   const auto bytesBuffered = serializer->bytesBuffered();
   EXPECT_EQ(serializer->bytesBuffered(), 2 * singleRowPageBytes);
 
@@ -584,7 +603,7 @@ TEST_F(PrestoIterativePartitioningSerializerTest, bytesBufferedNullFlagGrowth) {
       serializer->bytesBuffered(),
       simpleColumnPageBytes("LONG_ARRAY", 8, 0, 8));
 
-  serializer->append(input, {0});
+  serializer->append(input, std::vector<uint32_t>{0});
   const auto bytesBuffered = serializer->bytesBuffered();
   EXPECT_EQ(bytesBuffered, simpleColumnPageBytes("LONG_ARRAY", 9, 1, 8));
 
@@ -670,7 +689,7 @@ TEST_F(
       makeRowVector({"v"}, {makeNullableFlatVector<int64_t>({std::nullopt})});
   const auto estimatedAfter = serializer->estimateBytesAfterAppend(input);
 
-  serializer->append(input, {0});
+  serializer->append(input, std::vector<uint32_t>{0});
   EXPECT_EQ(estimatedAfter, serializer->bytesBuffered());
 }
 

@@ -49,12 +49,25 @@ inline void prefixSum(vector_size_t* offsets, uint32_t numPartitions) {
 
 inline void calculateOffsets(
     const std::vector<uint32_t>& partitions,
+    std::optional<uint32_t> singlePartition,
+    vector_size_t vectorSize,
     uint32_t numPartitions,
     vector_size_t* endPartitionOffsets) {
   VELOX_DCHECK_NOT_NULL(endPartitionOffsets);
 
+  std::fill_n(endPartitionOffsets, numPartitions, 0);
+
+  if (singlePartition.has_value()) {
+    VELOX_DCHECK_LT(singlePartition.value(), numPartitions);
+
+    std::fill_n(
+        endPartitionOffsets + singlePartition.value(),
+        numPartitions - singlePartition.value(),
+        vectorSize);
+    return;
+  }
+
   if (numPartitions > 1) {
-    std::fill_n(endPartitionOffsets, numPartitions, 0);
     countPartitionSizes(partitions, endPartitionOffsets);
     prefixSum(endPartitionOffsets, numPartitions);
   } else {
@@ -216,6 +229,7 @@ template <TypeKind typeKind>
 PartitionedVectorPtr createPartitionedFlatVector(
     VectorPtr vector,
     const std::vector<uint32_t>& partitions,
+    std::optional<uint32_t> singlePartition,
     uint32_t numPartitions,
     const BufferPtr& endPartitionOffsets,
     PartitionBuildContext& ctx,
@@ -229,7 +243,7 @@ PartitionedVectorPtr createPartitionedFlatVector(
 
   // Always call partition() so that numNullsPerPartition_ is populated,
   // even when numPartitions == 1 and no data movement is required.
-  partitionedFlatVector->partition(partitions, ctx);
+  partitionedFlatVector->partition(partitions, singlePartition, ctx);
 
   return partitionedFlatVector;
 }
@@ -237,6 +251,7 @@ PartitionedVectorPtr createPartitionedFlatVector(
 PartitionedVectorPtr createPartitionedRowVector(
     VectorPtr vector,
     const std::vector<uint32_t>& partitions,
+    std::optional<uint32_t> singlePartition,
     uint32_t numPartitions,
     const BufferPtr& endPartitionOffsets,
     PartitionBuildContext& ctx,
@@ -249,7 +264,7 @@ PartitionedVectorPtr createPartitionedRowVector(
 
   // Always call partition() to initialize partitionedChildren_, even when
   // numPartitions == 1, so that partitionAt() can reconstruct the RowVector.
-  partitionedRowVector->partition(partitions, ctx);
+  partitionedRowVector->partition(partitions, singlePartition, ctx);
 
   return partitionedRowVector;
 }
@@ -258,15 +273,41 @@ PartitionedVectorPtr createPartitionedRowVector(
 
 PartitionedVector::~PartitionedVector() = default;
 
+// public
 PartitionedVectorPtr PartitionedVector::create(
     const VectorPtr& vector,
     const std::vector<uint32_t>& partitions,
     uint32_t numPartitions,
     PartitionBuildContext& ctx,
     velox::memory::MemoryPool* pool) {
+  return create(vector, partitions, std::nullopt, numPartitions, ctx, pool);
+}
+
+// public
+PartitionedVectorPtr PartitionedVector::create(
+    const VectorPtr& vector,
+    uint32_t singlePartition,
+    uint32_t numPartitions,
+    PartitionBuildContext& ctx,
+    velox::memory::MemoryPool* pool) {
+  return create(vector, {}, singlePartition, numPartitions, ctx, pool);
+}
+
+// protected
+PartitionedVectorPtr PartitionedVector::create(
+    const VectorPtr& vector,
+    const std::vector<uint32_t>& partitions,
+    std::optional<uint32_t> singlePartition,
+    uint32_t numPartitions,
+    PartitionBuildContext& ctx,
+    velox::memory::MemoryPool* pool) {
   VELOX_CHECK_NOT_NULL(vector);
-  VELOX_CHECK_EQ(vector->size(), partitions.size());
   VELOX_CHECK_GT(numPartitions, 0);
+  if (singlePartition.has_value()) {
+    VELOX_CHECK_LT(singlePartition.value(), numPartitions);
+  } else {
+    VELOX_CHECK_EQ(vector->size(), partitions.size());
+  }
   VELOX_CHECK_NOT_NULL(pool);
 
   // Calculate the end offsets for each partition. For example, if there are 3
@@ -276,20 +317,29 @@ PartitionedVectorPtr PartitionedVector::create(
   ensureCapacity<vector_size_t>(endPartitionOffsets, numPartitions, pool);
   calculateOffsets(
       partitions,
+      singlePartition,
+      vector->size(),
       numPartitions,
       endPartitionOffsets->asMutable<vector_size_t>());
   endPartitionOffsets->setSize(numPartitions * sizeof(vector_size_t));
 
   auto raw = endPartitionOffsets->as<vector_size_t>();
-  VELOX_DCHECK_EQ(raw[numPartitions - 1], partitions.size());
+  VELOX_DCHECK_EQ(raw[numPartitions - 1], vector->size());
 
   return create(
-      vector, partitions, numPartitions, endPartitionOffsets, ctx, pool);
+      vector,
+      partitions,
+      singlePartition,
+      numPartitions,
+      endPartitionOffsets,
+      ctx,
+      pool);
 }
 
 PartitionedVectorPtr PartitionedVector::create(
     const VectorPtr& vector,
     const std::vector<uint32_t>& partitions,
+    std::optional<uint32_t> singlePartition,
     uint32_t numPartitions,
     const BufferPtr& endPartitionOffsets,
     PartitionBuildContext& ctx,
@@ -308,6 +358,7 @@ PartitionedVectorPtr PartitionedVector::create(
           typeKind,
           vector,
           partitions,
+          singlePartition,
           numPartitions,
           endPartitionOffsets,
           ctx,
@@ -317,14 +368,20 @@ PartitionedVectorPtr PartitionedVector::create(
 
     case VectorEncoding::Simple::ROW: {
       return createPartitionedRowVector(
-          vector, partitions, numPartitions, endPartitionOffsets, ctx, pool);
+          vector,
+          partitions,
+          singlePartition,
+          numPartitions,
+          endPartitionOffsets,
+          ctx,
+          pool);
     }
 
     case VectorEncoding::Simple::CONSTANT: {
       auto partitionedConstantVector =
           std::make_shared<PartitionedConstantVector>(
               vector, numPartitions, endPartitionOffsets, pool);
-      partitionedConstantVector->partition(partitions, ctx);
+      partitionedConstantVector->partition(partitions, singlePartition, ctx);
       return partitionedConstantVector;
     }
 
@@ -365,7 +422,17 @@ std::string PartitionedVector::toString() const {
 template <typename T>
 void PartitionedFlatVector<T>::partition(
     const std::vector<uint32_t>& partitions,
+    std::optional<uint32_t> singlePartition,
     PartitionBuildContext& ctx) {
+  if (singlePartition.has_value()) {
+    if (const auto* rawNulls = vector_->rawNulls()) {
+      numNullsPerPartition_[singlePartition.value()] =
+          static_cast<vector_size_t>(
+              bits::countNulls(rawNulls, 0, vector_->size()));
+    }
+    return;
+  }
+
   if (vector_->rawNulls()) {
     const auto numRows = static_cast<vector_size_t>(partitions.size());
     const auto numBytes = bits::nbytes(numRows);
@@ -424,6 +491,7 @@ VectorPtr PartitionedFlatVector<T>::partitionAt(uint32_t partition) const {
 
 void PartitionedRowVector::partition(
     const std::vector<uint32_t>& partitions,
+    std::optional<uint32_t> singlePartition,
     PartitionBuildContext& ctx) {
   auto* rowVector = vector_->as<RowVector>();
   partitionedChildren_.reserve(rowVector->childrenSize());
@@ -433,10 +501,20 @@ void PartitionedRowVector::partition(
         PartitionedVector::create(
             child,
             partitions,
+            singlePartition,
             numPartitions_,
             endPartitionOffsets_,
             ctx,
             pool_));
+  }
+
+  if (singlePartition.has_value()) {
+    if (const auto* rawNulls = vector_->rawNulls()) {
+      numNullsPerPartition_[singlePartition.value()] =
+          static_cast<vector_size_t>(
+              bits::countNulls(rawNulls, 0, vector_->size()));
+    }
+    return;
   }
 
   if (numPartitions_ > 1 && vector_->rawNulls()) {
@@ -504,8 +582,14 @@ VectorPtr PartitionedRowVector::partitionAt(uint32_t partition) const {
 
 void PartitionedConstantVector::partition(
     const std::vector<uint32_t>& /*partitions*/,
+    std::optional<uint32_t> singlePartition,
     PartitionBuildContext& /*ctx*/) {
   if (!vector_->isNullAt(0)) {
+    return;
+  }
+
+  if (singlePartition.has_value()) {
+    numNullsPerPartition_[singlePartition.value()] = vector_->size();
     return;
   }
 

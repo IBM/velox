@@ -260,9 +260,7 @@ void runPartitionBenchmark(
   for (uint32_t iteration = 0; iteration < iterations; ++iteration) {
     std::optional<uint32_t> singlePartition =
         partitionFunction->partition(*input, partitions);
-    if (singlePartition.has_value()) {
-      std::fill(partitions.begin(), partitions.end(), singlePartition.value());
-    }
+
     folly::doNotOptimizeAway(partitions.data());
   }
 }

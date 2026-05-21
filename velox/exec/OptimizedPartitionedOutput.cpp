@@ -101,21 +101,15 @@ void OptimizedPartitionedOutput::addInput(RowVectorPtr input) {
     flush();
   }
 
-  const auto numRows = input->size();
-  partitions_.resize(numRows);
+  auto singlePartition = numDestinations_ == 1
+      ? std::optional<uint32_t>{0u}
+      : partitionFunction_->partition(*input, partitions_);
 
-  if (numDestinations_ == 1) {
-    std::fill(partitions_.begin(), partitions_.end(), 0u);
+  if (singlePartition.has_value()) {
+    serializer_->append(serializerInput, *singlePartition);
   } else {
-    std::optional<uint32_t> partition =
-        partitionFunction_->partition(*input, partitions_);
-    if (partition.has_value()) {
-      // All rows go to the same partition
-      std::fill(partitions_.begin(), partitions_.end(), partition.value());
-    }
+    serializer_->append(serializerInput, partitions_);
   }
-
-  serializer_->append(serializerInput, partitions_);
 
   auto lockedStats = stats_.wlock();
   ++numAppends_;

@@ -102,6 +102,26 @@ TEST_F(OptimizedHashPartitionFunctionTest, onePartitionReturnsConstantResult) {
   EXPECT_EQ(partitions, std::vector<uint32_t>{123});
 }
 
+TEST_F(OptimizedHashPartitionFunctionTest, constantKeyReturnsConstantResult) {
+  const auto numRows = 10'000;
+  for (const auto& vector : {
+           makeConstant(true, numRows),
+           BaseVector::createNullConstant(BOOLEAN(), numRows, pool()),
+       }) {
+    auto input = makeRowVector({vector});
+    const auto rowType = asRowType(input->type());
+    OptimizedHashPartitionFunction optimized(
+        /*localExchange=*/true, 16, rowType, {0});
+
+    std::vector<uint32_t> optimizedPartitions{123};
+    const auto optimizedPartition =
+        optimized.partition(*input, optimizedPartitions);
+    ASSERT_TRUE(optimizedPartition.has_value());
+    EXPECT_LT(optimizedPartition.value(), 16);
+    EXPECT_EQ(optimizedPartitions, std::vector<uint32_t>{123});
+  }
+}
+
 TEST_F(OptimizedHashPartitionFunctionTest, emptyConstantKeyReturnsEmptyResult) {
   auto input = makeRowVector({makeConstant(true, 0)});
   const auto rowType = asRowType(input->type());
@@ -111,6 +131,34 @@ TEST_F(OptimizedHashPartitionFunctionTest, emptyConstantKeyReturnsEmptyResult) {
   std::vector<uint32_t> optimizedPartitions{123};
   EXPECT_EQ(optimized.partition(*input, optimizedPartitions), std::nullopt);
   EXPECT_TRUE(optimizedPartitions.empty());
+}
+
+TEST_F(OptimizedHashPartitionFunctionTest, constantKeyMatchesFlatKey) {
+  constexpr auto numRows = 10'000;
+  auto constantInput = makeRowVector({makeConstant<int64_t>(123, numRows)});
+  auto flatInput = makeRowVector(
+      {makeFlatVector<int64_t>(numRows, [](auto /*row*/) { return 123; })});
+  const auto rowType = asRowType(constantInput->type());
+
+  for (const bool localExchange : {false, true}) {
+    OptimizedHashPartitionFunction constantPartitionFunction(
+        localExchange, 16, rowType, {0});
+    OptimizedHashPartitionFunction flatPartitionFunction(
+        localExchange, 16, rowType, {0});
+
+    std::vector<uint32_t> constantPartitions{123};
+    const auto constantPartition =
+        constantPartitionFunction.partition(*constantInput, constantPartitions);
+    ASSERT_TRUE(constantPartition.has_value());
+    EXPECT_EQ(constantPartitions, std::vector<uint32_t>{123});
+
+    std::vector<uint32_t> flatPartitions;
+    EXPECT_EQ(
+        flatPartitionFunction.partition(*flatInput, flatPartitions),
+        std::nullopt);
+    EXPECT_EQ(
+        flatPartitions, std::vector<uint32_t>(numRows, *constantPartition));
+  }
 }
 
 TEST_F(OptimizedHashPartitionFunctionTest, specUsesConfiguredImplementation) {

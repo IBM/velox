@@ -47,6 +47,12 @@ class OptimizedVectorHasher {
 
   void hashPrecomputed(bool mix, raw_vector<uint64_t>& result) const;
 
+  // Computes one hash from a precomputed single value.
+  uint64_t hashPrecomputed(bool mix, uint64_t previousHash) const;
+
+  // Computes one hash when the decoded vector has constant mapping.
+  std::optional<uint64_t> hashConstant(bool mix, uint64_t previousHash) const;
+
   void precompute(const BaseVector& value);
 
   static constexpr uint64_t kNullHash = BaseVector::kNullHash;
