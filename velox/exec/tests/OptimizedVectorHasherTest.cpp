@@ -194,6 +194,51 @@ TEST_F(OptimizedVectorHasherTest, nullConstant) {
   compareHashes(INTEGER(), vector, allRows, true, 11);
 }
 
+TEST_F(OptimizedVectorHasherTest, scalarHashPrecomputed) {
+  auto vector = makeFlatVector<int64_t>({123});
+  auto hasher = OptimizedVectorHasher::create(BIGINT(), 0);
+  hasher->precompute(*vector);
+
+  raw_vector<uint64_t> expected(1, pool());
+  expected[0] = 0;
+  hasher->hashPrecomputed(false, expected);
+  EXPECT_EQ(hasher->hashPrecomputed(false, 19), expected[0]);
+
+  expected[0] = 19;
+  hasher->hashPrecomputed(true, expected);
+  EXPECT_EQ(hasher->hashPrecomputed(true, 19), expected[0]);
+}
+
+TEST_F(OptimizedVectorHasherTest, scalarHashConstant) {
+  auto vector = BaseVector::createConstant(INTEGER(), 123, 6, pool());
+  const SelectivityVector allRows(vector->size());
+  auto hasher = OptimizedVectorHasher::create(INTEGER(), 0);
+  hasher->decode(*vector, allRows);
+
+  raw_vector<uint64_t> expected(vector->size(), pool());
+  std::fill(expected.begin(), expected.end(), 0);
+  hasher->hash(false, expected);
+  auto actual = hasher->hashConstant(false, 19);
+  ASSERT_TRUE(actual.has_value());
+  EXPECT_EQ(actual.value(), expected[0]);
+
+  std::fill(expected.begin(), expected.end(), 19);
+  hasher->hash(true, expected);
+  actual = hasher->hashConstant(true, 19);
+  ASSERT_TRUE(actual.has_value());
+  EXPECT_EQ(actual.value(), expected[0]);
+}
+
+TEST_F(OptimizedVectorHasherTest, scalarHashConstantEmpty) {
+  auto vector = BaseVector::createConstant(INTEGER(), 123, 0, pool());
+  const SelectivityVector rows(vector->size());
+  auto hasher = OptimizedVectorHasher::create(INTEGER(), 0);
+  hasher->decode(*vector, rows);
+
+  EXPECT_EQ(hasher->hashConstant(false, 19), std::nullopt);
+  EXPECT_EQ(hasher->hashConstant(true, 19), std::nullopt);
+}
+
 TEST_F(OptimizedVectorHasherTest, unknown) {
   auto vector = makeAllNullFlatVector<UnknownValue>(100);
   const SelectivityVector allRows(vector->size());
