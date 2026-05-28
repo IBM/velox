@@ -160,17 +160,30 @@ void partitionFixedWidthValues(
   auto* rawCursorOffsets =
       ctx.cursorPartitionOffsets->asMutable<vector_size_t>();
 
-  ensureCapacity<T>(ctx.tempBuffer, numRows, pool);
+  // Allocate ctx.tempBuffer from the input buffer's pool, not 'pool'. The
+  // swap below installs ctx.tempBuffer into the caller's FlatVector; using
+  // the input's pool keeps buffer ownership inside the caller's pool and
+  // avoids the cross-pool leak that the operator's pool would otherwise
+  // report when the caller's vector outlives it.
+  auto* inputPool = inputBuffer->pool();
+  if (ctx.tempBuffer != nullptr && ctx.tempBuffer->pool() != inputPool) {
+    ctx.tempBuffer.reset();
+  }
+  ensureCapacity<T>(ctx.tempBuffer, numRows, inputPool);
   auto* input = inputBuffer->asMutable<T>();
   auto* output = ctx.tempBuffer->asMutable<T>();
   scatterPartition<T>(
       input, output, partitions.data(), numRows, rawCursorOffsets);
-  // Copy the partitioned bytes back into the caller's buffer rather than
-  // swapping in ctx.tempBuffer. A swap would transfer ctx.tempBuffer (which
-  // was allocated from 'pool') into the caller's FlatVector, and if the
-  // caller's vector outlives 'pool' the buffer would be reported as a leak by
-  // 'pool's destructor.
-  std::memcpy(input, output, BaseVector::byteSize<T>(numRows));
+  // ensureCapacity leaves ctx.tempBuffer->size_ at its previous value when
+  // capacity already suffices, so set it to the number of values just
+  // written before swapping. Without this, FlatVector::slice() reads
+  // size/sizeof(T) and can underflow to 0 for a narrower previous column
+  // (e.g. int32 followed by int64).
+  ctx.tempBuffer->setSize(BaseVector::byteSize<T>(numRows));
+  // Swap: inputBuffer (now in the caller's FlatVector after the swap) holds
+  // the partitioned output; ctx.tempBuffer retains the old input buffer for
+  // reuse on the next call.
+  std::swap(inputBuffer, ctx.tempBuffer);
 }
 
 template <>
@@ -371,6 +384,7 @@ void PartitionedFlatVector<T>::partition(
   }
 
   auto* flatVector = vector_->as<FlatVector<T>>();
+  // Take a local ref-counted copy so partitionFixedWidthValues can swap it.
   auto valuesBuffer = flatVector->values();
   partitionFixedWidthValues<T>(
       valuesBuffer,
@@ -379,6 +393,9 @@ void PartitionedFlatVector<T>::partition(
       numPartitions_,
       ctx,
       pool_);
+  // Install the (swapped-in) partitioned buffer; ctx.tempBuffer now holds
+  // the old one.
+  flatVector->unsafeSetValues(std::move(valuesBuffer));
 
   // Count nulls per partition from the now-partitioned null bitmap.
   if (const uint64_t* rawNulls = vector_->rawNulls()) {
