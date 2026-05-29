@@ -19,6 +19,7 @@
 #include <optional>
 
 #include "velox/common/base/BitUtil.h"
+#include "velox/common/base/SimdUtil.h"
 #include "velox/type/Type.h"
 #include "velox/vector/ComplexVector.h"
 #include "velox/vector/ConstantVector.h"
@@ -136,6 +137,149 @@ simpleColumnBytes(const TypePtr& colType, int64_t numRows, int64_t numNulls) {
       (numRows - numNulls) * fixedTypeWidth(colType->kind()); // values
 }
 
+int64_t variableWidthColumnBytes(
+    int64_t numRows,
+    int64_t numNulls,
+    int64_t valueBytes) {
+  return 4 + static_cast<int64_t>(kVariableWidth.size()) + // header
+      4 + // rowCount
+      4 * numRows + // offsets
+      1 + // nullFlag
+      (numNulls > 0 ? bits::nbytes(numRows) : 0) + // null bitmap
+      4 + // valueBytes
+      valueBytes; // values
+}
+
+int64_t variableWidthDataBytes(const BaseVector& vector) {
+  switch (vector.encoding()) {
+    case VectorEncoding::Simple::FLAT: {
+      const auto* flatVector = vector.asFlatVector<StringView>();
+      VELOX_DCHECK_NOT_NULL(flatVector);
+
+      const auto* rawValues = flatVector->rawValues();
+      const auto* rawNulls = vector.rawNulls();
+
+      int64_t dataBytes = 0;
+      if (!rawNulls) {
+        for (vector_size_t i = 0; i < vector.size(); ++i) {
+          dataBytes += rawValues[i].size();
+        }
+      } else {
+        for (vector_size_t i = 0; i < vector.size(); ++i) {
+          if (!bits::isBitNull(rawNulls, i)) {
+            dataBytes += rawValues[i].size();
+          }
+        }
+      }
+      return dataBytes;
+    }
+    case VectorEncoding::Simple::CONSTANT: {
+      const auto* constantVector = vector.as<ConstantVector<StringView>>();
+      VELOX_DCHECK_NOT_NULL(constantVector);
+
+      if (constantVector->isNullAt(0)) {
+        return 0;
+      }
+
+      return static_cast<int64_t>(vector.size()) *
+          constantVector->valueAt(0).size();
+    }
+    case VectorEncoding::Simple::BIASED:
+    case VectorEncoding::Simple::DICTIONARY:
+    case VectorEncoding::Simple::SEQUENCE:
+      VELOX_NYI(
+          "Unsupported vector encoding for variable-width size estimation: {}",
+          vector.encoding());
+    default:
+      VELOX_UNSUPPORTED(
+          "Invalid vector encoding for variable-width size estimation: {}",
+          vector.encoding());
+  }
+}
+
+void accumulateVariableWidthOffsetsForFlatVector(
+    const PartitionedVectorPtr& partitionedVector,
+    std::vector<std::vector<int32_t>>& offsetsPerPartition) {
+  auto* flatVector = partitionedVector->as<PartitionedFlatVector<StringView>>();
+  VELOX_DCHECK_NOT_NULL(flatVector);
+
+  const auto* rawValues =
+      flatVector->baseVector()->asFlatVector<StringView>()->rawValues();
+  const auto* rawNulls = flatVector->baseVector()->rawNulls();
+  const auto* partitionOffsets = partitionedVector->rawPartitionOffsets();
+
+  vector_size_t lastPartitionOffset = 0;
+  for (uint32_t p = 0; p < offsetsPerPartition.size(); ++p) {
+    const auto partitionOffset = partitionOffsets[p];
+    auto& offsets = offsetsPerPartition[p];
+    int32_t endOffset = offsets.empty() ? 0 : offsets.back();
+    if (!rawNulls) {
+      for (auto i = lastPartitionOffset; i < partitionOffset; ++i) {
+        endOffset += rawValues[i].size();
+        offsets.push_back(endOffset);
+      }
+    } else {
+      for (auto i = lastPartitionOffset; i < partitionOffset; ++i) {
+        if (!bits::isBitNull(rawNulls, i)) {
+          endOffset += rawValues[i].size();
+        }
+        offsets.push_back(endOffset);
+      }
+    }
+    lastPartitionOffset = partitionOffset;
+  }
+}
+
+void accumulateVariableWidthOffsetsForConstantVector(
+    const PartitionedVectorPtr& partitionedVector,
+    std::vector<std::vector<int32_t>>& offsetsPerPartition) {
+  const auto* constantVector =
+      partitionedVector->baseVector()->as<ConstantVector<StringView>>();
+  VELOX_DCHECK_NOT_NULL(constantVector);
+
+  const auto valueSize =
+      constantVector->isNullAt(0) ? 0 : constantVector->valueAt(0).size();
+  const auto* partitionOffsets = partitionedVector->rawPartitionOffsets();
+
+  vector_size_t lastPartitionOffset = 0;
+  for (uint32_t p = 0; p < offsetsPerPartition.size(); ++p) {
+    const auto partitionOffset = partitionOffsets[p];
+    auto& offsets = offsetsPerPartition[p];
+    int32_t endOffset = offsets.empty() ? 0 : offsets.back();
+    for (auto i = lastPartitionOffset; i < partitionOffset; ++i) {
+      endOffset += valueSize;
+      offsets.push_back(endOffset);
+    }
+    lastPartitionOffset = partitionOffset;
+  }
+}
+
+/// Accumulates per-partition end offsets for partitionedVector.
+void accumulateVariableWidthOffsets(
+    const PartitionedVectorPtr& partitionedVector,
+    std::vector<std::vector<int32_t>>& offsetsPerPartition) {
+  switch (partitionedVector->baseVector()->encoding()) {
+    case VectorEncoding::Simple::FLAT:
+      accumulateVariableWidthOffsetsForFlatVector(
+          partitionedVector, offsetsPerPartition);
+      break;
+    case VectorEncoding::Simple::CONSTANT:
+      accumulateVariableWidthOffsetsForConstantVector(
+          partitionedVector, offsetsPerPartition);
+      break;
+    case VectorEncoding::Simple::BIASED:
+    case VectorEncoding::Simple::DICTIONARY:
+    case VectorEncoding::Simple::SEQUENCE:
+      VELOX_NYI(
+          "Unsupported vector encoding for variable-width offset accumulation: {}",
+          partitionedVector->baseVector()->encoding());
+    default:
+      VELOX_UNSUPPORTED(
+          "Invalid vector encoding for variable-width offset accumulation: {}",
+          partitionedVector->baseVector()->encoding());
+  }
+}
+
 /// Returns the null counts if it can be derived without row-by-row checks,
 /// otherwise returns std::nullopt.
 std::optional<vector_size_t> countNulls(const BaseVector& vector) {
@@ -175,6 +319,8 @@ int64_t maxBitmapBytes(int64_t totalRows, int64_t numPartitionsWithNulls) {
   VELOX_DCHECK_LE(numPartitionsWithNulls, totalRows);
   return numPartitionsWithNulls + (totalRows - numPartitionsWithNulls) / 8;
 }
+
+} // namespace
 
 /// Base class for column nodes in the serializer's per-partition accounting.
 ///
@@ -279,13 +425,58 @@ class FixedWidthBufferState : public ColumnBufferState {
 class VariableWidthBufferState : public ColumnBufferState {
  public:
   VariableWidthBufferState(TypePtr type, uint32_t numPartitions)
-      : ColumnBufferState(std::move(type), numPartitions) {}
+      : ColumnBufferState(std::move(type), numPartitions),
+        offsetsPerPartition_(numPartitions) {}
 
   void append(const PartitionedVectorPtr& partitionedVector) override {
-    VELOX_NYI(
-        "Variable-width columns are not yet supported by "
-        "PrestoIterativePartitioningSerializer::append");
+    accumulateVariableWidthOffsets(partitionedVector, offsetsPerPartition_);
+
+    for (auto p = 0; p < numPartitions_; ++p) {
+      const auto numRows = partitionedVector->numRowsAt(p);
+      if (numRows == 0) {
+        continue;
+      }
+
+      const auto numNulls = partitionedVector->numNullsAt(p);
+      auto& rows = rowsPerPartition_[p];
+      auto& nulls = nullsPerPartition_[p];
+
+      if (rows == 0) {
+        ++numNonEmptyPartitions_;
+      }
+      if (nulls == 0 && numNulls > 0) {
+        ++numPartitionsWithNulls_;
+      }
+
+      rows += numRows;
+      nulls += numNulls;
+
+      const auto dataBytes = offsetsPerPartition_[p].empty()
+          ? 0
+          : static_cast<int64_t>(offsetsPerPartition_[p].back());
+      bytesPerPartition_[p] = variableWidthColumnBytes(rows, nulls, dataBytes);
+    }
   }
+
+  const std::vector<int32_t>& offsetsAt(uint32_t partition) const {
+    VELOX_DCHECK_LT(partition, numPartitions_);
+    return offsetsPerPartition_[partition];
+  }
+
+  void clear() override {
+    ColumnBufferState::clear();
+    for (auto& offsets : offsetsPerPartition_) {
+      offsets.clear();
+    }
+  }
+
+ private:
+  // Per-partition cumulative offsets for buffered variable-width rows.
+  // Contains one offset per row, null rows keep the previous offset.
+  // Keep offset value as int32_t to match the Presto wire format.
+  // The upstream flush policy is expected to keep per-partition offsets within
+  // the int32_t range.
+  std::vector<std::vector<int32_t>> offsetsPerPartition_;
 };
 
 std::unique_ptr<ColumnBufferState> ColumnBufferState::create(
@@ -317,8 +508,6 @@ std::unique_ptr<ColumnBufferState> ColumnBufferState::create(
           type->kind());
   }
 }
-
-} // namespace
 
 /// Top-level buffer state for one output page.
 ///
@@ -519,6 +708,19 @@ int64_t PrestoIterativePartitioningSerializer::estimateBytesAfterAppend(
   auto estimatedBytes =
       bufferState_->bytesBuffered() + numNewPartitions * (kHeaderSize + 4);
 
+  const auto estimateNullBitmapGrowth =
+      [&](const ColumnBufferState* columnState,
+          const std::optional<vector_size_t>& inputNulls) -> int64_t {
+    const auto partitionsWithNulls = std::min<uint32_t>(
+        bufferState_->numNonEmptyPartitions() + numNewPartitions,
+        columnState->numPartitionsWithNulls() + inputNulls.value_or(numRows));
+    const auto nullBitmapBytes = maxBitmapBytes(
+        bufferState_->rowsBuffered() + numRows, partitionsWithNulls);
+    auto nullBitmapBytesBuffered = columnState->nullBitmapBytesBuffered();
+    VELOX_DCHECK_GE(nullBitmapBytes, nullBitmapBytesBuffered);
+    return nullBitmapBytes - nullBitmapBytesBuffered;
+  };
+
   // Cache per input column. If multiple output columns map to the same input
   // column, reuse the already computed incremental bytes.
   std::vector<std::optional<int64_t>> estimatedIncrementalBytes(
@@ -529,34 +731,37 @@ int64_t PrestoIterativePartitioningSerializer::estimateBytesAfterAppend(
       estimatedBytes += *estimatedIncrementalBytes[inputColumn];
       continue;
     }
+
     const auto& columnType = outputType_->childAt(column);
+    const auto* columnState = bufferState_->children()[column].get();
+    const auto inputNulls = countNulls(*input->childAt(inputColumn));
+
     if (columnType->isUnknown()) {
       VELOX_UNSUPPORTED(
           "Unsupported type kind for "
           "PrestoIterativePartitioningSerializer::estimateBytesAfterAppend: {}",
           columnType->kind());
     } else if (columnType->isFixedWidth()) {
-      const auto* columnState = bufferState_->children()[column].get();
-      const auto inputNulls = countNulls(*input->childAt(inputColumn));
-      const auto partitionsWithNulls = std::min<uint32_t>(
-          bufferState_->numNonEmptyPartitions() + numNewPartitions,
-          columnState->numPartitionsWithNulls() + inputNulls.value_or(numRows));
-      const auto nullBitmapBytes = maxBitmapBytes(
-          bufferState_->rowsBuffered() + numRows, partitionsWithNulls);
-      auto nullBitmapBytesBuffered = columnState->nullBitmapBytesBuffered();
-      VELOX_DCHECK_GE(nullBitmapBytes, nullBitmapBytesBuffered);
-
       estimatedIncrementalBytes[inputColumn] = numNewPartitions *
               simpleColumnBytes(columnType, 0, 0) + // header growth
-          nullBitmapBytes -
-          nullBitmapBytesBuffered + // null bitmap growth
+          estimateNullBitmapGrowth(columnState,
+                                   inputNulls) + // null bitmap growth
           static_cast<int64_t>(numRows - inputNulls.value_or(0)) *
               fixedTypeWidth(columnType->kind()); // value bytes growth
       estimatedBytes += *estimatedIncrementalBytes[inputColumn];
     } else {
       switch (columnType->kind()) {
         case TypeKind::VARCHAR:
-        case TypeKind::VARBINARY:
+        case TypeKind::VARBINARY: {
+          estimatedIncrementalBytes[inputColumn] = numNewPartitions *
+                  variableWidthColumnBytes(0, 0, 0) + // header growth
+              estimateNullBitmapGrowth(columnState,
+                                       inputNulls) + // null bitmap growth
+              static_cast<int64_t>(numRows) * sizeof(int32_t) + // offsets
+              variableWidthDataBytes(*input->childAt(inputColumn)); // values
+          estimatedBytes += *estimatedIncrementalBytes[inputColumn];
+          break;
+        }
         case TypeKind::ROW:
         case TypeKind::ARRAY:
         case TypeKind::MAP:
@@ -758,8 +963,13 @@ void PrestoIterativePartitioningSerializer::flushRowChildren(
           partitionedRowVector->childAt(outputToInputChannel(col)));
     }
 
+    const auto& columnState = *bufferState_->children()[col];
     flushColumn(
-        column, rowSchema.childAt(col), nonEmptyPartitions, outputStreams);
+        columnState,
+        column,
+        rowSchema.childAt(col),
+        nonEmptyPartitions,
+        outputStreams);
   }
 }
 
@@ -798,6 +1008,7 @@ void PrestoIterativePartitioningSerializer::flushFinish(
 // ---------------------------------------------------------------------------
 
 void PrestoIterativePartitioningSerializer::flushColumn(
+    const ColumnBufferState& columnState,
     const std::vector<PartitionedVectorPtr>& partitionedVectors,
     const TypePtr& colType,
     const std::vector<uint32_t>& nonEmptyPartitions,
@@ -817,10 +1028,17 @@ void PrestoIterativePartitioningSerializer::flushColumn(
       flushSimpleColumn(
           partitionedVectors, colType, nonEmptyPartitions, outputStreams);
       break;
-
-    case TypeKind::TIMESTAMP:
     case TypeKind::VARCHAR:
     case TypeKind::VARBINARY:
+      flushVariableWidthColumn(
+          columnState,
+          partitionedVectors,
+          colType,
+          nonEmptyPartitions,
+          outputStreams);
+      break;
+
+    case TypeKind::TIMESTAMP:
     case TypeKind::ROW:
     case TypeKind::ARRAY:
     case TypeKind::MAP:
@@ -846,6 +1064,31 @@ void PrestoIterativePartitioningSerializer::flushSimpleColumn(
 
   for (size_t i = 0; i < partitionedVectors.size(); i++) {
     flushSingleSimpleVector(partitionedVectors[i], outputStreams);
+  }
+}
+
+void PrestoIterativePartitioningSerializer::flushVariableWidthColumn(
+    const ColumnBufferState& columnState,
+    const std::vector<PartitionedVectorPtr>& partitionedVectors,
+    const TypePtr& colType,
+    const std::vector<uint32_t>& nonEmptyPartitions,
+    const std::vector<IOBufOutputStream*>& outputStreams) const {
+  flushHeader(typeToEncodingName(colType), nonEmptyPartitions, outputStreams);
+  flushRowCounts(nonEmptyPartitions, outputStreams);
+  flushOffsets(columnState, nonEmptyPartitions, outputStreams);
+  flushNulls(partitionedVectors, nonEmptyPartitions, outputStreams);
+
+  const auto* variableWidthState =
+      dynamic_cast<const VariableWidthBufferState*>(&columnState);
+  VELOX_DCHECK_NOT_NULL(variableWidthState);
+
+  for (auto p : nonEmptyPartitions) {
+    const auto& offsets = variableWidthState->offsetsAt(p);
+    writeInt32(outputStreams[p], offsets.empty() ? 0 : offsets.back());
+  }
+
+  for (const auto& partitionedVector : partitionedVectors) {
+    flushSingleVariableWidthVector(partitionedVector, outputStreams);
   }
 }
 
@@ -987,6 +1230,111 @@ void PrestoIterativePartitioningSerializer::flushSingleSimpleVector(
     default:
       VELOX_UNSUPPORTED(
           "Invalid vector encoding for PrestoIterativePartitioningSerializer:flushSingleSimpleVector: {}",
+          encoding);
+  }
+}
+
+void PrestoIterativePartitioningSerializer::flushSingleVariableWidthFlatVector(
+    const PartitionedVectorPtr& partitionedVector,
+    const std::vector<IOBufOutputStream*>& outputStreams) const {
+  auto* flatVector = partitionedVector->as<PartitionedFlatVector<StringView>>();
+  VELOX_DCHECK_NOT_NULL(flatVector);
+
+  const auto* rawValues =
+      flatVector->baseVector()->as<FlatVector<StringView>>()->rawValues();
+  const auto* rawNulls = flatVector->baseVector()->rawNulls();
+  const auto* partitionOffsets = flatVector->rawPartitionOffsets();
+
+  vector_size_t lastOffset = 0;
+  for (uint32_t p = 0; p < numPartitions_; ++p) {
+    const auto offset = partitionOffsets[p];
+    if (outputStreams[p] != nullptr) {
+      if (!rawNulls) {
+        for (auto i = lastOffset; i < offset; ++i) {
+          outputStreams[p]->write(rawValues[i].data(), rawValues[i].size());
+        }
+      } else {
+        for (auto i = lastOffset; i < offset; ++i) {
+          if (!bits::isBitNull(rawNulls, i)) {
+            outputStreams[p]->write(rawValues[i].data(), rawValues[i].size());
+          }
+        }
+      }
+    }
+    lastOffset = offset;
+  }
+}
+
+void PrestoIterativePartitioningSerializer::
+    flushSingleVariableWidthConstantVector(
+        const PartitionedVectorPtr& partitionedVector,
+        const std::vector<IOBufOutputStream*>& outputStreams) const {
+  const auto* constantVector =
+      partitionedVector->baseVector()->as<ConstantVector<StringView>>();
+  VELOX_DCHECK_NOT_NULL(constantVector);
+
+  if (constantVector->isNullAt(0)) {
+    return;
+  }
+
+  const auto value = constantVector->valueAt(0);
+  const auto valueSize = value.size();
+  if (valueSize == 0) {
+    return;
+  }
+
+  const auto* partitionOffsets = partitionedVector->rawPartitionOffsets();
+
+  const auto numRowsPerChunk =
+      std::max<vector_size_t>(1, kChunkBytes / valueSize);
+  const char* chunkBytes = value.data();
+  Scratch scratch;
+  ScratchPtr<char> chunk(scratch);
+  if (numRowsPerChunk > 1) {
+    auto* ptr = chunk.get(numRowsPerChunk * valueSize);
+    for (vector_size_t i = 0; i < numRowsPerChunk; ++i) {
+      simd::memcpy(ptr + i * valueSize, value.data(), valueSize);
+    }
+    chunkBytes = ptr;
+  }
+
+  vector_size_t lastOffset = 0;
+  for (uint32_t p = 0; p < numPartitions_; ++p) {
+    const auto offset = partitionOffsets[p];
+    auto numRows = offset - lastOffset;
+    if (numRows > 0) {
+      VELOX_DCHECK_NOT_NULL(outputStreams[p]);
+      while (numRows > 0) {
+        const auto n = std::min<vector_size_t>(numRowsPerChunk, numRows);
+        outputStreams[p]->write(chunkBytes, n * valueSize);
+        numRows -= n;
+      }
+    }
+    lastOffset = offset;
+  }
+}
+
+void PrestoIterativePartitioningSerializer::flushSingleVariableWidthVector(
+    const PartitionedVectorPtr& partitionedVector,
+    const std::vector<IOBufOutputStream*>& outputStreams) const {
+  const auto encoding = partitionedVector->baseVector()->encoding();
+
+  switch (encoding) {
+    case VectorEncoding::Simple::FLAT:
+      flushSingleVariableWidthFlatVector(partitionedVector, outputStreams);
+      break;
+    case VectorEncoding::Simple::CONSTANT:
+      flushSingleVariableWidthConstantVector(partitionedVector, outputStreams);
+      break;
+    case VectorEncoding::Simple::BIASED:
+    case VectorEncoding::Simple::DICTIONARY:
+    case VectorEncoding::Simple::SEQUENCE:
+      VELOX_NYI(
+          "Unsupported vector encoding for PrestoIterativePartitioningSerializer: {}",
+          encoding);
+    default:
+      VELOX_UNSUPPORTED(
+          "Invalid vector encoding for PrestoIterativePartitioningSerializer: {}",
           encoding);
   }
 }
@@ -1181,6 +1529,26 @@ void PrestoIterativePartitioningSerializer::flushSequentialOffsets(
         static_cast<int32_t>(bufferState_->rowsPerPartition()[p]);
     for (int32_t i = 0; i <= numRows; ++i) {
       writeInt32(outputStreams[p], i);
+    }
+  }
+}
+
+void PrestoIterativePartitioningSerializer::flushOffsets(
+    const ColumnBufferState& columnState,
+    const std::vector<uint32_t>& nonEmptyPartitions,
+    const std::vector<IOBufOutputStream*>& outputStreams) const {
+  const auto* variableWidthState =
+      dynamic_cast<const VariableWidthBufferState*>(&columnState);
+  VELOX_DCHECK_NOT_NULL(variableWidthState);
+
+  for (auto p : nonEmptyPartitions) {
+    const auto& offsets = variableWidthState->offsetsAt(p);
+    VELOX_DCHECK_EQ(offsets.size(), bufferState_->rowsPerPartition()[p]);
+
+    if (!offsets.empty()) {
+      outputStreams[p]->write(
+          reinterpret_cast<const char*>(offsets.data()),
+          offsets.size() * sizeof(int32_t));
     }
   }
 }
