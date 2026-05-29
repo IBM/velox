@@ -15,6 +15,7 @@
  */
 
 #include <random>
+#include <string>
 #include <string_view>
 
 #include <gmock/gmock.h>
@@ -93,6 +94,16 @@ class PrestoIterativePartitioningSerializerTestBase : public VectorTestBase {
         result.push_back(vec->as<FlatVector<T>>()->valueAt(i));
       }
     }
+    return result;
+  }
+
+  /// Extracts values from a nullable column into a sorted vector.
+  template <typename T>
+  std::vector<std::optional<T>> sortedNullableValues(
+      const RowVectorPtr& row,
+      int column) {
+    auto result = nullableValues<T>(row, column);
+    std::sort(result.begin(), result.end());
     return result;
   }
 
@@ -729,6 +740,31 @@ TEST_F(
 
 TEST_F(
     PrestoIterativePartitioningSerializerTest,
+    estimateBytesAfterAppendExactForSinglePartitionVarchar) {
+  auto type = ROW({"v"}, {VARCHAR()});
+  auto serializer = makeSerializer(type, 1);
+
+  const std::string longValue(StringView::kInlineSize + 6, 'a');
+  serializer->append(
+      makeRowVector(
+          {"v"},
+          {makeFlatVector<std::string>({"short", longValue, "", "tail"})}),
+      std::vector<uint32_t>(4, 0));
+
+  auto input = makeRowVector(
+      {"v"},
+      {makeNullableFlatVector<std::string>(
+          {std::nullopt,
+           "next",
+           std::string(StringView::kInlineSize + 8, 'b')})});
+  const auto estimatedAfter = serializer->estimateBytesAfterAppend(input);
+
+  serializer->append(input, std::vector<uint32_t>(3, 0));
+  EXPECT_EQ(estimatedAfter, serializer->bytesBuffered());
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
     estimateBytesAfterAppendOverestimatesPartitionedAppend) {
   auto type = ROW({"a", "b"}, {BIGINT(), INTEGER()});
   auto serializer = makeSerializer(type, 3);
@@ -932,6 +968,208 @@ TEST_F(PrestoIterativePartitioningSerializerTest, mixedNullConstantFlatVector) {
   auto expected1 =
       std::vector<std::optional<int64_t>>{std::nullopt, std::nullopt, 2, 3, 3};
   EXPECT_EQ(actual1, expected1);
+}
+
+TEST_F(PrestoIterativePartitioningSerializerTest, varcharWithoutNulls) {
+  auto type = ROW({"s"}, {VARCHAR()});
+
+  const std::string long1(StringView::kInlineSize + 5, 'a');
+  const std::string long2 =
+      std::string(StringView::kInlineSize + 9, 'b') + "-suffix";
+
+  auto serializer = makeSerializer(type, 2);
+  serializer->append(
+      makeRowVector(
+          {"s"},
+          {makeFlatVector<std::string>({"short", long1, "", "tail", long2})}),
+      {1, 0, 0, 1, 1});
+  auto ioBufs = serializer->flush();
+
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  auto r0 = deserialize(*ioBufs.at(0).first, type);
+  ASSERT_EQ(r0->size(), 2);
+  EXPECT_EQ(
+      sortedValues<StringView>(r0, 0),
+      (std::vector<StringView>{"", StringView(long1)}));
+
+  auto r1 = deserialize(*ioBufs.at(1).first, type);
+  ASSERT_EQ(r1->size(), 3);
+  EXPECT_EQ(
+      sortedValues<StringView>(r1, 0),
+      (std::vector<StringView>{
+          StringView(long2), StringView("short"), StringView("tail")}));
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    varcharWithNullsMultipleAppend) {
+  auto type = ROW({"s"}, {VARCHAR()});
+
+  const std::string long1(StringView::kInlineSize + 4, 'x');
+  const std::string long2 =
+      std::string(StringView::kInlineSize + 7, 'x') + "-suffix";
+  const std::string long3 =
+      std::string(StringView::kInlineSize + 10, 'x') + "-tail";
+
+  auto serializer = makeSerializer(type, 2);
+  serializer->append(
+      makeRowVector(
+          {"s"},
+          {makeNullableFlatVector<std::string>(
+              {"short", long1, std::nullopt, "", long2})}),
+      {0, 1, 0, 1, 0});
+  serializer->append(
+      makeRowVector(
+          {"s"},
+          {makeNullableFlatVector<std::string>({"tail", std::nullopt, long3})}),
+      {0, 1, 1});
+  auto ioBufs = serializer->flush();
+
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  auto r0 = deserialize(*ioBufs.at(0).first, type);
+  ASSERT_EQ(r0->size(), 4);
+  EXPECT_EQ(
+      sortedNullableValues<StringView>(r0, 0),
+      (std::vector<std::optional<StringView>>{
+          std::nullopt, "short", "tail", StringView(long2)}));
+
+  auto r1 = deserialize(*ioBufs.at(1).first, type);
+  ASSERT_EQ(r1->size(), 4);
+  EXPECT_EQ(
+      sortedNullableValues<StringView>(r1, 0),
+      (std::vector<std::optional<StringView>>{
+          std::nullopt, "", StringView(long1), StringView(long3)}));
+}
+
+TEST_F(PrestoIterativePartitioningSerializerTest, varbinaryWithNulls) {
+  auto type = ROW({"b"}, {VARBINARY()});
+
+  const std::string binary0("\x00\x01\x02", 3);
+  const std::string binary1("ab\0cd", 5);
+  const std::string binary3(StringView::kInlineSize + 6, '\x7f');
+
+  std::vector<std::optional<std::string>> inputValues = {
+      binary0,
+      std::nullopt,
+      binary1,
+      std::string(),
+      binary3,
+  };
+
+  auto serializer = makeSerializer(type, 2);
+  serializer->append(
+      makeRowVector(
+          {"b"},
+          {makeNullableFlatVector<std::string>(inputValues, VARBINARY())}),
+      {0, 1, 1, 0, 1});
+  auto ioBufs = serializer->flush();
+
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  auto r0 = deserialize(*ioBufs.at(0).first, type);
+  ASSERT_EQ(r0->size(), 2);
+  EXPECT_EQ(
+      sortedNullableValues<StringView>(r0, 0),
+      (std::vector<std::optional<StringView>>{"", StringView(binary0)}));
+
+  auto r1 = deserialize(*ioBufs.at(1).first, type);
+  ASSERT_EQ(r1->size(), 3);
+  EXPECT_EQ(
+      sortedNullableValues<StringView>(r1, 0),
+      (std::vector<std::optional<StringView>>{
+          std::nullopt, StringView(binary1), StringView(binary3)}));
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    varbinaryMixedFlatConstantAcrossAppends) {
+  auto type = ROW({"b"}, {VARBINARY()});
+
+  const std::string binary0("\x00\x01\x02", 3);
+  const std::string binary1("ab\0cd", 5);
+  const std::string binary2("\x01\x02\x03\x04", 4);
+  const std::string binary3(StringView::kInlineSize + 6, '\x7f');
+
+  auto serializer = makeSerializer(type, 2);
+  serializer->append(
+      makeRowVector(
+          {"b"},
+          {makeNullableFlatVector<std::string>(
+              {binary0, std::nullopt, binary1}, VARBINARY())}),
+      {0, 1, 0});
+  serializer->append(
+      makeRowVector(
+          {"b"}, {makeConstant<std::string>(binary2, 3, VARBINARY())}),
+      {1, 0, 1});
+  serializer->append(
+      makeRowVector({"b"}, {makeNullConstant(TypeKind::VARBINARY, 2)}), {0, 1});
+  serializer->append(
+      makeRowVector(
+          {"b"}, {makeFlatVector<std::string>({"", binary3}, VARBINARY())}),
+      {1, 0});
+
+  auto ioBufs = serializer->flush();
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  auto r0 = deserialize(*ioBufs.at(0).first, type);
+  ASSERT_EQ(r0->size(), 5);
+  EXPECT_EQ(
+      sortedNullableValues<StringView>(r0, 0),
+      (std::vector<std::optional<StringView>>{
+          std::nullopt,
+          StringView(binary0),
+          StringView(binary2),
+          StringView(binary1),
+          StringView(binary3)}));
+
+  auto r1 = deserialize(*ioBufs.at(1).first, type);
+  ASSERT_EQ(r1->size(), 5);
+  EXPECT_EQ(
+      sortedNullableValues<StringView>(r1, 0),
+      (std::vector<std::optional<StringView>>{
+          std::nullopt,
+          std::nullopt,
+          "",
+          StringView(binary2),
+          StringView(binary2)}));
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerTest,
+    varcharConstantColumnAcrossAppends) {
+  auto type = ROW({"s"}, {VARCHAR()});
+
+  const std::string longValue =
+      std::string(StringView::kInlineSize + 5, 'z') + "-tail";
+
+  auto serializer = makeSerializer(type, 2);
+  serializer->append(
+      makeRowVector({"s"}, {makeConstant<std::string>("short", 3)}), {0, 1, 0});
+  serializer->append(
+      makeRowVector({"s"}, {makeConstant<std::string>(longValue, 3)}),
+      {1, 0, 1});
+  serializer->append(
+      makeRowVector({"s"}, {makeNullConstant(TypeKind::VARCHAR, 2)}), {0, 1});
+
+  auto ioBufs = serializer->flush();
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  auto r0 = deserialize(*ioBufs.at(0).first, type);
+  EXPECT_EQ(
+      sortedNullableValues<StringView>(r0, 0),
+      (std::vector<std::optional<StringView>>{
+          std::nullopt, "short", "short", StringView(longValue)}));
+
+  auto r1 = deserialize(*ioBufs.at(1).first, type);
+  EXPECT_EQ(
+      sortedNullableValues<StringView>(r1, 0),
+      (std::vector<std::optional<StringView>>{
+          std::nullopt,
+          "short",
+          StringView(longValue),
+          StringView(longValue)}));
 }
 
 // ── Scale and regression
