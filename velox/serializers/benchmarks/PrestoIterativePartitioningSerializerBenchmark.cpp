@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <string>
+
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
 
@@ -47,6 +49,24 @@ class PrestoIterativePartitioningSerializerBenchmark
         [nullPct](auto row) { return (row % 100) < nullPct; });
   }
 
+  VectorPtr makeVariableWidthFlatColumn(
+      vector_size_t size,
+      const TypePtr& type,
+      int32_t nullPct) {
+    auto valueAt = [](auto row) {
+      return row % 2 == 0 ? fmt::format("short{}", row)
+                          : fmt::format("long_string_value_{}_suffix", row);
+    };
+    if (nullPct == 0) {
+      return makeFlatVector<std::string>(size, valueAt, nullptr, type);
+    }
+    return makeFlatVector<std::string>(
+        size,
+        valueAt,
+        [nullPct](auto row) { return (row % 100) < nullPct; },
+        type);
+  }
+
   /// Creates a flat vector of the given TypeKind with the given null ratio.
   VectorPtr
   makeFlatColumn(vector_size_t size, TypeKind colKind, int32_t nullPct) {
@@ -59,6 +79,10 @@ class PrestoIterativePartitioningSerializerBenchmark
         return makeFlatColumnOfType<int64_t>(size, nullPct);
       case TypeKind::HUGEINT:
         return makeFlatColumnOfType<int128_t>(size, nullPct);
+      case TypeKind::VARCHAR:
+        return makeVariableWidthFlatColumn(size, VARCHAR(), nullPct);
+      case TypeKind::VARBINARY:
+        return makeVariableWidthFlatColumn(size, VARBINARY(), nullPct);
       default:
         VELOX_UNSUPPORTED(
             "Unsupported TypeKind: {}", TypeKindName::toName(colKind));
@@ -79,6 +103,11 @@ class PrestoIterativePartitioningSerializerBenchmark
         return makeConstant<int64_t>(1000, size);
       case TypeKind::HUGEINT:
         return makeConstant<int128_t>(10000, size);
+      case TypeKind::VARCHAR:
+        return makeConstant<std::string>("constant_string_value", size);
+      case TypeKind::VARBINARY:
+        return makeConstant<std::string>(
+            std::string("\x01\x02\x03\x04", 4), size, VARBINARY());
       default:
         VELOX_UNSUPPORTED(
             "Unsupported TypeKind: {}", TypeKindName::toName(colKind));
@@ -270,6 +299,8 @@ FLUSH_FOR_COLS(bool, BOOLEAN)
 FLUSH_FOR_COLS(int, INTEGER)
 FLUSH_FOR_COLS(bigint, BIGINT)
 FLUSH_FOR_COLS(ldec, HUGEINT)
+FLUSH_FOR_COLS(varchar, VARCHAR)
+FLUSH_FOR_COLS(varbinary, VARBINARY)
 // clang-format on
 
 int main(int argc, char** argv) {
