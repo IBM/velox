@@ -432,6 +432,10 @@ void CudfConfig::initialize(
   if (config.find(kUcxExchangeLogLevel) != config.end()) {
     exchangeLogLevel = folly::to<int32_t>(config[kUcxExchangeLogLevel]);
   }
+  if (config.find(kUcxPartitionedOutputBatchRows) != config.end()) {
+    partitionedOutputBatchRows =
+        folly::to<int64_t>(config[kUcxPartitionedOutputBatchRows]);
+  }
   if (config.find(kCudfLogFallback) != config.end()) {
     logFallback = folly::to<bool>(config[kCudfLogFallback]);
   }
