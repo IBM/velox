@@ -102,6 +102,15 @@ class HiveConfig : public FileConfig {
       "hive.parquet.use-column-names";
 
   VELOX_HIVE_CONFIG_PROPERTY(
+      kParquetNullStructForMissingFieldsSession,
+      "parquet_null_struct_for_missing_fields",
+      bool,
+      false,
+      "When Parquet name-based mapping is enabled and all requested struct children are missing, return NULL struct instead of a non-null struct with all-null children.")
+  static constexpr const char* kParquetNullStructForMissingFields =
+      "hive.parquet.null-struct-for-missing-fields";
+
+  VELOX_HIVE_CONFIG_PROPERTY(
       kParquetFooterSpeculativeIoSizeSession,
       "parquet_footer_speculative_io_size",
       uint64_t,

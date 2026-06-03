@@ -268,4 +268,7 @@ TEST(HiveConfigTest, registeredParquetPropertiesUseSessionPrefix) {
 
   EXPECT_TRUE(hasProperty(HiveConfig::kParquetUseColumnNamesSession));
   EXPECT_FALSE(hasProperty(HiveConfig::kParquetUseColumnNames));
+  EXPECT_TRUE(
+      hasProperty(HiveConfig::kParquetNullStructForMissingFieldsSession));
+  EXPECT_FALSE(hasProperty(HiveConfig::kParquetNullStructForMissingFields));
 }
