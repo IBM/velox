@@ -302,6 +302,20 @@ class OptimizedPartitionedOutputTest : public OperatorTestBase {
     return result;
   }
 
+  /// Creates the partition function used by OptimizedPartitionedOutput, so
+  /// tests compute expected partition assignments with the same hash function
+  /// the operator uses.
+  std::unique_ptr<core::PartitionFunction> createPartitionFunction(
+      const RowTypePtr& inputType,
+      const std::vector<column_index_t>& keyChannels,
+      int numPartitions) {
+    HashPartitionFunctionSpec spec(inputType, keyChannels);
+    return spec.create(
+        numPartitions,
+        /*localExchange=*/false,
+        /*useOptimizedPartitionFunction=*/true);
+  }
+
   int64_t getIntRuntimeStat(Task* task, const std::string& statName) {
     const auto taskStats = task->taskStats();
     const auto& runtimeStats =
@@ -532,13 +546,8 @@ class OptimizedPartitionedOutputParamTest
       const std::vector<RowVectorPtr>& inputBatches,
       const std::vector<std::vector<std::unique_ptr<folly::IOBuf>>>& allPages,
       int numPartitions) {
-    // Compute expected per-partition row list using the same hash function as
-    // the operator.
-    HashPartitionFunctionSpec spec(inputType(), pkChannels());
-    auto partitionFn = spec.create(
-        numPartitions,
-        /*localExchange=*/false,
-        /*useOptimizedPartitionFunction=*/true);
+    auto partitionFn =
+        createPartitionFunction(inputType(), pkChannels(), numPartitions);
 
     std::vector<std::vector<std::pair<int, int>>> expectedRows(numPartitions);
     for (int batchIdx = 0; batchIdx < static_cast<int>(inputBatches.size());
@@ -1018,11 +1027,8 @@ TEST_F(OptimizedPartitionedOutputTest, duplicateOutputColumns) {
       outputLayout);
 
   std::vector<uint32_t> assignments(inputCopy->size());
-  HashPartitionFunctionSpec spec(inputType, std::vector<column_index_t>{0});
-  auto partitionFn = spec.create(
-      kNumPartitions,
-      /*localExchange=*/false,
-      /*useOptimizedPartitionFunction=*/true);
+  auto partitionFn = createPartitionFunction(
+      inputType, std::vector<column_index_t>{0}, kNumPartitions);
   partitionFn->partition(*inputCopy, assignments);
 
   std::vector<std::vector<std::pair<int, int>>> expectedRows(kNumPartitions);
