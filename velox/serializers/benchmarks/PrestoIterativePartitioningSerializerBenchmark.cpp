@@ -19,6 +19,10 @@
 #include "velox/serializers/PrestoIterativePartitioningSerializer.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
+// Add the following definitions to allow Clion runs
+DEFINE_bool(gtest_color, false, "");
+DEFINE_string(gtest_filter, "*", "");
+
 using namespace facebook::velox;
 using namespace facebook::velox::serializer::presto;
 

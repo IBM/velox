@@ -28,7 +28,6 @@
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
-DEFINE_int32(width, 16, "Number of parties in shuffle");
 DEFINE_int32(task_width, 4, "Number of threads in each task in shuffle");
 
 DEFINE_int64(exchange_buffer_mb, 32, "task-wide buffer in remote exchange");
@@ -47,8 +46,8 @@ DEFINE_string(gtest_filter, "*", "");
 /// that 1. shuffles a constant input in each of n workers, sending
 /// each partition to n consumers in the next stage. The consumers
 /// count the rows and send the count to a final single task stage
-/// that returns the sum of the counts. The sum is expected to be n *
-/// number of rows in constant input.
+/// that returns the sum of the counts. The sum is expected to be
+/// n * number of rows in constant input.
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -446,10 +445,12 @@ class ExchangeBenchmark : public VectorTestBase {
 
   ExchangeRunStats run(
       const std::vector<RowVectorPtr>& vectors,
-      int32_t width,
+      int32_t numDestinations,
       int32_t taskWidth,
       ExchangeMode mode) {
     VELOX_CHECK(!vectors.empty());
+    VELOX_CHECK_GT(numDestinations, 0);
+    VELOX_CHECK_GT(taskWidth, 0);
 
     core::PlanNodePtr plan;
     core::PlanNodeId exchangeId;
@@ -469,13 +470,16 @@ class ExchangeBenchmark : public VectorTestBase {
 
       // leafPlan: PartitionedOutput/kPartitioned(1) <-- Values(0)
       std::vector<std::string> leafTaskIds;
-      auto leafPlan = exec::test::PlanBuilder()
-                          .values(vectors, true)
-                          .partitionedOutput({"c0"}, width)
-                          .capturePlanNodeId(leafPartitionedOutputId)
-                          .planNode();
+      auto leafPlanBuilder = exec::test::PlanBuilder().values(vectors, true);
+      if (numDestinations == 1) {
+        leafPlanBuilder.partitionedOutput({}, 1);
+      } else {
+        leafPlanBuilder.partitionedOutput({"c0"}, numDestinations);
+      }
+      auto leafPlan =
+          leafPlanBuilder.capturePlanNodeId(leafPartitionedOutputId).planNode();
 
-      for (int32_t counter = 0; counter < width; ++counter) {
+      for (int32_t counter = 0; counter < numDestinations; ++counter) {
         auto leafTaskId = makeTaskId(iteration, "leaf", counter);
         leafTaskIds.push_back(leafTaskId);
         auto leafTask = makeTask(leafTaskId, leafPlan, counter);
@@ -494,7 +498,7 @@ class ExchangeBenchmark : public VectorTestBase {
               .capturePlanNodeId(finalAggPartitionedOutputId)
               .planNode();
 
-      for (int i = 0; i < width; i++) {
+      for (int i = 0; i < numDestinations; i++) {
         auto taskId = makeTaskId(iteration, "final-agg", i);
         finalAggSplits.push_back(
             exec::Split(std::make_shared<exec::RemoteConnectorSplit>(taskId)));
@@ -505,7 +509,8 @@ class ExchangeBenchmark : public VectorTestBase {
       }
 
       expected = makeRowVector({makeFlatVector<int64_t>(1, [&](auto /*row*/) {
-        return vectors.size() * vectors[0]->size() * width * taskWidth;
+        return vectors.size() * vectors[0]->size() * numDestinations *
+            taskWidth;
       })});
 
       // plan: Agg/kSingle(1) <-- Exchange (0)
@@ -554,6 +559,8 @@ class ExchangeBenchmark : public VectorTestBase {
     configSettings_[core::QueryConfig::kMaxPartitionedOutputBufferSize] =
         fmt::format("{}", FLAGS_exchange_buffer_mb << 20);
     configSettings_[core::QueryConfig::kOptimizedPartitionedOutputEnabled] =
+        mode == ExchangeMode::kOptimized ? "true" : "false";
+    configSettings_[core::QueryConfig::kOptimizedHashPartitionFunctionEnabled] =
         mode == ExchangeMode::kOptimized ? "true" : "false";
   }
 
@@ -606,16 +613,22 @@ std::unique_ptr<ExchangeBenchmark> bm;
 void benchmarkExchange(
     unsigned int iters,
     const ExchangeInputSpec& input,
+    int32_t numDestinations,
     ExchangeMode mode,
     int32_t dictPct,
     int32_t nullPct) {
   auto vectors = bm->makeRows(
       input.type, input.numVectors, input.rowsPerVector, dictPct, nullPct);
   auto stats = runBenchmarkIterations(iters, [&]() {
-    return bm->run(vectors, FLAGS_width, FLAGS_task_width, mode);
+    return bm->run(vectors, numDestinations, FLAGS_task_width, mode);
   });
   benchmarkResults.push_back(
-      {fmt::format("{}_dict{}_null{}", input.name, dictPct, nullPct),
+      {fmt::format(
+           "{}_p{}_dict{}_null{}",
+           input.name,
+           numDestinations,
+           dictPct,
+           nullPct),
        mode,
        std::move(stats)});
 }
@@ -630,29 +643,91 @@ void benchmarkExchange(
     name(iters, ##__VA_ARGS__);                               \
   }
 
-// ── Benchmarks: input spec × nullPct × mode ───────────────────────────────
+// Same as EXCHANGE_BENCHMARK_NAMED_PARAM but the "%" prefix on the
+// stringized name marks this benchmark as relative — folly reports its
+// time/iter as a percentage of the preceding non-relative baseline.
+#define EXCHANGE_BENCHMARK_NAMED_PARAM_RELATIVE(name, param_name, ...) \
+  BENCHMARK_IMPL(                                                      \
+      FB_CONCATENATE(name, FB_CONCATENATE(_, param_name)),             \
+      "%" FOLLY_PP_STRINGIZE(param_name),                              \
+      iters,                                                           \
+      unsigned,                                                        \
+      iters) {                                                         \
+    name(iters, ##__VA_ARGS__);                                        \
+  }
 
-#define EXCHANGE_BENCHMARK_INPUT(                                     \
-    _case_name, _input_expr, _mode_name, _dict_pct, _null_pct, _mode) \
-  EXCHANGE_BENCHMARK_NAMED_PARAM(                                     \
-      benchmarkExchange,                                              \
-      _case_name##_dict##_dict_pct##_null##_null_pct##_##_mode_name,  \
-      _input_expr,                                                    \
-      ExchangeMode::_mode,                                            \
-      _dict_pct,                                                      \
+// ── Benchmarks: input spec × p (numDestinations) × nullPct × mode ─────────
+
+#define EXCHANGE_BENCHMARK_INPUT(                                                           \
+    _case_name,                                                                             \
+    _input_expr,                                                                            \
+    _num_destinations,                                                                      \
+    _mode_name,                                                                             \
+    _dict_pct,                                                                              \
+    _null_pct,                                                                              \
+    _mode)                                                                                  \
+  EXCHANGE_BENCHMARK_NAMED_PARAM(                                                           \
+      benchmarkExchange,                                                                    \
+      _case_name##_p##_num_destinations##_dict##_dict_pct##_null##_null_pct##_##_mode_name, \
+      _input_expr,                                                                          \
+      _num_destinations,                                                                    \
+      ExchangeMode::_mode,                                                                  \
+      _dict_pct,                                                                            \
       _null_pct)
 
-#define EXCHANGE_BENCHMARK_MODES(                                      \
-    _case_name, _input_expr, _dict_pct, _null_pct)                     \
-  EXCHANGE_BENCHMARK_INPUT(                                            \
-      _case_name, _input_expr, normal, _dict_pct, _null_pct, kNormal); \
-  EXCHANGE_BENCHMARK_INPUT(                                            \
-      _case_name, _input_expr, optimized, _dict_pct, _null_pct, kOptimized)
+#define EXCHANGE_BENCHMARK_INPUT_RELATIVE(                                                  \
+    _case_name,                                                                             \
+    _input_expr,                                                                            \
+    _num_destinations,                                                                      \
+    _mode_name,                                                                             \
+    _dict_pct,                                                                              \
+    _null_pct,                                                                              \
+    _mode)                                                                                  \
+  EXCHANGE_BENCHMARK_NAMED_PARAM_RELATIVE(                                                  \
+      benchmarkExchange,                                                                    \
+      _case_name##_p##_num_destinations##_dict##_dict_pct##_null##_null_pct##_##_mode_name, \
+      _input_expr,                                                                          \
+      _num_destinations,                                                                    \
+      ExchangeMode::_mode,                                                                  \
+      _dict_pct,                                                                            \
+      _null_pct)
 
-#define EXCHANGE_BENCHMARK_CASE(_case_name, _input_expr)    \
-  EXCHANGE_BENCHMARK_MODES(_case_name, _input_expr, 0, 0);  \
-  EXCHANGE_BENCHMARK_MODES(_case_name, _input_expr, 0, 50); \
-  EXCHANGE_BENCHMARK_MODES(_case_name, _input_expr, 0, 100)
+// `normal` is the baseline (regular BENCHMARK); `optimized` is reported
+// relative to it via the "%" prefix folly recognizes, so the "relative"
+// column in the output shows optimized's speedup over normal.
+#define EXCHANGE_BENCHMARK_MODES(                                     \
+    _case_name, _input_expr, _num_destinations, _dict_pct, _null_pct) \
+  EXCHANGE_BENCHMARK_INPUT(                                           \
+      _case_name,                                                     \
+      _input_expr,                                                    \
+      _num_destinations,                                              \
+      normal,                                                         \
+      _dict_pct,                                                      \
+      _null_pct,                                                      \
+      kNormal);                                                       \
+  EXCHANGE_BENCHMARK_INPUT_RELATIVE(                                  \
+      _case_name,                                                     \
+      _input_expr,                                                    \
+      _num_destinations,                                              \
+      optimized,                                                      \
+      _dict_pct,                                                      \
+      _null_pct,                                                      \
+      kOptimized)
+
+#define EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, _num_destinations)   \
+  EXCHANGE_BENCHMARK_MODES(_case_name, _input_expr, _num_destinations, 0, 0);  \
+  EXCHANGE_BENCHMARK_MODES(_case_name, _input_expr, _num_destinations, 0, 50); \
+  EXCHANGE_BENCHMARK_MODES(_case_name, _input_expr, _num_destinations, 0, 100)
+
+#define EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr) \
+  EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, 1);          \
+  EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, 4);          \
+  EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, 16);         \
+  EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, 100);        \
+  EXCHANGE_BENCHMARK_NULLS(_case_name, _input_expr, 1000)
+
+#define EXCHANGE_BENCHMARK_CASE(_case_name, _input_expr) \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr)
 
 EXCHANGE_BENCHMARK_CASE(
     Simple10K_Boolean_col1,
@@ -725,6 +800,8 @@ EXCHANGE_BENCHMARK_CASE(
 // makeInputSpec(ExchangeInputKind::kStruct1K));
 
 #undef EXCHANGE_BENCHMARK_CASE
+#undef EXCHANGE_BENCHMARK_DESTINATIONS
+#undef EXCHANGE_BENCHMARK_NULLS
 #undef EXCHANGE_BENCHMARK_MODES
 #undef EXCHANGE_BENCHMARK_INPUT
 #undef EXCHANGE_BENCHMARK_NAMED_PARAM
