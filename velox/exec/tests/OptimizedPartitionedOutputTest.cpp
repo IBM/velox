@@ -534,8 +534,11 @@ class OptimizedPartitionedOutputParamTest
       int numPartitions) {
     // Compute expected per-partition row list using the same hash function as
     // the operator.
-    auto partitionFn = std::make_unique<HashPartitionFunction>(
-        false, numPartitions, inputType(), pkChannels());
+    HashPartitionFunctionSpec spec(inputType(), pkChannels());
+    auto partitionFn = spec.create(
+        numPartitions,
+        /*localExchange=*/false,
+        /*useOptimizedPartitionFunction=*/true);
 
     std::vector<std::vector<std::pair<int, int>>> expectedRows(numPartitions);
     for (int batchIdx = 0; batchIdx < static_cast<int>(inputBatches.size());
@@ -1015,8 +1018,11 @@ TEST_F(OptimizedPartitionedOutputTest, duplicateOutputColumns) {
       outputLayout);
 
   std::vector<uint32_t> assignments(inputCopy->size());
-  auto partitionFn = std::make_unique<HashPartitionFunction>(
-      false, kNumPartitions, inputType, std::vector<column_index_t>{0});
+  HashPartitionFunctionSpec spec(inputType, std::vector<column_index_t>{0});
+  auto partitionFn = spec.create(
+      kNumPartitions,
+      /*localExchange=*/false,
+      /*useOptimizedPartitionFunction=*/true);
   partitionFn->partition(*inputCopy, assignments);
 
   std::vector<std::vector<std::pair<int, int>>> expectedRows(kNumPartitions);
