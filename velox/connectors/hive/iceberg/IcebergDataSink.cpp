@@ -522,94 +522,52 @@ IcebergDataSink::createWriterOptions(size_t writerIndex) const {
   return options;
 }
 
-folly::dynamic IcebergDataSink::makeCommitPartitionValue(
-    uint32_t writerIndex) const {
-  folly::dynamic partitionValues = folly::dynamic::array();
-  const auto& transformedValues = partitionIdGenerator_->partitionValues();
-  for (auto i = 0; i < partitionChannels_.size(); ++i) {
-    const auto& child = transformedValues->childAt(i);
-    if (child->isNullAt(writerIndex)) {
-      partitionValues.push_back(nullptr);
-    } else {
-      partitionValues.push_back(VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-          extractPartitionValue, child->typeKind(), child, writerIndex));
-    }
-  }
-  return partitionValues;
+std::string IcebergDataSink::getPartitionName(uint32_t partitionId) const {
+  return partitionIdGenerator_->partitionName(partitionId);
 }
 
-void IcebergDataSink::closeWriterAndCollectStats(size_t index) {
-  auto metadata = writers_[index]->close();
-  const bool fileAdded = getCurrentFileBytes(index) > 0;
-
-  // Finalize file info (capture file size, add to writtenFiles).
-  finalizeWriterFile(index);
-
-  if (!fileAdded) {
-    return;
-  }
+std::shared_ptr<dwio::common::DataFileStatistics>
+IcebergDataSink::collectWriterStats(size_t index) {
+  auto stats = writers_[index]->dataFileStats();
+  
 #ifdef VELOX_ENABLE_PARQUET
-  if (parquetStatsCollector_) {
-    dataFileStats_[index].emplace_back(
-        parquetStatsCollector_->aggregate(std::move(metadata)));
-    return;
+  // Parquet writers provide complete stats including record count
+  if (icebergInsertTableHandle_->storageFormat() ==
+      dwio::common::FileFormat::PARQUET) {
+    return stats;
   }
 #endif
-  // ORC/DWRF (and any other format without a stats collector) path: we don't
-  // have file-level metadata that exposes row count, so derive it from
+  
+  // DWRF/ORC writers don't expose row count in metadata, so derive it from
   // writerInfo_->numWrittenRows. That counter accumulates across all files
   // written by this writer (rotated files included), so compute per-file
-  // recordCount as the delta since the previous closeWriterAndCollectStats
-  // call for this writer index.
-  //
-  // Without this, the manifest writes recordCount=0 for every DWRF/ORC file,
-  // which makes the DELETE/UPDATE/MERGE planner believe each file is empty
-  // and skip it entirely (no rewrite, no DV puffin, no visible delete).
+  // recordCount as the delta since the previous collection.
   if (reportedRowsPerWriter_.size() <= index) {
     reportedRowsPerWriter_.resize(index + 1, 0);
   }
   const int64_t totalRows = writerInfo_[index]->numWrittenRows;
   const int64_t thisFileRows = totalRows - reportedRowsPerWriter_[index];
   reportedRowsPerWriter_[index] = totalRows;
-
-  auto stats = std::make_shared<IcebergDataFileStatistics>();
+  
+  if (stats == nullptr) {
+    stats = std::make_shared<dwio::common::DataFileStatistics>();
+  }
   stats->numRecords = thisFileRows;
-  // Column-level stats (min/max/null counts) are still empty here. That only
-  // degrades predicate pruning (a perf optimization), not correctness. The
-  // proper fix is to add an IcebergDwrfStatsCollector that mirrors the
-  // Parquet path and consumes per-stripe stats from the DWRF writer footer.
-  dataFileStats_[index].emplace_back(std::move(stats));
-}
-
-std::string IcebergDataSink::getPartitionName(uint32_t partitionId) const {
-  return partitionIdGenerator_->partitionName(partitionId);
+  return stats;
 }
 
 void IcebergDataSink::rotateWriter(size_t index) {
-  VELOX_CHECK_LT(index, writers_.size());
-  VELOX_CHECK_NOT_NULL(writers_[index]);
+  common::testutil::TestValue::adjust(
+      "facebook::velox::connector::hive::iceberg::IcebergDataSink::rotateWriter",
+      this);
 
-  // Ensure dataFileStats_ has an entry for this writer index.
-  if (dataFileStats_.size() <= index) {
-    dataFileStats_.resize(index + 1);
+  if (writers_[index]) {
+    WRITER_NON_RECLAIMABLE_SECTION_GUARD(index);
+    dataFileStats_.push_back(collectWriterStats(index));
   }
 
-  // Close the writer to flush the footer and obtain file metadata, then
-  // aggregate Iceberg stats from the metadata. The base rotateWriter() would
-  // also call writers_[index]->close() but discards the returned metadata.
-  // We close the writer ourselves to capture the metadata, then reset the
-  // writer to prevent double close.
-  {
-    const memory::NonReclaimableSectionGuard nonReclaimableGuard(
-        writerInfo_[index]->nonReclaimableSectionHolder.get());
-    closeWriterAndCollectStats(index);
-  }
-
-  // Release old writer. The new writer will be created lazily on the next
-  // write call.
-  writers_[index].reset();
-
-  ++writerInfo_[index]->fileSequenceNumber;
+  // Call parent's rotateWriter to close the writer and finalize the file
+  HiveDataSink::rotateWriter(index);
 }
 
 void IcebergDataSink::closeInternal() {
@@ -624,7 +582,7 @@ void IcebergDataSink::closeInternal() {
       if (writers_[i]) {
         WRITER_NON_RECLAIMABLE_SECTION_GUARD(i);
         writers_[i]->close();
-        dataFileStats_.push_back(writers_[i]->dataFileStats());
+        dataFileStats_.push_back(collectWriterStats(i));
       }
     }
   } else {
@@ -648,7 +606,7 @@ void IcebergDataSink::closeWriter(int32_t index) {
       finishWriter(index);
     }
     writers_[index]->close();
-    dataFileStats_.push_back(writers_[index]->dataFileStats());
+    dataFileStats_.push_back(collectWriterStats(index));
     writers_[index] = nullptr;
   }
 }

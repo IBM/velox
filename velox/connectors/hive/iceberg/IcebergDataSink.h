@@ -171,6 +171,13 @@ class IcebergDataSink : public HiveDataSink {
 
   std::string getPartitionName(uint32_t partitionId) const override;
 
+  // Collects data file statistics from a writer. For Parquet writers, returns
+  // the stats directly from the writer. For DWRF/ORC writers, augments the
+  // stats with record count derived from writerInfo_->numWrittenRows since
+  // these formats don't expose row count in their metadata.
+  std::shared_ptr<dwio::common::DataFileStatistics> collectWriterStats(
+      size_t index);
+
   std::unique_ptr<dwio::common::Writer> maybeCreateBucketSortWriter(
       std::unique_ptr<dwio::common::Writer> writer);
 
