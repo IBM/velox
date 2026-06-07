@@ -219,8 +219,20 @@ void runBM(
   }
 }
 
+// Same as folly's BENCHMARK_NAMED_PARAM but stringizes only the param name,
+// so output lines read `<param_name>` instead of `runBM(<param_name>)`.
+#define BENCHMARK_PARAM_LABEL(name, param_name, ...)       \
+  BENCHMARK_IMPL(                                          \
+      FB_CONCATENATE(name, FB_CONCATENATE(_, param_name)), \
+      FOLLY_PP_STRINGIZE(param_name),                      \
+      iters,                                               \
+      unsigned,                                            \
+      iters) {                                             \
+    name(iters, ##__VA_ARGS__);                            \
+  }
+
 #define BENCHMARK_CONFIG(name, generator, numCols, nulls, numParts) \
-  BENCHMARK_NAMED_PARAM(                                            \
+  BENCHMARK_PARAM_LABEL(                                            \
       runBM,                                                        \
       name##_##numCols##Cols_##nulls##_P##numParts,                 \
       generator,                                                    \
