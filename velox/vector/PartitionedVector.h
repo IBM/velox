@@ -76,6 +76,27 @@ struct PartitionBuildContext {
   /// repeated allocation during multi-column partitioning.
   BufferPtr tempBuffer = nullptr;
 
+  /// Scratch storage for the per-virtual-partition end offsets. Allocated
+  /// by create() the first time isVirtual is true, reused across subsequent
+  /// calls; unused (may be stale) when isVirtual is false.
+  BufferPtr virtualPartitionOffsets = nullptr;
+
+  /// Total number of partitions the scatter id space spans. Before calling
+  /// create() the caller sets this to:
+  ///   numPartitions (or leaves it at the default 0):
+  ///                     `partitions` holds logical ids.
+  ///   numPartitions * fanout (fanout a power of two > 1):
+  ///                     `partitions` holds virtual ids; the caller
+  ///                     expanded each logical partition into `fanout`
+  ///                     virtual sub-partitions.
+  /// create() normalizes the default 0 to numPartitions before partition()
+  /// runs. partition() reads end offsets from:
+  ///   numVirtualPartitions == numPartitions_:  endPartitionOffsets_
+  ///                                            (logical / virtual views
+  ///                                            coincide).
+  ///   numVirtualPartitions >  numPartitions_:  virtualPartitionOffsets.
+  uint32_t numVirtualPartitions{0};
+
   PartitionBuildContext() = default;
 };
 
@@ -119,17 +140,30 @@ class PartitionedVector {
   /// - vector: the base vector to be partitioned. This is modified during
   ///   partitioning, and becomes the underlying vector of the created
   ///   PartitionedVector.
-  /// - partitions: a vector of partition IDs for each row in the base vector.
-  ///   The length of this vector must be the same as the number of rows in the
-  ///   base vector. Each entry must be a value between 0 and numPartitions - 1.
-  /// - numPartitions: the total number of partitions. This must be greater than
-  ///   0.
+  /// - partitions: a per-row partition id array, length must equal
+  ///   vector->size(). The ids are *logical* (in [0, numPartitions)) when
+  ///   ctx.numVirtualPartitions == numPartitions, and *virtual* (in
+  ///   [0, ctx.numVirtualPartitions)) when ctx.numVirtualPartitions >
+  ///   numPartitions. See ctx.
+  /// - numPartitions: the *logical* (user-visible) partition count. Must
+  ///   be > 0. partitionAt(p) indexes into [0, numPartitions).
   /// - ctx: the context object for building the partitioned vector. This
   ///   contains transient execution context needed during construction, such as
   ///   intermediate buffers. None of the fields in this context define the
   ///   logical state of the PartitionedVector, and none are retained after
   ///   create(). All fields in this context are only valid during the create()
-  ///   call.
+  ///   call. ctx.numVirtualPartitions selects the mode:
+  ///     0 (default) or numPartitions: `partitions` holds logical ids and
+  ///                            create() scatters over them directly.
+  ///     numPartitions * fanout (fanout a power of two > 1): the caller has
+  ///                            expanded each logical partition into fanout
+  ///                            virtual sub-partitions by striping row
+  ///                            positions across them, which reduces
+  ///                            serialization through the per-partition
+  ///                            cursor counters when the logical partition
+  ///                            count is small. partitionAt() still slices
+  ///                            by logical partition; logical end offsets
+  ///                            are recovered by folding the virtual offsets.
   /// - pool: the memory pool for allocating any necessary buffers during the
   ///   creation of the PartitionedVector.
   static PartitionedVectorPtr create(
@@ -180,12 +214,14 @@ class PartitionedVector {
 
  protected:
   // Internal create method that accepts pre-computed endPartitionOffsets
-  // buffer.
+  // buffer. Callers must have set ctx.numVirtualPartitions and, when
+  // ctx.numVirtualPartitions > numPartitions,
+  // ctx.virtualPartitionOffsets before invoking.
   static PartitionedVectorPtr create(
       const VectorPtr& vector,
       const std::vector<uint32_t>& partitions,
       uint32_t numPartitions,
-      const BufferPtr& partitionOffsetsBuffer,
+      const BufferPtr& endPartitionOffsets,
       PartitionBuildContext& ctx,
       velox::memory::MemoryPool* pool);
 
@@ -209,17 +245,35 @@ class PartitionedVector {
     rawEndPartitionOffsets_ = endPartitionOffsets_->asMutable<vector_size_t>();
   }
 
+  // Performs the in-place partitioning. `partitions` is the per-row
+  // partition id array passed to the public create(); its ids are in
+  // [0, ctx.numVirtualPartitions) — logical when
+  // ctx.numVirtualPartitions == numPartitions_, virtual when greater.
   virtual void partition(
       const std::vector<uint32_t>& partitions,
       PartitionBuildContext& ctx) = 0;
+
+  // Returns the end-offsets buffer the partition() step should scatter
+  // through. When ctx.numVirtualPartitions == numPartitions_ (no virtual
+  // partitioning) this is endPartitionOffsets_; otherwise it's
+  // ctx.virtualPartitionOffsets, which lives in the expanded virtual id
+  // space.
+  const BufferPtr& virtualEndOffsets(const PartitionBuildContext& ctx) const {
+    return ctx.numVirtualPartitions == numPartitions_
+        ? endPartitionOffsets_
+        : ctx.virtualPartitionOffsets;
+  }
 
   // The base vector that is being partitioned. This is modified during
   // partitioning.
   VectorPtr vector_;
 
-  // Total number of partitions. This is set at construction and does not change
-  // during partitioning. It doesn't have const quantifier because we want to
-  // allow move assignment operator.
+  // Logical (user-visible) partition count -- the id space partitionAt()
+  // indexes into. When virtual partitioning is active the scatter step
+  // operates over numPartitions_ * fanout virtual partitions, but
+  // numPartitions_ itself always refers to the logical count. Set at
+  // construction and not modified during partitioning. Non-const so move
+  // assignment stays valid.
   uint32_t numPartitions_;
 
   // The cumulative end row offsets for each partition. For example, if there

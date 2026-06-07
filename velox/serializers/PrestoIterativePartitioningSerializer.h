@@ -49,6 +49,7 @@ class PrestoIterativePartitioningSerializer {
       : PrestoIterativePartitioningSerializer(
             std::move(outputType),
             numPartitions,
+            /*numVirtualPartitions=*/0,
             opts,
             pool,
             {},
@@ -70,6 +71,7 @@ class PrestoIterativePartitioningSerializer {
       : PrestoIterativePartitioningSerializer(
             std::move(outputType),
             numPartitions,
+            /*numVirtualPartitions=*/0,
             opts,
             pool,
             {},
@@ -78,10 +80,16 @@ class PrestoIterativePartitioningSerializer {
   /// Constructs the serializer with an explicit output-column to input-column
   /// mapping. `outputToInputChannels[i]` indicates which child of the RowVector
   /// passed to append() should be serialized for output column i. When empty,
-  /// output column i uses input child i.
+  /// output column i uses input child i. `numVirtualPartitions` controls
+  /// virtual partitioning of the downstream PartitionedVector::create():
+  /// pass 0 (the default) or `numPartitions` for no virtual partitioning;
+  /// pass `numPartitions * fanout` (fanout a power of two > 1) when the
+  /// caller's partition function has already striped its ids across `fanout`
+  /// virtual sub-partitions per logical partition.
   PrestoIterativePartitioningSerializer(
       RowTypePtr outputType,
       uint32_t numPartitions,
+      uint32_t numVirtualPartitions,
       const SerdeOpts& opts,
       memory::MemoryPool* pool,
       std::vector<column_index_t> outputToInputChannels,
@@ -213,6 +221,11 @@ class PrestoIterativePartitioningSerializer {
   RowTypePtr outputType_;
   std::vector<column_index_t> outputToInputChannels_;
   uint32_t numPartitions_;
+  // Set by the constructor (defaulting to numPartitions_ when the caller
+  // passes 0). When > numPartitions_, append() forwards it via
+  // ctx.numVirtualPartitions so PartitionedVector::create() takes the
+  // virtual-partitioning scatter path.
+  uint32_t numVirtualPartitions_;
   SerdeOpts opts_;
   memory::MemoryPool* pool_;
 

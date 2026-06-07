@@ -19,9 +19,6 @@
 
 namespace facebook::velox {
 
-using Byte = uint8_t;
-using BitIndex = uint8_t;
-
 namespace {
 
 inline void countPartitionSizes(
@@ -59,6 +56,38 @@ inline void calculateOffsets(
     prefixSum(endPartitionOffsets, numPartitions);
   } else {
     endPartitionOffsets[0] = static_cast<vector_size_t>(partitions.size());
+  }
+}
+
+// Virtual partitioning support.
+//
+// When the logical partition count is small, the scatter loop
+//   output[cursor[partitions[i]]++] = input[i]
+// serializes on the cursor counters: many consecutive rows share a
+// partition and each iteration's store of cursor[p] feeds the next
+// iteration's load.
+//
+// To break that chain, the caller (typically the partition function that
+// produced partitions) may split each logical partition p into `fanout`
+// virtual sub-partitions [p*fanout, (p+1)*fanout) and stripe consecutive
+// rows of p across them, e.g.
+//   partitions[i] = (logicalId(row i)) * fanout + (i & (fanout - 1)).
+// Consecutive scatter iterations then write to distinct cursor slots.
+// Because logical partition p's rows occupy a contiguous range of virtual
+// sub-partitions, the buffer is in logical partition order after the
+// scatter and the logical end offsets can be recovered by picking the
+// last virtual sub-partition's end offset per logical p.
+
+// Folds virtual end offsets to logical end offsets: logical partition p's
+// end is the end of its last virtual sub-partition.
+void foldVirtualPartitionOffsets(
+    const vector_size_t* virtualEndOffsets,
+    uint32_t numPartitions,
+    uint32_t fanout,
+    vector_size_t* logicalEndOffsets) {
+  VELOX_DCHECK_GT(fanout, 1);
+  for (uint32_t p = 0; p < numPartitions; ++p) {
+    logicalEndOffsets[p] = virtualEndOffsets[(p + 1) * fanout - 1];
   }
 }
 
@@ -248,7 +277,8 @@ PartitionedVectorPtr createPartitionedRowVector(
       rowVector, numPartitions, endPartitionOffsets, pool);
 
   // Always call partition() to initialize partitionedChildren_, even when
-  // numPartitions == 1, so that partitionAt() can reconstruct the RowVector.
+  // numPartitions == 1, so that partitionAt() can reconstruct the
+  // RowVector.
   partitionedRowVector->partition(partitions, ctx);
 
   return partitionedRowVector;
@@ -268,20 +298,44 @@ PartitionedVectorPtr PartitionedVector::create(
   VELOX_CHECK_EQ(vector->size(), partitions.size());
   VELOX_CHECK_GT(numPartitions, 0);
   VELOX_CHECK_NOT_NULL(pool);
+  // The caller signals virtual partitioning by setting ctx.numVirtualPartitions
+  // to numPartitions * fanout (fanout a power of two > 1) before calling.
+  // Setting it to numPartitions (or leaving it at its default 0) disables
+  // virtual partitioning.
+  if (ctx.numVirtualPartitions == 0) {
+    ctx.numVirtualPartitions = numPartitions;
+  }
+  VELOX_CHECK_GE(ctx.numVirtualPartitions, numPartitions);
+  VELOX_CHECK_EQ(ctx.numVirtualPartitions % numPartitions, 0);
+  const uint32_t fanout = ctx.numVirtualPartitions / numPartitions;
+  VELOX_CHECK(fanout == 1 || bits::isPowerOfTwo(fanout));
+  const bool isVirtual = fanout > 1;
 
-  // Calculate the end offsets for each partition. For example, if there are 3
-  // partitions with 2, 3, and 1 rows respectively, then endPartitionOffsets[0]
-  // = 2, endPartitionOffsets[1] = 5, and endPartitionOffsets[2] = 6.
+  // Compute end offsets. Logical mode (fanout == 1) writes them straight
+  // into endPartitionOffsets — e.g. for 3 logical partitions of sizes
+  // 2, 3, 1 the result is {2, 5, 6}. Virtual mode (fanout > 1) computes
+  // offsets in the expanded ctx.numVirtualPartitions-wide id space first,
+  // then folds the last virtual sub-partition's end per logical p into
+  // endPartitionOffsets.
   BufferPtr endPartitionOffsets;
   ensureCapacity<vector_size_t>(endPartitionOffsets, numPartitions, pool);
-  calculateOffsets(
-      partitions,
-      numPartitions,
-      endPartitionOffsets->asMutable<vector_size_t>());
   endPartitionOffsets->setSize(numPartitions * sizeof(vector_size_t));
+  auto* logicalEndOffsets = endPartitionOffsets->asMutable<vector_size_t>();
+  if (isVirtual) {
+    ensureCapacity<vector_size_t>(
+        ctx.virtualPartitionOffsets, ctx.numVirtualPartitions, pool);
+    ctx.virtualPartitionOffsets->setSize(
+        ctx.numVirtualPartitions * sizeof(vector_size_t));
+    auto* virtualEndOffsets =
+        ctx.virtualPartitionOffsets->asMutable<vector_size_t>();
+    calculateOffsets(partitions, ctx.numVirtualPartitions, virtualEndOffsets);
+    foldVirtualPartitionOffsets(
+        virtualEndOffsets, numPartitions, fanout, logicalEndOffsets);
+  } else {
+    calculateOffsets(partitions, numPartitions, logicalEndOffsets);
+  }
 
-  auto raw = endPartitionOffsets->as<vector_size_t>();
-  VELOX_DCHECK_EQ(raw[numPartitions - 1], partitions.size());
+  VELOX_DCHECK_EQ(logicalEndOffsets[numPartitions - 1], partitions.size());
 
   return create(
       vector, partitions, numPartitions, endPartitionOffsets, ctx, pool);
@@ -294,9 +348,18 @@ PartitionedVectorPtr PartitionedVector::create(
     const BufferPtr& endPartitionOffsets,
     PartitionBuildContext& ctx,
     velox::memory::MemoryPool* pool) {
-  VELOX_CHECK_NOT_NULL(endPartitionOffsets);
-  VELOX_CHECK_EQ(
+  // Invariants here are established by the public create() (and preserved
+  // across the recursive descent for child columns); DCHECK is enough.
+  VELOX_DCHECK_NOT_NULL(endPartitionOffsets);
+  VELOX_DCHECK_EQ(
       endPartitionOffsets->size(), numPartitions * sizeof(vector_size_t));
+  VELOX_DCHECK_GE(ctx.numVirtualPartitions, numPartitions);
+  if (ctx.numVirtualPartitions > numPartitions) {
+    VELOX_DCHECK_NOT_NULL(ctx.virtualPartitionOffsets);
+    VELOX_DCHECK_EQ(
+        ctx.virtualPartitionOffsets->size(),
+        ctx.numVirtualPartitions * sizeof(vector_size_t));
+  }
 
   auto encoding = vector->encoding();
   auto typeKind = vector->typeKind();
@@ -371,8 +434,8 @@ void PartitionedFlatVector<T>::partition(
     const auto numBytes = bits::nbytes(numRows);
     initializeCursorPartitionOffsets(
         ctx.cursorPartitionOffsets,
-        endPartitionOffsets_,
-        numPartitions_,
+        virtualEndOffsets(ctx),
+        ctx.numVirtualPartitions,
         pool_);
     ensureCapacity<uint8_t>(ctx.tempBuffer, numBytes, pool_);
     scatterBitsInPlace(
@@ -389,8 +452,8 @@ void PartitionedFlatVector<T>::partition(
   partitionFixedWidthValues<T>(
       valuesBuffer,
       partitions,
-      endPartitionOffsets_,
-      numPartitions_,
+      virtualEndOffsets(ctx),
+      ctx.numVirtualPartitions,
       ctx,
       pool_);
   // Install the (swapped-in) partitioned buffer; ctx.tempBuffer now holds
@@ -444,8 +507,8 @@ void PartitionedRowVector::partition(
     const auto numBytes = bits::nbytes(numRows);
     initializeCursorPartitionOffsets(
         ctx.cursorPartitionOffsets,
-        endPartitionOffsets_,
-        numPartitions_,
+        virtualEndOffsets(ctx),
+        ctx.numVirtualPartitions,
         pool_);
     ensureCapacity<uint8_t>(ctx.tempBuffer, numBytes, pool_);
     scatterBitsInPlace(

@@ -33,6 +33,15 @@ class OptimizedPartitionedOutput : public Operator {
   /// network MTU.
   static constexpr uint64_t kMinDestinationSize = 60 * 1024;
 
+  /// Target number of virtual partitions used to stripe each logical
+  /// destination into multiple sub-partitions during partitioning. The
+  /// OptimizedHashPartitionFunction picks the largest power-of-two fanout
+  /// with numDestinations_ * fanout <= this target; PartitionedVector then
+  /// scatters across the expanded id space, breaking the per-cursor
+  /// dependency that bottlenecks small destination counts. Set to 0 to
+  /// disable virtual partitioning entirely.
+  static constexpr uint32_t kVirtualPartitionTarget = 256;
+
   OptimizedPartitionedOutput(
       int32_t operatorId,
       DriverCtx* ctx,
@@ -76,6 +85,15 @@ class OptimizedPartitionedOutput : public Operator {
   /// Non-empty when the output layout differs from the input
   const std::vector<column_index_t> outputChannels_;
   const int32_t numDestinations_;
+  /// Total number of virtual destinations the partition function emits ids
+  /// into. Equal to numDestinations_ when virtual partitioning is disabled
+  /// (non-Hash partition functions); otherwise numDestinations_ * fanout
+  /// where fanout is the largest power of two with
+  /// numDestinations_ * fanout <= kVirtualPartitionTarget. Set in the
+  /// constructor, used to construct partitionFunction_ over the virtual id
+  /// space and threaded into the serializer's ctx.numVirtualPartitions so
+  /// PartitionedVector::create() takes the virtual scatter path.
+  int32_t numVirtualDestinations_;
 
   const bool replicateNullsAndAny_;
   const std::weak_ptr<exec::OutputBufferManager> bufferManager_;

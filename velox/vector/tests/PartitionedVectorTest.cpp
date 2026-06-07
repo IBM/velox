@@ -46,9 +46,13 @@ class PartitioningVectorTest : public testing::TestWithParam<int>,
     std::vector<VectorPtr> expectedVectors =
         partitionVectorByWrapping(vectorCopy, partitions, numPartitions);
 
-    // Initialize buffers needed for PartitionedVector::create()
+    // Initialize buffers needed for PartitionedVector::create(). Reset
+    // numVirtualPartitions so create() sees a clean context — multiple
+    // calls in the same test reuse ctx_, and a stale value left over from
+    // a prior call with a different numPartitions would fail validation.
     ensureCapacity<vector_size_t>(
         ctx_.cursorPartitionOffsets, numPartitions, pool_.get());
+    ctx_.numVirtualPartitions = 0;
 
     // Calculate the number of values for each partition
     std::vector<vector_size_t> partitionRowCounts(numPartitions, 0);
@@ -76,6 +80,46 @@ class PartitioningVectorTest : public testing::TestWithParam<int>,
     for (uint32_t i = 0; i < numPartitions; ++i) {
       test::assertEqualVectors(
           expectedVectors[i], canonicalize(partitionedVectors[i]));
+    }
+  }
+
+  // Same as testPartitionedVector, but routes the partitioning through the
+  // virtual-id path: stripes each logical partition into `fanout` virtual
+  // sub-partitions and asserts that partitionAt(p) still returns the same
+  // logical row-set per partition (modulo intra-partition row order).
+  void testVirtualPartitionedVector(
+      VectorPtr vector,
+      const std::vector<uint32_t>& logicalPartitions,
+      uint32_t numPartitions,
+      uint32_t fanout) {
+    VELOX_CHECK_GT(fanout, 1);
+    VELOX_CHECK(bits::isPowerOfTwo(fanout));
+
+    // Reference partitioning against the logical ids.
+    VectorPtr vectorCopy = BaseVector::copy(*vector);
+    const std::vector<VectorPtr> expectedVectors =
+        partitionVectorByWrapping(vectorCopy, logicalPartitions, numPartitions);
+
+    // Stripe logical -> virtual: this is the work a fanout-aware partition
+    // function would do inline.
+    const auto numRows = static_cast<vector_size_t>(logicalPartitions.size());
+    const auto stripeMask = fanout - 1;
+    std::vector<uint32_t> virtualPartitions(numRows);
+    for (vector_size_t i = 0; i < numRows; ++i) {
+      virtualPartitions[i] = logicalPartitions[i] * fanout + (i & stripeMask);
+    }
+
+    ensureCapacity<vector_size_t>(
+        ctx_.cursorPartitionOffsets, numPartitions * fanout, pool_.get());
+    ctx_.numVirtualPartitions = numPartitions * fanout;
+
+    auto pv = PartitionedVector::create(
+        vector, virtualPartitions, numPartitions, ctx_, pool_.get());
+    VELOX_CHECK_NOT_NULL(pv);
+
+    for (uint32_t i = 0; i < numPartitions; ++i) {
+      test::assertEqualVectors(
+          expectedVectors[i], canonicalize(pv->partitionAt(i)));
     }
   }
 
@@ -225,6 +269,56 @@ TEST_P(PartitioningVectorTest, testConstantVector) {
       ROW({"c0", "c1"}, {INTEGER(), VARCHAR()}),
       variant::row({variant(11), variant("constant")}),
       numValues));
+}
+
+// Exercises the virtual-id path of PartitionedVector::create(): stripes
+// logical ids into virtual ids and verifies that partitionAt(p) still
+// returns the same logical row-set per partition.
+TEST_P(PartitioningVectorTest, virtualPartitioning) {
+  const int numValues = GetParam();
+  // Need >= 8 rows so the stripe across fanout=8 sub-partitions touches
+  // more than one row per virtual sub-partition.
+  if (numValues < 8) {
+    return;
+  }
+
+  constexpr uint32_t kNumPartitions = 4;
+  constexpr uint32_t kFanout = 8;
+
+  std::vector<uint32_t> logicalPartitions(numValues);
+  for (int i = 0; i < numValues; ++i) {
+    logicalPartitions[i] = i % kNumPartitions;
+  }
+
+  // Flat vector, no nulls.
+  testVirtualPartitionedVector(
+      makeFlatVector<int32_t>(numValues, [](auto row) { return row; }),
+      logicalPartitions,
+      kNumPartitions,
+      kFanout);
+
+  // Flat vector with nulls every other row — covers the null bitmap
+  // scatterBitsInPlace path through virtualEndOffsets().
+  testVirtualPartitionedVector(
+      makeFlatVector<int32_t>(
+          numValues, [](auto row) { return row; }, nullEvery(2)),
+      logicalPartitions,
+      kNumPartitions,
+      kFanout);
+
+  // Row vector with nullable children and row-level nulls — covers the
+  // recursive child partitioning and the row-level null scatter under
+  // virtual partitioning.
+  testVirtualPartitionedVector(
+      makeRowVector(
+          {makeFlatVector<int32_t>(
+               numValues, [](auto row) { return row; }, nullEvery(3)),
+           makeFlatVector<int64_t>(
+               numValues, [](auto row) { return row * 10; }, nullEvery(2))},
+          nullEvery(5)),
+      logicalPartitions,
+      kNumPartitions,
+      kFanout);
 }
 
 // Partitioning a null-free vector must not allocate a null buffer.

@@ -24,6 +24,10 @@
 // Add the following definitions to allow Clion runs
 DEFINE_bool(gtest_color, false, "");
 DEFINE_string(gtest_filter, "*", "");
+DEFINE_uint32(
+    virtual_partition_target,
+    256,
+    "Target number of virtual partitions. Set to 0 to disable.");
 
 using namespace facebook::velox;
 using namespace facebook::velox::test;
@@ -192,7 +196,21 @@ class VectorBuilder : public VectorTestBase {
 
 } // namespace
 
-/// Constructs all benchmark state and runs the benchmark. Called once per
+// Picks the largest power-of-two fanout with numPartitions * fanout <= target.
+// Returns 1 to disable virtual partitioning (when target is 0 or the logical
+// partition count already meets the target). Mirrors what
+// OptimizedPartitionedOutput would pick from its kVirtualPartitionTarget.
+uint32_t pickFanout(uint32_t numPartitions, uint32_t target) {
+  if (numPartitions < 2 || target <= numPartitions) {
+    return 1;
+  }
+  uint32_t fanout = 1;
+  while (numPartitions * fanout * 2 <= target) {
+    fanout *= 2;
+  }
+  return fanout;
+}
+
 /// benchmark entry; construction is outside the timed region.
 void runBM(
     uint32_t iterations,
@@ -204,11 +222,22 @@ void runBM(
   folly::BenchmarkSuspender suspender;
   VectorBuilder vectorBuilder;
   auto pool = memory::memoryManager()->addLeafPool();
+
+  // Simulate what OptimizedPartitionedOutput does: pick a fanout, ask the
+  // partition function to emit ids in the expanded virtual id space, then
+  // pass that count via ctx.numVirtualPartitions. No striping happens here.
+  const uint32_t fanout =
+      pickFanout(numPartitions, FLAGS_virtual_partition_target);
+  const uint32_t numVirtualPartitions = numPartitions * fanout;
+
   PartitionBuildContext ctx;
+  ctx.numVirtualPartitions = numVirtualPartitions;
+
   auto vector = vectorBuilder.makeRowVector(
       rowTypeGenerator(numColumns), numRows, isNullAt);
   std::vector<uint32_t> partitions;
-  randomPartitionFunction(vector, numPartitions, partitions);
+  randomPartitionFunction(vector, numVirtualPartitions, partitions);
+
   for (uint32_t i = 0; i < iterations; ++i) {
     const auto vectorCopy = std::static_pointer_cast<RowVector>(
         BaseVector::copy(*vector, pool.get()));

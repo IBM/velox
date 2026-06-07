@@ -24,6 +24,24 @@
 
 namespace facebook::velox::exec {
 
+namespace {
+
+// Returns the largest power of two with numDestinations * fanout <= target,
+// or 1 to disable virtual partitioning when numDestinations < 2 or already
+// meets the target.
+uint32_t pickVirtualPartitionFanout(uint32_t numDestinations, uint32_t target) {
+  if (numDestinations < 2 || target <= numDestinations) {
+    return 1;
+  }
+  uint32_t fanout = 1;
+  while (numDestinations * fanout * 2 <= target) {
+    fanout *= 2;
+  }
+  return fanout;
+}
+
+} // namespace
+
 OptimizedPartitionedOutput::OptimizedPartitionedOutput(
     int32_t operatorId,
     DriverCtx* ctx,
@@ -42,6 +60,11 @@ OptimizedPartitionedOutput::OptimizedPartitionedOutput(
           planNode->outputType(),
           planNode->outputType())),
       numDestinations_(planNode->numPartitions()),
+      // Set below, after partitionFunction_ is constructed. Defaults to
+      // numDestinations_ so the serializer behaves as if virtual
+      // partitioning is disabled when the partition function isn't an
+      // OptimizedHashPartitionFunction.
+      numVirtualDestinations_(numDestinations_),
       replicateNullsAndAny_(planNode->isReplicateNullsAndAny()),
       bufferManager_(OutputBufferManager::getInstanceRef()),
       // NOTE: 'bufferReleaseFn_' holds a reference on the associated task to
@@ -52,18 +75,36 @@ OptimizedPartitionedOutput::OptimizedPartitionedOutput(
       maxOutputBufferBytes_(ctx->task->queryCtx()
                                 ->queryConfig()
                                 .maxPartitionedOutputBufferSize()),
-      pool_(pool()),
-      partitionFunction_(
-          numDestinations_ == 1 ? nullptr
-                                : planNode->partitionFunctionSpec().create(
-                                      numDestinations_,
-                                      /*localExchange=*/false,
-                                      true)) {
+      pool_(pool()) {
   if (!planNode->isPartitioned()) {
     VELOX_USER_CHECK_EQ(numDestinations_, 1);
   }
   if (numDestinations_ == 1) {
     VELOX_USER_CHECK(keyChannels_.empty());
+  }
+
+  if (numDestinations_ > 1) {
+    // Virtual partitioning is only applied when the partition function
+    // spec is a HashPartitionFunctionSpec (which combined with
+    // useOptimizedPartitionFunction=true returns an
+    // OptimizedHashPartitionFunction). Other spec types
+    // (GatherPartitionFunctionSpec, RoundRobinPartitionFunctionSpec, etc.)
+    // keep numVirtualDestinations_ == numDestinations_, which disables
+    // virtual partitioning in the serializer.
+    if (dynamic_cast<const HashPartitionFunctionSpec*>(
+            &planNode->partitionFunctionSpec()) != nullptr) {
+      const uint32_t fanout = pickVirtualPartitionFanout(
+          static_cast<uint32_t>(numDestinations_), kVirtualPartitionTarget);
+      numVirtualDestinations_ = numDestinations_ * static_cast<int32_t>(fanout);
+    }
+    // Construct the partition function over the virtual id space directly:
+    // pass numVirtualDestinations_ as the partition count so partition()
+    // natively emits ids in [0, numVirtualDestinations_). addInput() then
+    // doesn't have to re-map the ids before passing them to the serializer.
+    partitionFunction_ = planNode->partitionFunctionSpec().create(
+        numVirtualDestinations_,
+        /*localExchange=*/false,
+        /*useOptimizedPartitionFunction=*/true);
   }
 
   serializer::presto::SerdeOpts options;
@@ -77,6 +118,7 @@ OptimizedPartitionedOutput::OptimizedPartitionedOutput(
       serializer::presto::PrestoIterativePartitioningSerializer>(
       outputType_,
       numDestinations_,
+      static_cast<uint32_t>(numVirtualDestinations_),
       options,
       pool_,
       serializerInputByOutput_,
@@ -107,6 +149,11 @@ void OptimizedPartitionedOutput::addInput(RowVectorPtr input) {
   if (numDestinations_ == 1) {
     std::fill(partitions_.begin(), partitions_.end(), 0u);
   } else {
+    // partitionFunction_ was constructed over the virtual id space
+    // (numVirtualDestinations_), so it natively emits virtual ids in
+    // [0, numVirtualDestinations_). No striping required here — the
+    // serializer's ctx.numVirtualPartitions == numVirtualDestinations_
+    // matches.
     std::optional<uint32_t> partition =
         partitionFunction_->partition(*input, partitions_);
     if (partition.has_value()) {

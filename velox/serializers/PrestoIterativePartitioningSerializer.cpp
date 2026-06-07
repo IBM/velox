@@ -433,6 +433,7 @@ std::unique_ptr<BufferState> BufferState::create(
 PrestoIterativePartitioningSerializer::PrestoIterativePartitioningSerializer(
     RowTypePtr outputType,
     uint32_t numPartitions,
+    uint32_t numVirtualPartitions,
     const SerdeOpts& opts,
     memory::MemoryPool* pool,
     std::vector<column_index_t> outputToInputChannels,
@@ -440,12 +441,16 @@ PrestoIterativePartitioningSerializer::PrestoIterativePartitioningSerializer(
     : outputType_(std::move(outputType)),
       outputToInputChannels_(std::move(outputToInputChannels)),
       numPartitions_(numPartitions),
+      numVirtualPartitions_(
+          numVirtualPartitions == 0 ? numPartitions : numVirtualPartitions),
       opts_(opts),
       pool_(pool),
       listenerFactory_(std::move(listenerFactory)),
       numColumns_(outputType_->size()),
       bufferState_(BufferState::create(outputType_, numPartitions_)) {
   VELOX_CHECK_GT(numPartitions_, 0);
+  VELOX_CHECK_GE(numVirtualPartitions_, numPartitions_);
+  VELOX_CHECK_EQ(numVirtualPartitions_ % numPartitions_, 0);
   VELOX_CHECK_NOT_NULL(pool_);
   VELOX_CHECK(
       outputToInputChannels_.empty() ||
@@ -591,6 +596,7 @@ void PrestoIterativePartitioningSerializer::append(
   }
 
   PartitionBuildContext ctx;
+  ctx.numVirtualPartitions = numVirtualPartitions_;
   auto partitionedRowVector = PartitionedVector::create(
       std::static_pointer_cast<BaseVector>(input),
       partitions,
