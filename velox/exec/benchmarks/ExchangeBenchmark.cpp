@@ -124,6 +124,7 @@ enum class SimpleColType {
   kHugeint,
   kLongDecimal,
   kDouble,
+  kVarchar,
 };
 
 TypePtr simpleColTypeToType(SimpleColType colType) {
@@ -142,6 +143,8 @@ TypePtr simpleColTypeToType(SimpleColType colType) {
       return DECIMAL(20, 3);
     case SimpleColType::kDouble:
       return DOUBLE();
+    case SimpleColType::kVarchar:
+      return VARCHAR();
   }
   VELOX_UNREACHABLE();
 }
@@ -162,6 +165,8 @@ std::string simpleColTypeName(SimpleColType colType) {
       return "LongDecimal";
     case SimpleColType::kDouble:
       return "Double";
+    case SimpleColType::kVarchar:
+      return "Varchar";
   }
   VELOX_UNREACHABLE();
 }
@@ -357,8 +362,14 @@ class ExchangeBenchmark : public VectorTestBase {
   /// Creates a single flat column of `type` with `numRows` rows.
   /// Approximately `nullPct` percent of rows are set to null, distributed
   /// uniformly (row % 100 < nullPct). Non-null values are sequential integers
-  /// cast to the native type.
-  VectorPtr makeColumn(const TypePtr& type, int32_t numRows, int32_t nullPct) {
+  /// cast to the native type. VARCHAR values alternate between inline and
+  /// non-inline strings, and `vectorIndex` helps constant columns cover both
+  /// cases.
+  VectorPtr makeColumn(
+      const TypePtr& type,
+      int32_t numRows,
+      int32_t nullPct,
+      int32_t vectorIndex = 0) {
     std::function<bool(vector_size_t)> isNull;
     if (nullPct == 100) {
       isNull = [](auto) { return true; };
@@ -401,6 +412,17 @@ class ExchangeBenchmark : public VectorTestBase {
             [](auto row) { return static_cast<int128_t>(row); },
             isNull,
             type);
+      case TypeKind::VARCHAR:
+        return makeFlatVector<std::string>(
+            numRows,
+            [vectorIndex](auto row) {
+              return std::string(
+                  row % 2 == 0 ? StringView::kInlineSize - 2
+                               : StringView::kInlineSize + 8,
+                  static_cast<char>('a' + ((row + vectorIndex) % 26)));
+            },
+            isNull,
+            type);
       default:
         VELOX_NYI(
             "makeColumn does not support complex type {} yet",
@@ -416,7 +438,7 @@ class ExchangeBenchmark : public VectorTestBase {
     const auto baseNullPct =
         nullPct > 0 && (vectorIndex % 100) < nullPct ? 100 : 0;
     return BaseVector::wrapInConstant(
-        numRows, 0, makeColumn(type, 1, baseNullPct));
+        numRows, 0, makeColumn(type, 1, baseNullPct, vectorIndex));
   }
 
   /// Generates input batches for the exchange benchmark.
@@ -451,7 +473,7 @@ class ExchangeBenchmark : public VectorTestBase {
               type->childAt(col), rowsPerVector, nullPct, i));
         } else {
           children.push_back(
-              makeColumn(type->childAt(col), rowsPerVector, nullPct));
+              makeColumn(type->childAt(col), rowsPerVector, nullPct, i));
         }
       }
       auto vector = makeRowVector(type->names(), children);
@@ -995,6 +1017,35 @@ EXCHANGE_BENCHMARK_DICTIONARY_CASE(
 EXCHANGE_BENCHMARK_DICTIONARY_CASE(
     10K_Double_col16,
     makeInputSpec(SimpleColType::kDouble, 16));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Varchar_col1,
+    makeInputSpec(SimpleColType::kVarchar, 1));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Varchar_col4,
+    makeInputSpec(SimpleColType::kVarchar, 4));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Varchar_col16,
+    makeInputSpec(SimpleColType::kVarchar, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Varchar_col1,
+    makeInputSpec(SimpleColType::kVarchar, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Varchar_col4,
+    makeInputSpec(SimpleColType::kVarchar, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Varchar_col16,
+    makeInputSpec(SimpleColType::kVarchar, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Varchar_col1,
+    makeInputSpec(SimpleColType::kVarchar, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Varchar_col4,
+    makeInputSpec(SimpleColType::kVarchar, 4));
+
+// Temporarily disable this benchmark because of large memory usage.
+// EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+//     10K_Varchar_col16,
+//     makeInputSpec(SimpleColType::kVarchar, 16));
 
 // The complex type benchmarks are temporarily disabled.
 // EXCHANGE_BENCHMARK_CASE(Deep10K, makeInputSpec(ExchangeInputKind::kDeep10K));
