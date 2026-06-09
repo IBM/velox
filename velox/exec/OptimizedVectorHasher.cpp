@@ -64,7 +64,18 @@ template <bool Mix, typename ComputeHash>
 inline void
 hashLoopNoNulls(vector_size_t size, uint64_t* result, ComputeHash computeHash) {
   if constexpr (Mix) {
-    for (vector_size_t i = 0; i < size; ++i) {
+    vector_size_t i{0};
+    for (; i + 8 <= size; i += 8) {
+      result[i] = bits::hashMix(result[i], computeHash(i));
+      result[i + 1] = bits::hashMix(result[i + 1], computeHash(i + 1));
+      result[i + 2] = bits::hashMix(result[i + 2], computeHash(i + 2));
+      result[i + 3] = bits::hashMix(result[i + 3], computeHash(i + 3));
+      result[i + 4] = bits::hashMix(result[i + 4], computeHash(i + 4));
+      result[i + 5] = bits::hashMix(result[i + 5], computeHash(i + 5));
+      result[i + 6] = bits::hashMix(result[i + 6], computeHash(i + 6));
+      result[i + 7] = bits::hashMix(result[i + 7], computeHash(i + 7));
+    }
+    for (; i < size; ++i) {
       result[i] = bits::hashMix(result[i], computeHash(i));
     }
   } else {
@@ -131,9 +142,8 @@ inline void scatterDictionaryHashesWithExtraNulls(
   }
 }
 
-/// converts Velox’s packed boolean storage into one hash per row.
-/// @param values: a bitmap: one bit per row, where set means true and unset
-/// means false
+// Converts Velox's packed boolean storage into one hash per row. A set bit in
+// 'values' means true and an unset bit means false.
 template <bool Mix>
 inline void scatterBoolHashes(
     vector_size_t size,
