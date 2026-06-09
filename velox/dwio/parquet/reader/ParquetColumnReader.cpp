@@ -39,8 +39,7 @@ std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
     const TypePtr& requestedType,
     const std::shared_ptr<const dwio::common::TypeWithId>& fileType,
     ParquetParams& params,
-    common::ScanSpec& scanSpec,
-    memory::MemoryPool& pool) {
+    common::ScanSpec& scanSpec) {
   VELOX_CHECK_EQ(
       static_cast<int>(scanSpec.extractionType()),
       static_cast<int>(common::ScanSpec::ExtractionType::kNone),
@@ -78,7 +77,7 @@ std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
 
     case TypeKind::ROW:
       return std::make_unique<StructColumnReader>(
-          columnReaderOptions, requestedType, fileType, params, scanSpec, pool);
+          columnReaderOptions, requestedType, fileType, params, scanSpec);
 
     case TypeKind::VARBINARY:
     case TypeKind::VARCHAR:
@@ -87,11 +86,12 @@ std::unique_ptr<dwio::common::SelectiveColumnReader> ParquetColumnReader::build(
     case TypeKind::ARRAY: {
       VELOX_CHECK(requestedType->isArray(), "Requested type must be array");
       return std::make_unique<ListColumnReader>(
-          columnReaderOptions, requestedType, fileType, params, scanSpec, pool);
+          columnReaderOptions, requestedType, fileType, params, scanSpec);
     }
+
     case TypeKind::MAP:
       return std::make_unique<MapColumnReader>(
-          columnReaderOptions, requestedType, fileType, params, scanSpec, pool);
+          columnReaderOptions, requestedType, fileType, params, scanSpec);
 
     case TypeKind::BOOLEAN:
       return std::make_unique<BooleanColumnReader>(

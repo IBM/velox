@@ -31,7 +31,6 @@ TEST(FileConfigTest, defaultConfig) {
 
   EXPECT_FALSE(config.isOrcUseColumnNames(emptySession.get()));
   EXPECT_FALSE(config.isParquetUseColumnNames(emptySession.get()));
-  EXPECT_FALSE(config.isParquetNullStructForMissingFields(emptySession.get()));
   EXPECT_FALSE(config.isFileColumnNamesReadAsLowerCase(emptySession.get()));
   EXPECT_FALSE(config.ignoreMissingFiles(emptySession.get()));
   EXPECT_EQ(config.maxCoalescedBytes(emptySession.get()), 128 << 20);
@@ -64,7 +63,6 @@ TEST(FileConfigTest, overrideConfig) {
   std::unordered_map<std::string, std::string> configFromFile = {
       {FileConfig::kOrcUseColumnNames, "true"},
       {FileConfig::kParquetUseColumnNames, "true"},
-      {FileConfig::kParquetNullStructForMissingFields, "true"},
       {FileConfig::kFileColumnNamesReadAsLowerCase, "true"},
       {FileConfig::kMaxCoalescedBytes, "100"},
       {FileConfig::kMaxCoalescedDistance, "100kB"},
@@ -92,7 +90,6 @@ TEST(FileConfigTest, overrideConfig) {
 
   EXPECT_TRUE(config.isOrcUseColumnNames(emptySession.get()));
   EXPECT_TRUE(config.isParquetUseColumnNames(emptySession.get()));
-  EXPECT_TRUE(config.isParquetNullStructForMissingFields(emptySession.get()));
   EXPECT_TRUE(config.isFileColumnNamesReadAsLowerCase(emptySession.get()));
   EXPECT_EQ(config.maxCoalescedBytes(emptySession.get()), 100);
   EXPECT_EQ(config.maxCoalescedDistanceBytes(emptySession.get()), 100 << 10);
@@ -123,7 +120,6 @@ TEST(FileConfigTest, overrideSession) {
   std::unordered_map<std::string, std::string> sessionOverride = {
       {FileConfig::kOrcUseColumnNamesSession, "true"},
       {FileConfig::kParquetUseColumnNamesSession, "true"},
-      {FileConfig::kParquetNullStructForMissingFieldsSession, "true"},
       {FileConfig::kFileColumnNamesReadAsLowerCaseSession, "true"},
       {FileConfig::kIgnoreMissingFilesSession, "true"},
       {FileConfig::kMaxCoalescedDistanceSession, "3MB"},
@@ -150,7 +146,6 @@ TEST(FileConfigTest, overrideSession) {
 
   EXPECT_TRUE(config.isOrcUseColumnNames(session.get()));
   EXPECT_TRUE(config.isParquetUseColumnNames(session.get()));
-  EXPECT_TRUE(config.isParquetNullStructForMissingFields(session.get()));
   EXPECT_TRUE(config.isFileColumnNamesReadAsLowerCase(session.get()));
   EXPECT_TRUE(config.ignoreMissingFiles(session.get()));
   EXPECT_EQ(config.maxCoalescedDistanceBytes(session.get()), 3 << 20);
