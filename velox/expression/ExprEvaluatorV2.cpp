@@ -441,10 +441,106 @@ void ExprEvaluatorV2::evaluateWithNullPruning(EvalFrame& f) {
 
 void ExprEvaluatorV2::evaluateWithSharedSubexpr(EvalFrame& f) {
   DebugRemainingRowsGuard guard{f};
-  // TODO(step 8): port SharedSubexprCache::tryReuse from
-  // Expr::evaluateSharedSubexpr.  For step 4 this layer is a
-  // pass-through.
-  evaluateNodeBody(f);
+
+  // Mirrors the wrapper in Expr::evalAll (Expr.cpp:1459): only invoke
+  // the shared-subexpr cache when the expression is a CSE candidate.
+  if (!f.deterministic || !f.expr.isMultiplyReferenced() ||
+      f.expr.inputs().empty() || !f.ctx.sharedSubExpressionReuseEnabled()) {
+    evaluateNodeBody(f);
+    return;
+  }
+
+  // Mirrors Expr::evaluateSharedSubexpr (Expr.cpp:899).  Cache keyed
+  // by the identity of all distinct input field vectors.
+  auto& cache = f.nodeRuntime.sharedCache.entries;
+
+  InputForSharedResults key;
+  for (auto* field : f.expr.distinctFields()) {
+    key.addInput(f.ctx.getField(field->index(f.ctx)));
+  }
+
+  auto it = cache.find(key);
+  if (it != cache.end() && it->first.isExpired()) {
+    cache.erase(it);
+    it = cache.end();
+  }
+
+  if (it == cache.end()) {
+    auto max = f.ctx.maxSharedSubexprResultsCached();
+    if (cache.size() < max) {
+      it = cache.insert({std::move(key), SharedResults{}}).first;
+    } else {
+      // Cache full: evaluate without caching.
+      evaluateNodeBody(f);
+      return;
+    }
+  }
+
+  auto& sharedRows = it->second.sharedSubexprRows;
+  auto& sharedValues = it->second.sharedSubexprValues;
+
+  // First observation under this key: compute, store, return.
+  if (sharedValues == nullptr) {
+    evaluateNodeBody(f);
+    if (!sharedRows) {
+      sharedRows = f.ctx.execCtx()->getSelectivityVector(
+          f.remainingRows.rows().end());
+    }
+    *sharedRows = f.remainingRows.rows();
+    if (f.ctx.errors()) {
+      f.ctx.deselectErrors(*sharedRows);
+      if (!sharedRows->hasSelections()) {
+        // No usable rows; don't cache.
+        return;
+      }
+    }
+    sharedValues = f.result;
+    return;
+  }
+
+  // Full hit: every requested row is already cached.
+  if (f.remainingRows.rows().isSubset(*sharedRows)) {
+    f.ctx.moveOrCopyResult(sharedValues, f.remainingRows.rows(), f.result);
+    return;
+  }
+
+  // Partial hit: compute the missing rows on top of cached results.
+  LocalSelectivityVector missingHolder(f.ctx, f.remainingRows.rows());
+  auto* missing = missingHolder.get();
+  missing->deselect(*sharedRows);
+  VELOX_DCHECK(missing->hasSelections());
+
+  // Final selection must cover sharedRows ∪ missing ∪ existing
+  // finalSelection so values outside 'missing' aren't lost when the
+  // child writes into sharedValues.
+  LocalSelectivityVector newFinalSelHolder(f.ctx, *sharedRows);
+  auto* newFinalSel = newFinalSelHolder.get();
+  newFinalSel->select(*missing);
+  if (!f.ctx.isFinalSelection()) {
+    newFinalSel->select(*f.ctx.finalSelection());
+  }
+  ScopedFinalSelectionSetter finalSetter(
+      f.ctx,
+      newFinalSel,
+      /*checkCondition=*/true,
+      /*override=*/true);
+
+  EvalFrame missingFrame{
+      f.expr, f.runtimeStates, f.ctx, *missing, sharedValues};
+  evaluateNodeBody(missingFrame);
+
+  f.ctx.deselectErrors(*missing);
+  sharedRows->select(*missing);
+
+  if (f.ctx.errors()) {
+    LocalSelectivityVector rowsWithoutErrorsHolder(
+        f.ctx, f.remainingRows.rows());
+    auto* rowsWithoutErrors = rowsWithoutErrorsHolder.get();
+    f.ctx.deselectErrors(*rowsWithoutErrors);
+    f.ctx.moveOrCopyResult(sharedValues, *rowsWithoutErrors, f.result);
+  } else {
+    f.ctx.moveOrCopyResult(sharedValues, f.remainingRows.rows(), f.result);
+  }
 }
 
 void ExprEvaluatorV2::evaluateNodeBody(EvalFrame& f) {
