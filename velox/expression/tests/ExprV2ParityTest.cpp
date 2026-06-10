@@ -221,6 +221,50 @@ TEST_F(ExprV2ParityTest, twoDictionariesSameBase) {
   assertParity("a + b", input);
 }
 
+// Repeated sub-expression (a + b) -- the compiler may identify this as
+// a shared sub-expression and mark it isMultiplyReferenced, exercising
+// SharedSubexprCache.  Even if the compiler doesn't dedupe, V2 falls
+// back to evaluateNodeBody and still matches V1.
+TEST_F(ExprV2ParityTest, repeatedSubexpression) {
+  auto a = makeFlatVector<int64_t>({1, 2, 3, 4, 5});
+  auto b = makeFlatVector<int64_t>({10, 20, 30, 40, 50});
+  auto input = makeRowVector({"a", "b"}, {a, b});
+  assertParity("(a + b) * (a + b)", input);
+}
+
+// Same shared sub-expression evaluated across multiple batches.  If
+// the compiler shares the AST node, the second batch will hit the
+// cache; if not, V2 still matches V1.
+TEST_F(ExprV2ParityTest, sharedSubexprAcrossBatches) {
+  auto rowType = ROW({{"a", BIGINT()}, {"b", BIGINT()}});
+  auto untyped = parse::DuckSqlExpressionsParser(options_).parseExpr(
+      "(a + b) + (a + b) + (a + b)");
+  auto typed =
+      core::Expressions::inferTypes(untyped, rowType, execCtx_->pool());
+
+  auto v1Set = std::make_shared<ExprSet>(
+      std::vector<core::TypedExprPtr>{typed}, execCtx_.get());
+  ExprSetV2 v2Set{v1Set};
+
+  for (int batch = 0; batch < 2; ++batch) {
+    auto input = makeRowVector(
+        {"a", "b"},
+        {makeFlatVector<int64_t>({1 + batch, 2 + batch, 3 + batch}),
+         makeFlatVector<int64_t>({10 + batch, 20 + batch, 30 + batch})});
+    SelectivityVector rows{input->size()};
+
+    EvalCtx v1Ctx{execCtx_.get(), v1Set.get(), input.get()};
+    std::vector<VectorPtr> v1Results(1);
+    v1Set->eval(rows, v1Ctx, v1Results);
+
+    EvalCtx v2Ctx{execCtx_.get(), v2Set.sourceSet().get(), input.get()};
+    std::vector<VectorPtr> v2Results(1);
+    v2Set.eval(rows, v2Ctx, v2Results);
+
+    velox::test::assertEqualVectors(v1Results[0], v2Results[0]);
+  }
+}
+
 // Empty selectivity vector -- emitEmpty path.
 TEST_F(ExprV2ParityTest, emptyRows) {
   auto input = makeRowVector(
