@@ -215,13 +215,13 @@ void ExprEvaluatorV2::evaluateWithFieldPeeling(EvalFrame& f) {
 
     VectorPtr peeledResult;
     if (peel.newRows->hasSelections()) {
-      // Construct an inner frame on the peeled inner row space and
-      // skip past evaluateWithFieldPeeling -- we've already peeled.
-      // TODO(step 6): when peel.mayCache, route through
-      // DictionaryMemo::evaluate before reaching null pruning.
       EvalFrame innerFrame{
           f.expr, f.runtimeStates, f.ctx, *peel.newRows, peeledResult};
-      evaluateWithNullPruning(innerFrame);
+      if (peel.mayCache) {
+        evaluateDictionaryMemo(innerFrame);
+      } else {
+        evaluateWithNullPruning(innerFrame);
+      }
     }
 
     wrappedResult = f.ctx.getPeeledEncoding()->wrap(
@@ -237,10 +237,114 @@ void ExprEvaluatorV2::evaluateWithFieldPeeling(EvalFrame& f) {
   evaluateWithNullPruning(f);
 }
 
+void ExprEvaluatorV2::evaluateDictionaryMemo(EvalFrame& f) {
+  // Mirrors Expr::evalWithMemo (Expr.cpp:1246).  Reached only from
+  // FieldPeeling when peel.mayCache is true.
+  auto& memo = f.nodeRuntime.dictMemo;
+
+  VectorPtr base;
+  f.expr.distinctFields()[0]->evalSpecialForm(
+      f.remainingRows.rows(), f.ctx, base);
+
+  // Cache miss: the base vector identity has changed or the previous
+  // weak reference expired.  Reset cache state and recompute.
+  if (base.get() != memo.baseOfDictionaryRawPtr ||
+      memo.baseOfDictionaryWeakPtr.expired()) {
+    memo.baseOfDictionaryRepeats = 0;
+    memo.baseOfDictionaryWeakPtr.reset();
+    memo.baseOfDictionaryRawPtr = nullptr;
+    f.ctx.releaseVector(memo.baseOfDictionary);
+    f.ctx.releaseVector(memo.dictionaryCache);
+
+    evaluateWithNullPruning(f);
+    memo.baseOfDictionaryWeakPtr = base;
+    memo.baseOfDictionaryRawPtr = base.get();
+    return;
+  }
+
+  // First repeat of the same base: start caching.
+  if (memo.baseOfDictionaryRepeats == 0) {
+    evaluateWithNullPruning(f);
+    ++memo.baseOfDictionaryRepeats;
+    memo.baseOfDictionary = base;
+    memo.dictionaryCache = f.result;
+    if (!memo.cachedDictionaryIndices) {
+      memo.cachedDictionaryIndices = f.ctx.execCtx()->getSelectivityVector(
+          f.remainingRows.rows().end());
+    }
+    *memo.cachedDictionaryIndices = f.remainingRows.rows();
+    f.ctx.deselectErrors(*memo.cachedDictionaryIndices);
+    return;
+  }
+
+  ++memo.baseOfDictionaryRepeats;
+
+  // Copy cached values into the result for cached rows.
+  if (memo.cachedDictionaryIndices) {
+    LocalSelectivityVector cachedHolder(f.ctx, f.remainingRows.rows());
+    auto* cached = cachedHolder.get();
+    VELOX_DCHECK(cached != nullptr);
+    cached->intersect(*memo.cachedDictionaryIndices);
+    if (cached->hasSelections()) {
+      f.ctx.ensureWritable(
+          f.remainingRows.rows(), f.expr.type(), f.result);
+      f.result->copy(memo.dictionaryCache.get(), *cached, nullptr);
+    }
+  }
+
+  // Compute uncached rows by recursing on a child frame.
+  LocalSelectivityVector uncachedHolder(f.ctx, f.remainingRows.rows());
+  auto* uncached = uncachedHolder.get();
+  VELOX_DCHECK(uncached != nullptr);
+  if (memo.cachedDictionaryIndices) {
+    uncached->deselect(*memo.cachedDictionaryIndices);
+  }
+
+  if (uncached->hasSelections()) {
+    // Fix finalSelection at the outer rows if uncached is a strict
+    // subset, to avoid losing values not in uncached that were copied
+    // earlier into 'result' from cached rows.
+    ScopedFinalSelectionSetter finalSelectionSetter(
+        f.ctx,
+        &f.remainingRows.rows(),
+        uncached->countSelected() < f.remainingRows.rows().countSelected());
+
+    EvalFrame uncachedFrame{
+        f.expr, f.runtimeStates, f.ctx, *uncached, f.result};
+    evaluateWithNullPruning(uncachedFrame);
+    f.ctx.deselectErrors(*uncached);
+
+    if (uncached->hasSelections()) {
+      // TODO(step 14): register with V2's memo invalidation registry so
+      // ExprSet::clearMemo / clearCache also clears V2 state.  V1 calls
+      // context.exprSet()->addToMemo(this) here; equivalent V2 plumbing
+      // is deferred to the cutover step.
+      auto newCacheSize = uncached->end();
+
+      LocalSelectivityVector allUncached(f.ctx, memo.dictionaryCache->size());
+      allUncached.get()->setAll();
+      allUncached.get()->deselect(*memo.cachedDictionaryIndices);
+      f.ctx.ensureWritable(
+          *allUncached.get(), f.expr.type(), memo.dictionaryCache);
+
+      if (memo.cachedDictionaryIndices->size() < newCacheSize) {
+        memo.cachedDictionaryIndices->resize(newCacheSize, false);
+      }
+      memo.cachedDictionaryIndices->select(*uncached);
+
+      if (memo.dictionaryCache->size() < uncached->end()) {
+        memo.dictionaryCache->resize(uncached->end());
+      }
+      memo.dictionaryCache->copy(f.result.get(), *uncached, nullptr);
+    }
+  }
+  f.ctx.releaseVector(base);
+}
+
 void ExprEvaluatorV2::evaluateWithNullPruning(EvalFrame& f) {
   DebugRemainingRowsGuard guard{f};
   // TODO(step 7): port NullPruning::tryPrune from Expr::evalWithNulls.
-  // For step 4 this layer is a pass-through.
+  // For now this layer is a pass-through.
   evaluateWithSharedSubexpr(f);
 }
 

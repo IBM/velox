@@ -47,6 +47,7 @@ class ExprEvaluatorV2 {
   // layer owns, not what the previous layer did.
   void evaluateFrame(EvalFrame& f, const ExprSetV2* parentSet);
   void evaluateWithFieldPeeling(EvalFrame& f);
+  void evaluateDictionaryMemo(EvalFrame& f);
   void evaluateWithNullPruning(EvalFrame& f);
   void evaluateWithSharedSubexpr(EvalFrame& f);
   void evaluateNodeBody(EvalFrame& f);

@@ -22,6 +22,8 @@
 #include <folly/container/F14Map.h>
 
 #include "velox/expression/ExprStats.h"
+#include "velox/vector/BaseVector.h"
+#include "velox/vector/SelectivityVector.h"
 
 namespace facebook::velox::exec {
 
@@ -30,8 +32,33 @@ class ExprV2;
 /// Placeholder for shared-subexpression cache state.  Populated in step 8.
 struct SharedSubexprCacheState {};
 
-/// Placeholder for dictionary memoization state.  Populated in step 6.
-struct DictionaryMemoState {};
+/// Per-Expr dictionary memoization state.  Mirrors the cluster of
+/// member variables on Expr (baseOfDictionary*, dictionaryCache_,
+/// cachedDictionaryIndices_, baseOfDictionaryRepeats_).  Populated by
+/// the DictionaryMemo phase only on the peeled+mayCache path.
+struct DictionaryMemoState {
+  // Weak/raw pointers to the last cached base vector.  The weak_ptr is
+  // checked for expiration to invalidate when inputs die between
+  // batches; the raw pointer is the fast-path identity check.
+  std::weak_ptr<BaseVector> baseOfDictionaryWeakPtr;
+  BaseVector* baseOfDictionaryRawPtr{nullptr};
+
+  // Strong reference taken on the second observation of the same base
+  // (i.e. once baseOfDictionaryRepeats >= 1).  Pinning the base ensures
+  // the dictionary indices remain valid.
+  VectorPtr baseOfDictionary;
+
+  // Number of consecutive batches that have used the same base.  0 on
+  // first observation; caching begins on the transition 0 -> 1.
+  int baseOfDictionaryRepeats{0};
+
+  // Cached output values, indexed in the base dictionary's row space.
+  VectorPtr dictionaryCache;
+
+  // Set of rows in 'dictionaryCache' that are valid (have been computed
+  // successfully).
+  std::unique_ptr<SelectivityVector> cachedDictionaryIndices;
+};
 
 /// Placeholder for adaptive CPU sampling state.  Populated in step 10.
 struct AdaptiveSamplingState {};
