@@ -39,6 +39,34 @@ void emitNullConstant(
   }
 }
 
+// Mirrors Expr.cpp:1438.
+bool isPeelable(VectorEncoding::Simple encoding) {
+  return encoding == VectorEncoding::Simple::CONSTANT ||
+      encoding == VectorEncoding::Simple::DICTIONARY;
+}
+
+// Mirrors Expr::throwArgumentErrors (Expr.cpp:1472).
+bool throwArgumentErrors(const EvalFrame& f) {
+  return f.ctx.throwOnError() &&
+      (!f.defaultNulls ||
+       (f.supportsFlatNoNullsFastPath && f.ctx.inputFlatNoNulls()));
+}
+
+// Mirrors mergeOrThrowArgumentErrors (Expr.cpp:339).
+void mergeOrThrowArgumentErrors(
+    const SelectivityVector& rows,
+    EvalErrorsPtr& originalErrors,
+    EvalErrorsPtr& argumentErrors,
+    EvalCtx& context) {
+  if (argumentErrors) {
+    if (context.throwOnError()) {
+      argumentErrors->throwFirstError(rows);
+    }
+    context.addErrors(rows, argumentErrors, originalErrors);
+  }
+  context.swapErrors(originalErrors);
+}
+
 // Mirrors the file-private isFlat() in Expr.cpp (line 355).
 bool isFlat(const BaseVector& vector) {
   auto encoding = vector.encoding();
@@ -559,10 +587,109 @@ void ExprEvaluatorV2::evaluateFunctionCall(EvalFrame& f) {
     f.inputValues.clear();
   });
 
-  // TODO(step 9): port ArgEval::evaluate (default-null vs
-  // preserve-null strategies, error swapping).  For step 4 the
-  // harness restricts to expressions with no-null inputs, where
-  // preserve-null and default-null are equivalent.
+  // Reset before each arg-eval attempt; the strategies populate
+  // inputValues, and ArgPeeling reads tryPeelArgs.
+  f.tryPeelArgs = f.deterministic;
+
+  bool argsOk = f.defaultNulls ? evalArgsDefaultNull(f) : evalArgsPreserveNull(f);
+  if (!argsOk) {
+    // setAllNulls already applied to originalRows.
+    return;
+  }
+
+  if (!f.tryPeelArgs || !tryApplyWithPeeling(f)) {
+    applyFunction(f);
+  }
+
+  // Write nulls for any rows that ArgEval pruned (default-null path).
+  if (f.remainingRows.hasChanged()) {
+    EvalCtx::addNulls(
+        f.originalRows,
+        f.remainingRows.rows().asRange().bits(),
+        f.ctx,
+        f.expr.type(),
+        f.result);
+  }
+}
+
+bool ExprEvaluatorV2::evalArgsDefaultNull(EvalFrame& f) {
+  // Mirrors Expr::evalArgsDefaultNulls (Expr.cpp:380).  For each child:
+  // evaluate, then deselect rows that are null and have no error.
+  EvalErrorsPtr argumentErrors;
+  EvalErrorsPtr originalErrors;
+  LocalDecodedVector decoded(f.ctx);
+
+  // Set aside pre-existing errors so we can distinguish argument errors.
+  if (f.ctx.errors()) {
+    f.ctx.swapErrors(originalErrors);
+  }
+
+  f.inputValues.resize(f.expr.inputs().size());
+  {
+    ScopedVarSetter throwErrors(
+        f.ctx.mutableThrowOnError(), throwArgumentErrors(f));
+
+    for (size_t i = 0; i < f.expr.inputs().size(); ++i) {
+      auto& childExpr = *f.expr.inputs()[i];
+      EvalFrame childFrame{
+          childExpr,
+          f.runtimeStates,
+          f.ctx,
+          f.remainingRows.rows(),
+          f.inputValues[i]};
+      evaluate(childFrame, /*parentSet=*/nullptr);
+      f.tryPeelArgs =
+          f.tryPeelArgs && isPeelable(f.inputValues[i]->encoding());
+
+      const uint64_t* flatNulls = nullptr;
+      auto& arg = f.inputValues[i];
+      if (arg->mayHaveNulls()) {
+        decoded.get()->decode(*arg, f.remainingRows.rows());
+        flatNulls = decoded.get()->nulls(&f.remainingRows.rows());
+      }
+
+      if (f.ctx.errors()) {
+        f.ctx.ensureErrorsVectorSize(f.remainingRows.rows().end());
+        auto* newErrors = f.ctx.errors();
+        if (flatNulls) {
+          // Null without error removes the row; null with error keeps
+          // the error.
+          auto errorNulls = newErrors->errorFlags();
+          auto* rowBits = f.remainingRows.mutableRows().asMutableRange().bits();
+          auto nwords = bits::nwords(f.remainingRows.rows().end());
+          for (size_t w = 0; w < nwords; ++w) {
+            auto nullNoError =
+                errorNulls ? flatNulls[w] | errorNulls[w] : flatNulls[w];
+            rowBits[w] &= nullNoError;
+          }
+          f.remainingRows.mutableRows().updateBounds();
+        }
+        f.ctx.moveAppendErrors(argumentErrors);
+      } else if (flatNulls) {
+        f.remainingRows.deselectNulls(flatNulls);
+      }
+
+      if (!f.remainingRows.rows().hasSelections()) {
+        break;
+      }
+    }
+  }
+
+  mergeOrThrowArgumentErrors(
+      f.remainingRows.rows(), originalErrors, argumentErrors, f.ctx);
+
+  if (!f.remainingRows.deselectErrors()) {
+    f.ctx.releaseVectors(f.inputValues);
+    f.inputValues.clear();
+    setAllNulls(f, f.remainingRows.originalRows());
+    return false;
+  }
+  return true;
+}
+
+bool ExprEvaluatorV2::evalArgsPreserveNull(EvalFrame& f) {
+  // Mirrors Expr::evalArgsWithNulls (Expr.cpp:455).  Nulls are not
+  // pruned; only error rows are removed.
   f.inputValues.resize(f.expr.inputs().size());
   for (size_t i = 0; i < f.expr.inputs().size(); ++i) {
     auto& childExpr = *f.expr.inputs()[i];
@@ -573,16 +700,104 @@ void ExprEvaluatorV2::evaluateFunctionCall(EvalFrame& f) {
         f.remainingRows.rows(),
         f.inputValues[i]};
     evaluate(childFrame, /*parentSet=*/nullptr);
+    f.tryPeelArgs =
+        f.tryPeelArgs && isPeelable(f.inputValues[i]->encoding());
+
+    if (!f.remainingRows.deselectErrors()) {
+      break;
+    }
+  }
+  if (!f.remainingRows.rows().hasSelections()) {
+    f.ctx.releaseVectors(f.inputValues);
+    f.inputValues.clear();
+    setAllNulls(f, f.remainingRows.originalRows());
+    return false;
+  }
+  return true;
+}
+
+bool ExprEvaluatorV2::tryApplyWithPeeling(EvalFrame& f) {
+  // Mirrors Expr::applyFunctionWithPeeling (Expr.cpp:1534).
+  const auto& applyRows = f.remainingRows.rows();
+  LocalDecodedVector localDecoded(f.ctx);
+  LocalSelectivityVector newRowsHolder(f.ctx);
+
+  // Peeling-suppressed path (small batches): handle the
+  // single-dictionary and single-constant cases explicitly to preserve
+  // the "flat-or-constant inputs" guarantee that vector functions rely
+  // on.
+  if (!f.ctx.peelingEnabled(applyRows) &&
+      !(f.inputValues.size() == 1 &&
+        f.inputValues[0]->encoding() == VectorEncoding::Simple::CONSTANT)) {
+    int dictIndex = -1;
+    bool canFlatten = true;
+
+    for (int i = 0; i < static_cast<int>(f.inputValues.size()); ++i) {
+      auto encoding = f.inputValues[i]->encoding();
+      if (encoding == VectorEncoding::Simple::DICTIONARY) {
+        if (dictIndex != -1) {
+          canFlatten = false;
+          break;
+        }
+        dictIndex = i;
+      }
+    }
+    if (canFlatten && dictIndex != -1) {
+      BaseVector::flattenVector(f.inputValues[dictIndex]);
+      applyFunction(f);
+      return true;
+    }
+    return false;
   }
 
-  // TODO(step 5): port ArgPeeling::tryApply.  For step 4 we always
-  // apply on un-peeled args.
-  applyFunction(f);
+  // Attempt peeling on the evaluated input vectors.
+  std::vector<VectorPtr> peeledVectors;
+  auto peeledEncoding = PeeledEncoding::peel(
+      f.inputValues,
+      applyRows,
+      localDecoded,
+      f.expr.metadata().defaultNullBehavior,
+      peeledVectors);
+  if (!peeledEncoding) {
+    return false;
+  }
+  f.inputValues = std::move(peeledVectors);
+  peeledVectors.clear();
 
-  // TODO(step 9): write nulls for any rows that ArgEval pruned.  For
-  // step 4 ArgEval never prunes, so remainingRows.hasChanged() is
-  // always false.
-  VELOX_DCHECK(!f.remainingRows.hasChanged());
+  auto* newRows = peeledEncoding->translateToInnerRows(applyRows, newRowsHolder);
+
+  withContextSaver([&](ContextSaver& saver) {
+    f.ctx.saveAndReset(saver, applyRows);
+    f.ctx.setPeeledEncoding(peeledEncoding);
+
+    VectorPtr peeledResult;
+    f.expr.vectorFunction()->apply(
+        *newRows, f.inputValues, f.expr.type(), f.ctx, peeledResult);
+
+    VectorPtr wrappedResult = f.ctx.getPeeledEncoding()->wrap(
+        f.expr.type(), f.ctx.pool(), peeledResult, applyRows);
+    f.ctx.moveOrCopyResult(wrappedResult, applyRows, f.result);
+
+    f.ctx.releaseVector(peeledResult);
+  });
+
+  return true;
+}
+
+void ExprEvaluatorV2::setAllNulls(
+    EvalFrame& f,
+    const SelectivityVector& rows) {
+  // Mirrors Expr::setAllNulls (Expr.cpp:1353).
+  if (f.result) {
+    BaseVector::ensureWritable(rows, f.expr.type(), f.ctx.pool(), f.result);
+    LocalSelectivityVector notNulls(f.ctx, rows.end());
+    notNulls.get()->setAll();
+    notNulls.get()->deselect(rows);
+    f.result->addNulls(notNulls.get()->asRange().bits(), rows);
+    return;
+  }
+  f.result =
+      BaseVector::createNullConstant(f.expr.type(), rows.end(), f.ctx.pool());
 }
 
 void ExprEvaluatorV2::evaluateSpecialForm(EvalFrame& f) {
