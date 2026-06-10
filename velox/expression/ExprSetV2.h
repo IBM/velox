@@ -56,6 +56,13 @@ class ExprSetV2 {
     return *runtimeStates_;
   }
 
+  /// The V1 ExprSet this V2 set was adapted from.  During the migration
+  /// period, callers pass this to EvalCtx so it can route exception
+  /// context, memo updates, and tracer hooks through V1's bookkeeping.
+  const std::shared_ptr<ExprSet>& sourceSet() const {
+    return sourceSet_;
+  }
+
  private:
   std::shared_ptr<ExprSet> sourceSet_;
   std::vector<std::shared_ptr<ExprV2>> roots_;
