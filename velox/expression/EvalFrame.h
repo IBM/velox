@@ -60,7 +60,9 @@ struct EvalFrame {
         deterministic{exprIn.deterministic()},
         isSpecialForm{exprIn.isSpecialForm()},
         supportsFlatNoNullsFastPath{exprIn.supportsFlatNoNullsFastPath()},
-        hasConditionals{exprIn.hasConditionals()} {}
+        hasConditionals{exprIn.hasConditionals()},
+        skipFieldDependentOptimizations{
+            exprIn.skipFieldDependentOptimizations()} {}
 
   // === Bindings (constant after construction) ===
 
@@ -96,6 +98,7 @@ struct EvalFrame {
   bool isSpecialForm;
   bool supportsFlatNoNullsFastPath;
   bool hasConditionals;
+  bool skipFieldDependentOptimizations;
 };
 
 } // namespace facebook::velox::exec

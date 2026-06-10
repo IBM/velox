@@ -123,6 +123,35 @@ TEST_F(ExprV2ParityTest, comparison) {
   assertParity("a < b", input);
 }
 
+// Dictionary-encoded input -- exercises FieldPeeling.
+TEST_F(ExprV2ParityTest, dictionaryEncodedInput) {
+  auto flatA = makeFlatVector<int64_t>({10, 20, 30, 40, 50});
+  // Dictionary that reverses the input.
+  auto indices = makeIndicesInReverse(5);
+  auto dictA = BaseVector::wrapInDictionary(nullptr, indices, 5, flatA);
+  auto input = makeRowVector({"a"}, {dictA});
+  assertParity("a + 1::bigint", input);
+}
+
+// Constant-encoded input -- exercises FieldPeeling's constant path.
+TEST_F(ExprV2ParityTest, constantEncodedInput) {
+  auto constA = BaseVector::createConstant(BIGINT(), int64_t(7), 5, pool_.get());
+  auto input = makeRowVector({"a"}, {constA});
+  assertParity("a + 1::bigint", input);
+}
+
+// Two dictionary inputs over the same base -- exercises peeling of
+// multiple field references.
+TEST_F(ExprV2ParityTest, twoDictionariesSameBase) {
+  auto flatA = makeFlatVector<int64_t>({1, 2, 3, 4, 5});
+  auto flatB = makeFlatVector<int64_t>({100, 200, 300, 400, 500});
+  auto indices = makeIndicesInReverse(5);
+  auto dictA = BaseVector::wrapInDictionary(nullptr, indices, 5, flatA);
+  auto dictB = BaseVector::wrapInDictionary(nullptr, indices, 5, flatB);
+  auto input = makeRowVector({"a", "b"}, {dictA, dictB});
+  assertParity("a + b", input);
+}
+
 // Empty selectivity vector -- emitEmpty path.
 TEST_F(ExprV2ParityTest, emptyRows) {
   auto input = makeRowVector(
