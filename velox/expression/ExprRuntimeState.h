@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -29,8 +30,52 @@ namespace facebook::velox::exec {
 
 class ExprV2;
 
-/// Placeholder for shared-subexpression cache state.  Populated in step 8.
-struct SharedSubexprCacheState {};
+/// Identity of the input vectors a shared sub-expression was computed
+/// over.  Used as a key in the per-Expr SharedSubexprCacheState.
+/// Mirrors Expr::InputForSharedResults (Expr.h:738).
+class InputForSharedResults {
+ public:
+  void addInput(const std::shared_ptr<BaseVector>& input) {
+    inputVectors_.push_back(input.get());
+    inputWeakVectors_.push_back(input);
+  }
+
+  bool operator<(const InputForSharedResults& other) const {
+    return inputVectors_ < other.inputVectors_;
+  }
+
+  // True if any captured input has been freed since the entry was
+  // inserted.  Stale entries are evicted on lookup.
+  bool isExpired() const {
+    for (const auto& input : inputWeakVectors_) {
+      if (input.expired()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+ private:
+  // Raw pointers used for ordering only; lifetime checked via the
+  // parallel weak_ptr vector.
+  std::vector<const BaseVector*> inputVectors_;
+  std::vector<std::weak_ptr<BaseVector>> inputWeakVectors_;
+};
+
+/// Cached output for a previously-seen set of input identities.
+/// Mirrors Expr::SharedResults (Expr.h:765).
+struct SharedResults {
+  // Rows for which 'sharedSubexprValues' has a valid value.
+  std::unique_ptr<SelectivityVector> sharedSubexprRows;
+  // The cached output, indexed alongside sharedSubexprRows.
+  VectorPtr sharedSubexprValues;
+};
+
+/// Shared sub-expression result cache, indexed by the identity of the
+/// captured input vectors.  Populated by the SharedSubexprCache phase.
+struct SharedSubexprCacheState {
+  std::map<InputForSharedResults, SharedResults> entries;
+};
 
 /// Per-Expr dictionary memoization state.  Mirrors the cluster of
 /// member variables on Expr (baseOfDictionary*, dictionaryCache_,
