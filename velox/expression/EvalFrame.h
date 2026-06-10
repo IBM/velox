@@ -21,12 +21,11 @@
 
 #include "velox/expression/EvalCtx.h"
 #include "velox/expression/Expr.h"
+#include "velox/expression/ExprRuntimeState.h"
 #include "velox/expression/ExprV2.h"
 #include "velox/vector/BaseVector.h"
 
 namespace facebook::velox::exec {
-
-struct ExprRuntimeState;
 
 /// Per-call evaluation state for one ExprV2 node.  Lives on the stack of
 /// the outermost ExprEvaluatorV2::evaluate() call.  Inner recursion
@@ -44,12 +43,13 @@ struct ExprRuntimeState;
 struct EvalFrame {
   EvalFrame(
       ExprV2& exprIn,
-      ExprRuntimeState& nodeRuntimeIn,
+      ExprRuntimeStateTree& runtimeStatesIn,
       EvalCtx& ctxIn,
       const SelectivityVector& rowsIn,
       VectorPtr& resultIn)
       : expr{exprIn},
-        nodeRuntime{nodeRuntimeIn},
+        runtimeStates{runtimeStatesIn},
+        nodeRuntime{runtimeStatesIn.at(exprIn)},
         ctx{ctxIn},
         originalRows{rowsIn},
         result{resultIn},
@@ -65,6 +65,11 @@ struct EvalFrame {
   // === Bindings (constant after construction) ===
 
   ExprV2& expr;
+  // Tree-wide runtime state.  Used to look up runtime state for child
+  // nodes when constructing inner frames.
+  ExprRuntimeStateTree& runtimeStates;
+  // Cached lookup: runtime state for 'expr'.  Avoids per-phase map
+  // lookups via runtimeStates.
   ExprRuntimeState& nodeRuntime;
   EvalCtx& ctx;
   const SelectivityVector& originalRows;

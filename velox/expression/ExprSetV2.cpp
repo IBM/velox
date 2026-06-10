@@ -35,10 +35,18 @@ ExprSetV2::ExprSetV2(std::shared_ptr<ExprSet> source)
 }
 
 void ExprSetV2::eval(
-    const SelectivityVector& /*rows*/,
-    EvalCtx& /*ctx*/,
-    std::vector<VectorPtr>& /*results*/) {
-  VELOX_NYI("ExprSetV2::eval lands in step 4 of the refactor.");
+    const SelectivityVector& rows,
+    EvalCtx& ctx,
+    std::vector<VectorPtr>& results) {
+  VELOX_CHECK_EQ(
+      results.size(),
+      roots_.size(),
+      "results vector must be sized to the number of expression roots");
+
+  for (size_t i = 0; i < roots_.size(); ++i) {
+    EvalFrame frame{*roots_[i], *runtimeStates_, ctx, rows, results[i]};
+    evaluator_.evaluate(frame, this);
+  }
 }
 
 } // namespace facebook::velox::exec
