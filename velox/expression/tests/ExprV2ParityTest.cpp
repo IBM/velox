@@ -67,7 +67,7 @@ class ExprV2ParityTest : public testing::Test,
 
     // V2 path -- adapt the same compiled ExprSet.
     ExprSetV2 v2Set{v1Set};
-    EvalCtx v2Ctx{execCtx_.get(), nullptr, input.get()};
+    EvalCtx v2Ctx{execCtx_.get(), v2Set.sourceSet().get(), input.get()};
     std::vector<VectorPtr> v2Results(1);
     v2Set.eval(rows, v2Ctx, v2Results);
 
@@ -144,7 +144,7 @@ TEST_F(ExprV2ParityTest, emptyRows) {
   v1Set->eval(rows, v1Ctx, v1Results);
 
   ExprSetV2 v2Set{v1Set};
-  EvalCtx v2Ctx{execCtx_.get(), nullptr, input.get()};
+  EvalCtx v2Ctx{execCtx_.get(), v2Set.sourceSet().get(), input.get()};
   std::vector<VectorPtr> v2Results(1);
   v2Set.eval(rows, v2Ctx, v2Results);
 
