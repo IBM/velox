@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include "velox/common/time/CpuWallTimer.h"
 #include "velox/expression/EvalFrame.h"
 
 namespace facebook::velox::exec {
@@ -65,6 +66,19 @@ class ExprEvaluatorV2 {
   bool tryApplyWithPeeling(EvalFrame& f);
   void emitEmpty(EvalFrame& f);
   void setAllNulls(EvalFrame& f, const SelectivityVector& rows);
+
+  // Returns a timer that updates f.nodeRuntime.stats.timing on
+  // destruction, or nullptr if this batch should not be timed.
+  // Mirrors Expr::cpuWallTimer (Expr.cpp:1619).
+  std::unique_ptr<CpuWallTimer> cpuWallTimer(EvalFrame& f);
+
+  // Advances the adaptive sampling state machine after the function
+  // has been invoked.  Mirrors Expr::finalizeAdaptiveCalibration
+  // (Expr.cpp:1650).
+  void finalizeAdaptiveCalibration(
+      EvalFrame& f,
+      double maxOverheadPct,
+      uint64_t timerOverheadNanos);
 };
 
 } // namespace facebook::velox::exec

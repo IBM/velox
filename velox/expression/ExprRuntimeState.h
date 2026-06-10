@@ -22,6 +22,7 @@
 
 #include <folly/container/F14Map.h>
 
+#include "velox/common/time/CpuWallTimer.h"
 #include "velox/expression/ExprStats.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/SelectivityVector.h"
@@ -109,8 +110,44 @@ struct DictionaryMemoState {
   std::unique_ptr<SelectivityVector> cachedDictionaryIndices;
 };
 
-/// Placeholder for adaptive CPU sampling state.  Populated in step 10.
-struct AdaptiveSamplingState {};
+/// Per-Expr adaptive CPU sampling state machine.  Mirrors the cluster
+/// of fields on Expr (Expr.h:802-828).  Decides at runtime whether to
+/// pay CpuWallTimer overhead on each batch, based on a short
+/// calibration phase that measures function cost vs. timer overhead.
+struct AdaptiveSamplingState {
+  /// Number of calibration batches.  Higher = less noise, slower to
+  /// reach steady state.
+  static constexpr uint32_t kCalibrationBatches = 5;
+
+  enum class Phase : uint8_t {
+    /// First batch: warm caches, discard timing.
+    kWarmup,
+    /// Next kCalibrationBatches batches: measure cost without timer.
+    kCalibrating,
+    /// Calibration done: timer overhead acceptable, always track.
+    kAlwaysTrack,
+    /// Calibration done: timer overhead too high, sample 1-of-N.
+    kSampling,
+  };
+
+  Phase phase{Phase::kWarmup};
+
+  // Used only during kCalibrating to measure function cost without
+  // paying the CpuWallTimer overhead.
+  std::optional<DeltaCpuWallTimeStopWatch> calibrationStopWatch;
+
+  // Accumulated function wall time across calibration batches.
+  uint64_t calibrationFunctionWallNanos{0};
+
+  // Calibration batches seen so far.
+  uint32_t calibrationBatchCount{0};
+
+  // Final sampling rate decided after calibration (0 = always track).
+  uint32_t samplingRate{0};
+
+  // Counter for sampling cadence in kSampling phase.
+  uint32_t samplingCounter{0};
+};
 
 /// Mutable per-Expr state that survives across evaluations.  One instance
 /// per ExprV2 per ExprSetV2.  Not thread-safe: concurrent evaluations of
