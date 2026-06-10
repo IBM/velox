@@ -16,10 +16,72 @@
 
 #include "velox/expression/ExprSetV2.h"
 
+#include <glog/logging.h>
+
 #include "velox/common/base/Exceptions.h"
+#include "velox/exec/trace/TraceCtx.h"
+#include "velox/exec/trace/TraceWriter.h"
 #include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
+
+namespace {
+
+// Walks the V2 tree once, installing per-Expr output tracers on
+// nodes whose name is in the trace set.  Mirrors Expr::maybeSetupTracer
+// (Expr.cpp:2081).  Uses a visited set to avoid redundant work on
+// shared CSE nodes, and an instance counter so multiple Expressions
+// sharing the same name get distinct tracer indices.
+void maybeSetupTracerRecursive(
+    ExprV2& expr,
+    ExprRuntimeStateTree& runtimeStates,
+    const Operator& op,
+    const trace::TraceCtx& traceCtx,
+    std::unordered_set<const ExprV2*>& visited,
+    std::unordered_map<std::string, int>& instanceCounts) {
+  if (!visited.insert(&expr).second) {
+    return;
+  }
+  if (traceCtx.shouldTraceExpr(expr.name())) {
+    const int index = instanceCounts[expr.name()]++;
+    try {
+      runtimeStates.at(expr).outputTracer =
+          traceCtx.createExprOutputTracer(op, expr.name(), index);
+      if (expr.vectorFunction()) {
+        traceCtx.maybeActivateIntraExprTracing(
+            op, expr.name(), *expr.vectorFunction());
+      }
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Failed to set up expression tracer: " << e.what();
+    }
+  }
+  for (const auto& input : expr.inputs()) {
+    maybeSetupTracerRecursive(
+        *input, runtimeStates, op, traceCtx, visited, instanceCounts);
+  }
+}
+
+void finishTracerRecursive(
+    ExprV2& expr,
+    ExprRuntimeStateTree& runtimeStates,
+    std::unordered_set<const ExprV2*>& visited) {
+  if (!visited.insert(&expr).second) {
+    return;
+  }
+  auto& state = runtimeStates.at(expr);
+  if (state.outputTracer) {
+    try {
+      state.outputTracer->finish();
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Failed to finish expression output tracer: " << e.what();
+    }
+  }
+  for (const auto& input : expr.inputs()) {
+    finishTracerRecursive(*input, runtimeStates, visited);
+  }
+}
+
+} // namespace
 
 ExprSetV2::ExprSetV2(std::shared_ptr<ExprSet> source)
     : sourceSet_{std::move(source)} {
@@ -45,6 +107,28 @@ void ExprSetV2::eval(
   for (size_t i = 0; i < roots_.size(); ++i) {
     EvalFrame frame{*roots_[i], *runtimeStates_, ctx, rows, results[i]};
     evaluator_.evaluate(frame, this);
+  }
+}
+
+void ExprSetV2::maybeSetupTracers(
+    const Operator& op,
+    const trace::TraceCtx& traceCtx) {
+  tracingEnabled_ = true;
+  std::unordered_set<const ExprV2*> visited;
+  std::unordered_map<std::string, int> instanceCounts;
+  for (auto& root : roots_) {
+    maybeSetupTracerRecursive(
+        *root, *runtimeStates_, op, traceCtx, visited, instanceCounts);
+  }
+}
+
+void ExprSetV2::finishTracers() {
+  if (!tracingEnabled_) {
+    return;
+  }
+  std::unordered_set<const ExprV2*> visited;
+  for (auto& root : roots_) {
+    finishTracerRecursive(*root, *runtimeStates_, visited);
   }
 }
 
