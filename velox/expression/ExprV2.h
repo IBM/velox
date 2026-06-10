@@ -102,6 +102,10 @@ class ExprV2 {
     return hasConditionals_;
   }
 
+  bool skipFieldDependentOptimizations() const {
+    return skipFieldDependentOptimizations_;
+  }
+
   bool trackCpuUsage() const {
     return trackCpuUsage_;
   }
@@ -140,6 +144,7 @@ class ExprV2 {
   bool propagatesNulls_{false};
   bool supportsFlatNoNullsFastPath_{false};
   bool hasConditionals_{false};
+  bool skipFieldDependentOptimizations_{false};
   bool trackCpuUsage_{false};
 
   // Raw pointers into the V1 tree owned by sourceExpr_.  Valid as long

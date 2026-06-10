@@ -43,6 +43,8 @@ std::shared_ptr<ExprV2> ExprV2::from(const std::shared_ptr<Expr>& expr) {
   node->propagatesNulls_ = expr->propagatesNulls();
   node->supportsFlatNoNullsFastPath_ = expr->supportsFlatNoNullsFastPath();
   node->hasConditionals_ = expr->hasConditionals();
+  node->skipFieldDependentOptimizations_ =
+      expr->skipFieldDependentOptimizations();
   node->trackCpuUsage_ = expr->trackCpuUsage();
   node->distinctFields_ = expr->distinctFields();
   node->multiplyReferencedFields_ = expr->multiplyReferencedFields();

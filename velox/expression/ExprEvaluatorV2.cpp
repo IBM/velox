@@ -20,6 +20,9 @@
 
 #include "velox/common/base/Exceptions.h"
 #include "velox/expression/DebugGuards.h"
+#include "velox/expression/FieldReference.h"
+#include "velox/expression/PeeledEncoding.h"
+#include "velox/vector/LazyVector.h"
 
 namespace facebook::velox::exec {
 
@@ -32,6 +35,102 @@ void emitNullConstant(
   if (result == nullptr) {
     result = BaseVector::createNullConstant(type, 0, pool);
   }
+}
+
+// Mirrors the file-private isFlat() in Expr.cpp (line 355).
+bool isFlat(const BaseVector& vector) {
+  auto encoding = vector.encoding();
+  if (encoding == VectorEncoding::Simple::LAZY) {
+    if (!vector.asUnchecked<LazyVector>()->isLoaded()) {
+      return true;
+    }
+    encoding = vector.loadedVector()->encoding();
+  }
+  return !(
+      encoding == VectorEncoding::Simple::DICTIONARY ||
+      encoding == VectorEncoding::Simple::CONSTANT);
+}
+
+// Result of attempting to peel the input field encodings.  Mirrors
+// Expr::PeelEncodingsResult (Expr.cpp:1025).
+struct FieldPeelResult {
+  // Inner-row selection in the peeled row space.  nullptr if peel failed.
+  SelectivityVector* newRows{nullptr};
+  // True if the peel result is cacheable by base dictionary.  Triggers
+  // the DictionaryMemo phase in step 6.
+  bool mayCache{false};
+};
+
+// Peels input field encodings for the whole subtree rooted at expr.
+// Mirrors Expr::peelEncodings (Expr.cpp:1025).  On success, mutates
+// 'context' to install the peeled encoding and peeled vectors via
+// 'saver'.
+FieldPeelResult tryPeelFields(
+    const ExprV2& expr,
+    EvalCtx& context,
+    ContextSaver& saver,
+    const SelectivityVector& rows,
+    LocalDecodedVector& localDecoded,
+    LocalSelectivityVector& newRowsHolder,
+    LocalSelectivityVector& finalRowsHolder) {
+  if (context.wrapEncoding() == VectorEncoding::Simple::CONSTANT) {
+    return {};
+  }
+
+  // Use finalSelection to generate peel to ensure those rows can be
+  // translated and to ensure consistent peeling across multiple calls
+  // for a shared sub-expression.
+  const auto& rowsToPeel =
+      context.isFinalSelection() ? rows : *context.finalSelection();
+
+  std::vector<VectorPtr> vectorsToPeel;
+  vectorsToPeel.reserve(expr.distinctFields().size());
+  for (auto* field : expr.distinctFields()) {
+    auto fieldIndex = field->index(context);
+    auto fieldVector = context.getField(fieldIndex);
+    if (fieldVector->isConstantEncoding()) {
+      fieldVector = context.ensureFieldLoaded(fieldIndex, rowsToPeel);
+    }
+    vectorsToPeel.push_back(fieldVector);
+  }
+
+  VELOX_CHECK(!vectorsToPeel.empty());
+  std::vector<VectorPtr> peeledVectors;
+  auto peeledEncoding = PeeledEncoding::peel(
+      vectorsToPeel,
+      rowsToPeel,
+      localDecoded,
+      expr.propagatesNulls(),
+      peeledVectors);
+  if (!peeledEncoding) {
+    return {};
+  }
+
+  SelectivityVector* newFinalSelection = nullptr;
+  if (!context.isFinalSelection()) {
+    newFinalSelection = peeledEncoding->translateToInnerRows(
+        *context.finalSelection(), finalRowsHolder);
+  }
+  auto* newRows = peeledEncoding->translateToInnerRows(rows, newRowsHolder);
+
+  context.saveAndReset(saver, rows);
+  context.setPeeledEncoding(peeledEncoding);
+  if (newFinalSelection) {
+    *context.mutableFinalSelection() = newFinalSelection;
+  }
+  VELOX_DCHECK_EQ(peeledVectors.size(), expr.distinctFields().size());
+  for (size_t i = 0; i < peeledVectors.size(); ++i) {
+    auto fieldIndex = expr.distinctFields()[i]->index(context);
+    context.setPeeled(fieldIndex, peeledVectors[i]);
+  }
+
+  bool mayCache = false;
+  if (context.dictionaryMemoizationEnabled()) {
+    mayCache = expr.distinctFields().size() == 1 &&
+        VectorEncoding::isDictionary(context.wrapEncoding()) &&
+        !peeledVectors[0]->memoDisabled();
+  }
+  return {newRows, mayCache};
 }
 
 } // namespace
@@ -79,8 +178,62 @@ void ExprEvaluatorV2::evaluateFrame(
 
 void ExprEvaluatorV2::evaluateWithFieldPeeling(EvalFrame& f) {
   DebugRemainingRowsGuard guard{f};
-  // TODO(step 5): port FieldPeeling::tryPeel from Expr::evalEncodings.
-  // For step 4 this layer is a pass-through.
+
+  // Mirrors Expr::evalEncodings (Expr.cpp:1101).  Gating identical to
+  // V1: must be deterministic, must not skip field-dependent
+  // optimizations, peeling must be enabled, and no input field is
+  // already flat (in which case peeling can't help).
+  if (!f.deterministic || f.skipFieldDependentOptimizations ||
+      !f.ctx.peelingEnabled(f.remainingRows.rows())) {
+    evaluateWithNullPruning(f);
+    return;
+  }
+  for (auto* field : f.expr.distinctFields()) {
+    if (isFlat(*f.ctx.getField(field->index(f.ctx)))) {
+      evaluateWithNullPruning(f);
+      return;
+    }
+  }
+
+  VectorPtr wrappedResult;
+  withContextSaver([&](ContextSaver& saver) {
+    LocalSelectivityVector newRowsHolder(f.ctx);
+    LocalSelectivityVector finalRowsHolder(f.ctx);
+    LocalDecodedVector decodedHolder(f.ctx);
+
+    auto peel = tryPeelFields(
+        f.expr,
+        f.ctx,
+        saver,
+        f.remainingRows.rows(),
+        decodedHolder,
+        newRowsHolder,
+        finalRowsHolder);
+    if (peel.newRows == nullptr) {
+      return;
+    }
+
+    VectorPtr peeledResult;
+    if (peel.newRows->hasSelections()) {
+      // Construct an inner frame on the peeled inner row space and
+      // skip past evaluateWithFieldPeeling -- we've already peeled.
+      // TODO(step 6): when peel.mayCache, route through
+      // DictionaryMemo::evaluate before reaching null pruning.
+      EvalFrame innerFrame{
+          f.expr, f.runtimeStates, f.ctx, *peel.newRows, peeledResult};
+      evaluateWithNullPruning(innerFrame);
+    }
+
+    wrappedResult = f.ctx.getPeeledEncoding()->wrap(
+        f.expr.type(), f.ctx.pool(), peeledResult, f.remainingRows.rows());
+  });
+
+  if (wrappedResult != nullptr) {
+    f.ctx.moveOrCopyResult(wrappedResult, f.remainingRows.rows(), f.result);
+    return;
+  }
+  // Peeling did not produce a result (e.g. no peel possible) -- fall
+  // through to null pruning on the original row space.
   evaluateWithNullPruning(f);
 }
 
