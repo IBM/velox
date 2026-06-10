@@ -39,8 +39,13 @@ void collect(
 
 } // namespace
 
-ExprRuntimeStateTree::ExprRuntimeStateTree(const ExprV2& root) {
-  collect(root, indexByNode_);
+ExprRuntimeStateTree::ExprRuntimeStateTree(
+    const std::vector<std::shared_ptr<ExprV2>>& roots) {
+  for (const auto& root : roots) {
+    if (root != nullptr) {
+      collect(*root, indexByNode_);
+    }
+  }
   states_.resize(indexByNode_.size());
 }
 
