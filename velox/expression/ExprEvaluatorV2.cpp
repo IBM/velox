@@ -770,25 +770,14 @@ bool ExprEvaluatorV2::tryApplyWithPeeling(EvalFrame& f) {
     f.ctx.setPeeledEncoding(peeledEncoding);
 
     VectorPtr peeledResult;
-    // Apply on the inner row space against the peeled inputs.  We
-    // temporarily swap result so applyFunction writes into peeledResult.
-    auto savedResult = std::move(f.result);
-    f.result = std::move(peeledResult);
-    // Temporarily redirect remainingRows to newRows for the apply.
-    // We can't construct a new frame because applyFunction reads from
-    // 'f' directly; instead, mutate and restore.
-    // Simpler: bypass MutableRemainingRows here by calling
-    // vectorFunction->apply directly.
     f.expr.vectorFunction()->apply(
-        *newRows, f.inputValues, f.expr.type(), f.ctx, f.result);
+        *newRows, f.inputValues, f.expr.type(), f.ctx, peeledResult);
 
     VectorPtr wrappedResult = f.ctx.getPeeledEncoding()->wrap(
-        f.expr.type(), f.ctx.pool(), f.result, applyRows);
-    auto innerResult = std::move(f.result);
-    f.result = std::move(savedResult);
+        f.expr.type(), f.ctx.pool(), peeledResult, applyRows);
     f.ctx.moveOrCopyResult(wrappedResult, applyRows, f.result);
 
-    f.ctx.releaseVector(innerResult);
+    f.ctx.releaseVector(peeledResult);
   });
 
   return true;
