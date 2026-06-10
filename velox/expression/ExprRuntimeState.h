@@ -26,6 +26,10 @@
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/SelectivityVector.h"
 
+namespace facebook::velox::exec::trace {
+class TraceExprWriter;
+} // namespace facebook::velox::exec::trace
+
 namespace facebook::velox::exec {
 
 class ExprV2;
@@ -117,6 +121,11 @@ struct ExprRuntimeState {
   DictionaryMemoState dictMemo;
   ExprStats stats;
   AdaptiveSamplingState adaptiveState;
+
+  // Per-Expr output tracer.  Set up by ExprSetV2::maybeSetupTracers
+  // when the containing operator has tracing enabled and this
+  // expression's name is in the trace set.  Null when tracing is off.
+  std::unique_ptr<trace::TraceExprWriter> outputTracer;
 };
 
 /// Tree of runtime state parallel-indexed with an ExprV2 forest.  Look
