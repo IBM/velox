@@ -18,6 +18,8 @@
 
 #include <folly/ScopeGuard.h>
 
+#include <cmath>
+
 #include "velox/common/base/Exceptions.h"
 #include "velox/exec/trace/TraceWriter.h"
 #include "velox/expression/DebugGuards.h"
@@ -65,6 +67,62 @@ void mergeOrThrowArgumentErrors(
     context.addErrors(rows, argumentErrors, originalErrors);
   }
   context.swapErrors(originalErrors);
+}
+
+// Mirrors the file-private computeIsAsciiForInputs in Expr.cpp:1369.
+void computeIsAsciiForInputs(
+    const VectorFunction* vectorFunction,
+    const std::vector<VectorPtr>& inputValues,
+    const SelectivityVector& rows) {
+  std::vector<size_t> indices;
+  if (vectorFunction->ensureStringEncodingSetAtAllInputs()) {
+    for (size_t i = 0; i < inputValues.size(); ++i) {
+      indices.push_back(i);
+    }
+  }
+  for (auto& index : vectorFunction->ensureStringEncodingSetAt()) {
+    indices.push_back(index);
+  }
+  for (auto& index : indices) {
+    if (index < inputValues.size() &&
+        inputValues[index]->type()->kind() == TypeKind::VARCHAR) {
+      auto* vector = inputValues[index]->template as<SimpleVector<StringView>>();
+      VELOX_CHECK(vector, inputValues[index]->toString());
+      vector->computeAndSetIsAscii(rows);
+    }
+  }
+}
+
+// Mirrors the file-private computeIsAsciiForResult in Expr.cpp:1400.
+std::optional<bool> computeIsAsciiForResult(
+    const VectorFunction* vectorFunction,
+    const std::vector<VectorPtr>& inputValues,
+    const SelectivityVector& rows) {
+  std::vector<size_t> indices;
+  if (vectorFunction->propagateStringEncodingFromAllInputs()) {
+    for (size_t i = 0; i < inputValues.size(); ++i) {
+      indices.push_back(i);
+    }
+  } else if (vectorFunction->propagateStringEncodingFrom().has_value()) {
+    indices = vectorFunction->propagateStringEncodingFrom().value();
+  }
+  if (indices.empty()) {
+    return std::nullopt;
+  }
+  bool isAsciiSet = true;
+  for (auto& index : indices) {
+    if (index < inputValues.size() &&
+        inputValues[index]->type()->kind() == TypeKind::VARCHAR) {
+      auto* vector = inputValues[index]->template as<SimpleVector<StringView>>();
+      auto isAscii = vector->isAscii(rows);
+      if (!isAscii.has_value()) {
+        isAsciiSet = false;
+      } else if (!isAscii.value()) {
+        return false;
+      }
+    }
+  }
+  return isAsciiSet ? std::optional(true) : std::nullopt;
 }
 
 // Mirrors the file-private isFlat() in Expr.cpp (line 355).
@@ -809,15 +867,77 @@ void ExprEvaluatorV2::evaluateSpecialForm(EvalFrame& f) {
 }
 
 void ExprEvaluatorV2::applyFunction(EvalFrame& f) {
-  // TODO(step 10b): listener invocation, CPU timing, adaptive
-  // sampling, empty-result handling.
+  // Mirrors Expr::applyFunction (Expr.cpp:1753).
   VELOX_CHECK_NOT_NULL(f.expr.vectorFunction());
-  f.expr.vectorFunction()->apply(
-      f.remainingRows.rows(),
-      f.inputValues,
-      f.expr.type(),
-      f.ctx,
-      f.result);
+  const auto* vectorFunction = f.expr.vectorFunction().get();
+  const auto& rows = f.remainingRows.rows();
+  auto& stats = f.nodeRuntime.stats;
+
+  stats.numProcessedVectors += 1;
+  stats.numProcessedRows += rows.countSelected();
+  auto timer = cpuWallTimer(f);
+
+  computeIsAsciiForInputs(vectorFunction, f.inputValues, rows);
+  auto isAscii = f.expr.type()->isVarchar()
+      ? computeIsAsciiForResult(vectorFunction, f.inputValues, rows)
+      : std::nullopt;
+
+  // Invoke listeners pre/post around apply.  Mirrors
+  // Expr::invokeApplyWithListeners (Expr.cpp:1700).
+  const auto& listeners = f.expr.listeners();
+  bool hasPostListeners = false;
+  for (const auto& listener : listeners) {
+    if (listener.pre) {
+      (*listener.pre)(f.expr.name(), rows, f.inputValues, f.expr.type(), f.ctx);
+    }
+    hasPostListeners |= (listener.post != nullptr);
+  }
+
+  std::exception_ptr applyError;
+  if (!hasPostListeners) {
+    try {
+      vectorFunction->apply(
+          rows, f.inputValues, f.expr.type(), f.ctx, f.result);
+    } catch (const VeloxException&) {
+      throw;
+    } catch (const std::exception& e) {
+      VELOX_USER_FAIL(e.what());
+    }
+  } else {
+    try {
+      vectorFunction->apply(
+          rows, f.inputValues, f.expr.type(), f.ctx, f.result);
+    } catch (const VeloxException&) {
+      applyError = std::current_exception();
+    } catch (const std::exception& e) {
+      try {
+        VELOX_USER_FAIL(e.what());
+      } catch (...) {
+        applyError = std::current_exception();
+      }
+    }
+    for (const auto& listener : listeners) {
+      if (listener.post) {
+        try {
+          (*listener.post)(
+              f.expr.name(),
+              rows,
+              f.inputValues,
+              f.expr.type(),
+              f.ctx,
+              f.result,
+              applyError);
+        } catch (const std::exception& e) {
+          FB_LOG_EVERY_MS(ERROR, 5000)
+              << "Post-apply listener threw for function '" << f.expr.name()
+              << "': " << e.what();
+        }
+      }
+    }
+    if (applyError) {
+      std::rethrow_exception(applyError);
+    }
+  }
 
   // Tracer hook.  Mirrors Expr::traceOutput (Expr.cpp:2131).
   auto& tracer = f.nodeRuntime.outputTracer;
@@ -827,6 +947,120 @@ void ExprEvaluatorV2::applyFunction(EvalFrame& f) {
     } catch (const std::exception& e) {
       LOG(ERROR) << "Failed to trace expression output: " << e.what();
     }
+  }
+
+  // Empty-result handling.  Mirrors Expr.cpp:1770-1789: if the function
+  // returned no result and no error, it's a bug in the function; record
+  // an error and null-fill so downstream callers don't crash.
+  if (!f.result) {
+    MutableRemainingRows remaining(rows, f.ctx);
+    if (remaining.deselectErrors()) {
+      try {
+        VELOX_USER_FAIL(
+            "Function neither returned results nor threw exception.");
+      } catch (const std::exception&) {
+        f.ctx.setErrors(remaining.rows(), std::current_exception());
+      }
+    }
+    f.result =
+        BaseVector::createNullConstant(f.expr.type(), rows.end(), f.ctx.pool());
+  }
+
+  if (isAscii.has_value()) {
+    f.result->asUnchecked<SimpleVector<StringView>>()->setIsAscii(
+        isAscii.value(), rows);
+  }
+
+  // Advance adaptive calibration if we're still measuring.  After
+  // kCalibrating completes, no further calls do anything.
+  using Phase = AdaptiveSamplingState::Phase;
+  if (f.ctx.adaptiveCpuSamplingEnabled() &&
+      (f.nodeRuntime.adaptiveState.phase == Phase::kWarmup ||
+       f.nodeRuntime.adaptiveState.phase == Phase::kCalibrating)) {
+    finalizeAdaptiveCalibration(
+        f,
+        f.ctx.adaptiveCpuSamplingMaxOverheadPct(),
+        f.ctx.timerOverheadNanos());
+  }
+}
+
+std::unique_ptr<CpuWallTimer> ExprEvaluatorV2::cpuWallTimer(EvalFrame& f) {
+  auto& adaptive = f.nodeRuntime.adaptiveState;
+
+  // Compile-time tracking always wins.
+  if (f.expr.trackCpuUsage()) {
+    return std::make_unique<CpuWallTimer>(f.nodeRuntime.stats.timing);
+  }
+
+  if (f.ctx.adaptiveCpuSamplingEnabled()) {
+    using Phase = AdaptiveSamplingState::Phase;
+    switch (adaptive.phase) {
+      case Phase::kWarmup:
+        return nullptr;
+      case Phase::kCalibrating:
+        adaptive.calibrationStopWatch.emplace();
+        return nullptr;
+      case Phase::kAlwaysTrack:
+        return std::make_unique<CpuWallTimer>(f.nodeRuntime.stats.timing);
+      case Phase::kSampling:
+        if (++adaptive.samplingCounter % adaptive.samplingRate == 0) {
+          return std::make_unique<CpuWallTimer>(f.nodeRuntime.stats.timing);
+        }
+        return nullptr;
+    }
+  }
+  return nullptr;
+}
+
+void ExprEvaluatorV2::finalizeAdaptiveCalibration(
+    EvalFrame& f,
+    double maxOverheadPct,
+    uint64_t timerOverheadNanos) {
+  auto& adaptive = f.nodeRuntime.adaptiveState;
+  using Phase = AdaptiveSamplingState::Phase;
+
+  switch (adaptive.phase) {
+    case Phase::kWarmup:
+      adaptive.phase = Phase::kCalibrating;
+      break;
+    case Phase::kCalibrating: {
+      adaptive.calibrationFunctionWallNanos +=
+          adaptive.calibrationStopWatch->elapsed().wallNanos;
+      adaptive.calibrationStopWatch.reset();
+
+      if (++adaptive.calibrationBatchCount <
+          AdaptiveSamplingState::kCalibrationBatches) {
+        break;
+      }
+
+      auto totalTimerOverhead =
+          timerOverheadNanos * adaptive.calibrationBatchCount;
+
+      if (adaptive.calibrationFunctionWallNanos > 0 && maxOverheadPct > 0) {
+        double overheadPct = 100.0 *
+            static_cast<double>(totalTimerOverhead) /
+            static_cast<double>(adaptive.calibrationFunctionWallNanos);
+
+        if (overheadPct > maxOverheadPct) {
+          adaptive.samplingRate =
+              static_cast<uint32_t>(std::ceil(overheadPct / maxOverheadPct));
+          // Start counter at rate-1 so first post-calibration batch is timed.
+          adaptive.samplingCounter = adaptive.samplingRate - 1;
+          adaptive.phase = Phase::kSampling;
+        } else {
+          adaptive.phase = Phase::kAlwaysTrack;
+        }
+      } else {
+        // Function ~0ns -- timer dominates.  Aggressive sampling.
+        adaptive.samplingRate = 100;
+        adaptive.samplingCounter = adaptive.samplingRate - 1;
+        adaptive.phase = Phase::kSampling;
+      }
+      break;
+    }
+    default:
+      VELOX_UNREACHABLE(
+          "Unexpected adaptive sampling phase in finalizeAdaptiveCalibration");
   }
 }
 
