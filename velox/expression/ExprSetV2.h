@@ -24,9 +24,14 @@
 #include "velox/expression/ExprRuntimeState.h"
 #include "velox/expression/ExprV2.h"
 
+namespace facebook::velox::exec::trace {
+class TraceCtx;
+} // namespace facebook::velox::exec::trace
+
 namespace facebook::velox::exec {
 
 class ExprSet;
+class Operator;
 
 /// Owner of a tree of immutable ExprV2 nodes plus the parallel runtime
 /// state tree and the stateless evaluator.  Mirrors ExprSet's public
@@ -64,11 +69,25 @@ class ExprSetV2 {
     return sourceSet_;
   }
 
+  /// Mirrors ExprSet::maybeSetupTracers (Expr.cpp:2070).  Walks the V2
+  /// tree once and installs per-Expr output tracers on every node
+  /// whose name is in the operator's trace set.  Tracer state lives
+  /// on ExprRuntimeState::outputTracer.
+  void maybeSetupTracers(
+      const Operator& op,
+      const trace::TraceCtx& traceCtx);
+
+  /// Mirrors ExprSet::finishTracers (Expr.cpp:2105).  Flushes and
+  /// closes every output tracer set up by maybeSetupTracers.  Safe to
+  /// call when tracing was never enabled (no-op in that case).
+  void finishTracers();
+
  private:
   std::shared_ptr<ExprSet> sourceSet_;
   std::vector<std::shared_ptr<ExprV2>> roots_;
   std::unique_ptr<ExprRuntimeStateTree> runtimeStates_;
   ExprEvaluatorV2 evaluator_;
+  bool tracingEnabled_{false};
 };
 
 } // namespace facebook::velox::exec

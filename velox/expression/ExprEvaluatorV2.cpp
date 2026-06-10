@@ -20,6 +20,7 @@
 #include <folly/ScopeGuard.h>
 
 #include "velox/common/base/Exceptions.h"
+#include "velox/exec/trace/TraceWriter.h"
 #include "velox/expression/DebugGuards.h"
 #include "velox/expression/FieldReference.h"
 #include "velox/expression/PeeledEncoding.h"
@@ -809,8 +810,8 @@ void ExprEvaluatorV2::evaluateSpecialForm(EvalFrame& f) {
 }
 
 void ExprEvaluatorV2::applyFunction(EvalFrame& f) {
-  // TODO(step 10): port listener invocation, CPU timing, adaptive
-  // sampling, tracer hooks.  Step 4 invokes the bare function.
+  // TODO(step 10b): listener invocation, CPU timing, adaptive
+  // sampling, empty-result handling.
   VELOX_CHECK_NOT_NULL(f.expr.vectorFunction());
   f.expr.vectorFunction()->apply(
       f.remainingRows.rows(),
@@ -818,6 +819,16 @@ void ExprEvaluatorV2::applyFunction(EvalFrame& f) {
       f.expr.type(),
       f.ctx,
       f.result);
+
+  // Tracer hook.  Mirrors Expr::traceOutput (Expr.cpp:2131).
+  auto& tracer = f.nodeRuntime.outputTracer;
+  if (FOLLY_UNLIKELY(tracer != nullptr) && f.result != nullptr) {
+    try {
+      tracer->write(f.result);
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Failed to trace expression output: " << e.what();
+    }
+  }
 }
 
 void ExprEvaluatorV2::emitEmpty(EvalFrame& f) {
