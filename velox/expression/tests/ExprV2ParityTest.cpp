@@ -140,6 +140,35 @@ TEST_F(ExprV2ParityTest, constantEncodedInput) {
   assertParity("a + 1::bigint", input);
 }
 
+// Null-containing input on a propagatesNulls expression -- exercises
+// NullPruning::removeSureNulls.
+TEST_F(ExprV2ParityTest, propagatesNullsWithNullInput) {
+  auto a = makeNullableFlatVector<int64_t>(
+      {1, std::nullopt, 3, std::nullopt, 5});
+  auto b = makeFlatVector<int64_t>({10, 20, 30, 40, 50});
+  auto input = makeRowVector({"a", "b"}, {a, b});
+  assertParity("a + b", input);
+}
+
+// Both inputs may have nulls -- exercises multi-field null pruning.
+TEST_F(ExprV2ParityTest, propagatesNullsBothInputs) {
+  auto a = makeNullableFlatVector<int64_t>(
+      {1, std::nullopt, 3, std::nullopt, 5});
+  auto b = makeNullableFlatVector<int64_t>(
+      {10, 20, std::nullopt, 40, std::nullopt});
+  auto input = makeRowVector({"a", "b"}, {a, b});
+  assertParity("a + b", input);
+}
+
+// All-null input -- pruning should produce all-null result.
+TEST_F(ExprV2ParityTest, allNullInput) {
+  auto a = makeNullableFlatVector<int64_t>(
+      {std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt});
+  auto b = makeFlatVector<int64_t>({10, 20, 30, 40, 50});
+  auto input = makeRowVector({"a", "b"}, {a, b});
+  assertParity("a + b", input);
+}
+
 // Multi-batch dictionary input with the same base -- exercises the
 // DictionaryMemo phase, including the "first repeat" cache fill and
 // the subsequent cache-hit / cache-miss merge paths.

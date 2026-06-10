@@ -23,6 +23,7 @@
 #include "velox/expression/DebugGuards.h"
 #include "velox/expression/FieldReference.h"
 #include "velox/expression/PeeledEncoding.h"
+#include "velox/expression/ScopedVarSetter.h"
 #include "velox/vector/LazyVector.h"
 
 namespace facebook::velox::exec {
@@ -342,11 +343,101 @@ void ExprEvaluatorV2::evaluateDictionaryMemo(EvalFrame& f) {
   f.ctx.releaseVector(base);
 }
 
+namespace {
+
+// Mirrors Expr::removeSureNulls (Expr.cpp:1157).  Computes the
+// non-null subset of 'rows' across all distinct input fields.  Returns
+// true if any sure-null row was removed; in that case 'nullHolder'
+// owns the non-null SelectivityVector.
+bool removeSureNulls(
+    const ExprV2& expr,
+    EvalCtx& context,
+    const SelectivityVector& rows,
+    LocalSelectivityVector& nullHolder) {
+  SelectivityVector* result = nullptr;
+  for (auto* field : expr.distinctFields()) {
+    VectorPtr values;
+    field->evalSpecialForm(rows, context, values);
+
+    if (isLazyNotLoaded(*values)) {
+      continue;
+    }
+
+    if (values->mayHaveNulls()) {
+      LocalDecodedVector decoded(context, *values, rows);
+      if (auto* rawNulls = decoded->nulls(&rows)) {
+        if (!result) {
+          result = nullHolder.get(rows);
+        }
+        auto* bits = result->asMutableRange().bits();
+        bits::andBits(bits, rawNulls, rows.begin(), rows.end());
+      }
+    }
+  }
+  if (result == nullptr) {
+    return false;
+  }
+  result->updateBounds();
+  return result->countSelected() < rows.countSelected();
+}
+
+} // namespace
+
 void ExprEvaluatorV2::evaluateWithNullPruning(EvalFrame& f) {
   DebugRemainingRowsGuard guard{f};
-  // TODO(step 7): port NullPruning::tryPrune from Expr::evalWithNulls.
-  // For now this layer is a pass-through.
-  evaluateWithSharedSubexpr(f);
+
+  // Mirrors Expr::evalWithNulls (Expr.cpp:1201).  Only attempts null
+  // pruning when the expression propagates nulls and field-dependent
+  // optimizations are not skipped.
+  if (!f.propagatesNulls || f.skipFieldDependentOptimizations) {
+    evaluateWithSharedSubexpr(f);
+    return;
+  }
+
+  // Quick reject: if no distinct field may have nulls, skip the
+  // expensive removeSureNulls work.
+  bool mayHaveNulls = false;
+  for (auto* field : f.expr.distinctFields()) {
+    const auto& vector = f.ctx.getField(field->index(f.ctx));
+    if (isLazyNotLoaded(*vector)) {
+      continue;
+    }
+    if (vector->mayHaveNulls()) {
+      mayHaveNulls = true;
+      break;
+    }
+  }
+  if (!mayHaveNulls) {
+    evaluateWithSharedSubexpr(f);
+    return;
+  }
+
+  LocalSelectivityVector nonNullHolder(f.ctx);
+  if (!removeSureNulls(
+          f.expr, f.ctx, f.remainingRows.rows(), nonNullHolder)) {
+    evaluateWithSharedSubexpr(f);
+    return;
+  }
+
+  // Default-null pruning fired.  Recurse on the non-null subset under
+  // a scoped nullsPruned flag, then null-fill the rows we removed.
+  ScopedVarSetter noMoreNulls(f.ctx.mutableNullsPruned(), true);
+  auto* nonNullRows = nonNullHolder.get();
+
+  if (nonNullRows->hasSelections()) {
+    EvalFrame innerFrame{
+        f.expr, f.runtimeStates, f.ctx, *nonNullRows, f.result};
+    evaluateWithSharedSubexpr(innerFrame);
+  }
+
+  // addNulls writes nulls into 'result' for rows in originalRows but
+  // not in nonNullRows.
+  EvalCtx::addNulls(
+      f.remainingRows.rows(),
+      nonNullRows->asRange().bits(),
+      f.ctx,
+      f.expr.type(),
+      f.result);
 }
 
 void ExprEvaluatorV2::evaluateWithSharedSubexpr(EvalFrame& f) {
