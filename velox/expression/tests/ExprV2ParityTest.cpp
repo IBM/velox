@@ -140,6 +140,46 @@ TEST_F(ExprV2ParityTest, constantEncodedInput) {
   assertParity("a + 1::bigint", input);
 }
 
+// Multi-batch dictionary input with the same base -- exercises the
+// DictionaryMemo phase, including the "first repeat" cache fill and
+// the subsequent cache-hit / cache-miss merge paths.
+TEST_F(ExprV2ParityTest, dictionaryMemoAcrossBatches) {
+  auto base = makeFlatVector<int64_t>({10, 20, 30, 40, 50});
+  // Three batches all using the same base dictionary but different
+  // index permutations.  V2's DictionaryMemo should cache after batch 1
+  // and reuse on subsequent batches.
+  std::vector<RowVectorPtr> inputs;
+  for (int batch = 0; batch < 3; ++batch) {
+    auto indices = makeIndicesInReverse(5);
+    auto dict = BaseVector::wrapInDictionary(nullptr, indices, 5, base);
+    inputs.push_back(makeRowVector({"a"}, {dict}));
+  }
+
+  auto rowType = std::dynamic_pointer_cast<const RowType>(inputs[0]->type());
+  auto untyped =
+      parse::DuckSqlExpressionsParser(options_).parseExpr("a + 1::bigint");
+  auto typed =
+      core::Expressions::inferTypes(untyped, rowType, execCtx_->pool());
+
+  auto v1Set = std::make_shared<ExprSet>(
+      std::vector<core::TypedExprPtr>{typed}, execCtx_.get());
+  ExprSetV2 v2Set{v1Set};
+
+  for (const auto& input : inputs) {
+    SelectivityVector rows{input->size()};
+
+    EvalCtx v1Ctx{execCtx_.get(), v1Set.get(), input.get()};
+    std::vector<VectorPtr> v1Results(1);
+    v1Set->eval(rows, v1Ctx, v1Results);
+
+    EvalCtx v2Ctx{execCtx_.get(), v2Set.sourceSet().get(), input.get()};
+    std::vector<VectorPtr> v2Results(1);
+    v2Set.eval(rows, v2Ctx, v2Results);
+
+    velox::test::assertEqualVectors(v1Results[0], v2Results[0]);
+  }
+}
+
 // Two dictionary inputs over the same base -- exercises peeling of
 // multiple field references.
 TEST_F(ExprV2ParityTest, twoDictionariesSameBase) {
