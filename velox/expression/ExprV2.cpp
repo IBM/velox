@@ -21,10 +21,35 @@
 
 namespace facebook::velox::exec {
 
-// Adapter implementation lands in step 3.  Until then, calling this is a
-// programmer error -- nothing should be constructing ExprV2 yet.
-std::shared_ptr<ExprV2> ExprV2::from(const std::shared_ptr<Expr>& /*expr*/) {
-  VELOX_NYI("ExprV2::from is implemented in step 3 of the refactor.");
+std::shared_ptr<ExprV2> ExprV2::from(const std::shared_ptr<Expr>& expr) {
+  VELOX_CHECK_NOT_NULL(expr, "ExprV2::from requires a non-null Expr");
+
+  std::vector<std::shared_ptr<ExprV2>> inputs;
+  inputs.reserve(expr->inputs().size());
+  for (const auto& child : expr->inputs()) {
+    inputs.push_back(ExprV2::from(child));
+  }
+
+  auto node = std::shared_ptr<ExprV2>(new ExprV2());
+  node->type_ = expr->type();
+  node->name_ = expr->name();
+  node->inputs_ = std::move(inputs);
+  node->vectorFunction_ = expr->vectorFunction();
+  node->metadata_ = expr->vectorFunctionMetadata();
+  node->listeners_ = expr->listeners();
+  if (expr->isSpecialForm()) {
+    node->specialFormKind_ = expr->specialFormKind();
+  }
+  node->deterministic_ = expr->isDeterministic();
+  node->propagatesNulls_ = expr->propagatesNulls();
+  node->supportsFlatNoNullsFastPath_ = expr->supportsFlatNoNullsFastPath();
+  node->hasConditionals_ = expr->hasConditionals();
+  node->trackCpuUsage_ = expr->trackCpuUsage();
+  node->distinctFields_ = expr->distinctFields();
+  node->multiplyReferencedFields_ = expr->multiplyReferencedFields();
+  node->sourceExpr_ = expr;
+
+  return node;
 }
 
 } // namespace facebook::velox::exec

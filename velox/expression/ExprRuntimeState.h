@@ -48,18 +48,28 @@ struct ExprRuntimeState {
   AdaptiveSamplingState adaptiveState;
 };
 
-/// Tree of runtime state parallel-indexed with an ExprV2 tree.  Look up
-/// runtime state for a node by pointer.  Implementation uses a flat
-/// vector for cache friendliness; lookups go through indexByNode_.
+/// Tree of runtime state parallel-indexed with an ExprV2 forest.  Look
+/// up runtime state for a node by pointer.  Backed by a flat vector
+/// for cache friendliness; lookups go through indexByNode_.
+///
+/// Built from the roots of an ExprSetV2.  Nodes shared between roots
+/// (e.g. CSE subtrees) appear once in the tree and share state.
 class ExprRuntimeStateTree {
  public:
-  /// Builds a runtime-state tree mirroring the shape of the ExprV2 tree
-  /// rooted at 'root'.  Each node in the tree gets one ExprRuntimeState.
-  explicit ExprRuntimeStateTree(const ExprV2& root);
+  /// Builds a runtime-state tree covering 'roots' and all their
+  /// reachable descendants.  Each unique ExprV2 node gets exactly one
+  /// ExprRuntimeState.
+  explicit ExprRuntimeStateTree(
+      const std::vector<std::shared_ptr<ExprV2>>& roots);
 
-  /// Returns the runtime state for 'node'.  'node' must be a member of
-  /// the tree this object was built from.
+  /// Returns the runtime state for 'node'.  'node' must be reachable
+  /// from one of the roots this tree was built from.
   ExprRuntimeState& at(const ExprV2& node);
+
+  /// Number of nodes covered by this tree.
+  size_t size() const {
+    return states_.size();
+  }
 
  private:
   std::vector<ExprRuntimeState> states_;

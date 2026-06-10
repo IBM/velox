@@ -18,11 +18,20 @@
 #include "velox/expression/ExprSetV2.h"
 
 #include "velox/common/base/Exceptions.h"
+#include "velox/expression/Expr.h"
 
 namespace facebook::velox::exec {
 
-ExprSetV2::ExprSetV2(std::shared_ptr<ExprSet> /*source*/) {
-  VELOX_NYI("ExprSetV2 construction lands in step 3 of the refactor.");
+ExprSetV2::ExprSetV2(std::shared_ptr<ExprSet> source)
+    : sourceSet_{std::move(source)} {
+  VELOX_CHECK_NOT_NULL(sourceSet_, "ExprSetV2 requires a non-null ExprSet");
+
+  roots_.reserve(sourceSet_->exprs().size());
+  for (const auto& root : sourceSet_->exprs()) {
+    roots_.push_back(ExprV2::from(root));
+  }
+
+  runtimeStates_ = std::make_unique<ExprRuntimeStateTree>(roots_);
 }
 
 void ExprSetV2::eval(
