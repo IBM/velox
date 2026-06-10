@@ -54,9 +54,17 @@ class ExprEvaluatorV2 {
   void evaluateFunctionCall(EvalFrame& f);
   void evaluateSpecialForm(EvalFrame& f);
 
+  // Argument-evaluation strategies (Expr.cpp:380, 455).  Each populates
+  // f.inputValues, may shrink f.remainingRows, and returns true if at
+  // least one row survived (false means setAllNulls already applied).
+  bool evalArgsDefaultNull(EvalFrame& f);
+  bool evalArgsPreserveNull(EvalFrame& f);
+
   // Leaf operations.
   void applyFunction(EvalFrame& f);
+  bool tryApplyWithPeeling(EvalFrame& f);
   void emitEmpty(EvalFrame& f);
+  void setAllNulls(EvalFrame& f, const SelectivityVector& rows);
 };
 
 } // namespace facebook::velox::exec
