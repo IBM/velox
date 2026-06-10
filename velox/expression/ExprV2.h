@@ -106,6 +106,13 @@ class ExprV2 {
     return skipFieldDependentOptimizations_;
   }
 
+  /// True if this expression appears in more than one place in the
+  /// containing ExprSet (CSE candidate).  Set during compilation of
+  /// the source Expr; mirrored here for the SharedSubexprCache phase.
+  bool isMultiplyReferenced() const {
+    return isMultiplyReferenced_;
+  }
+
   bool trackCpuUsage() const {
     return trackCpuUsage_;
   }
@@ -145,6 +152,7 @@ class ExprV2 {
   bool supportsFlatNoNullsFastPath_{false};
   bool hasConditionals_{false};
   bool skipFieldDependentOptimizations_{false};
+  bool isMultiplyReferenced_{false};
   bool trackCpuUsage_{false};
 
   // Raw pointers into the V1 tree owned by sourceExpr_.  Valid as long
