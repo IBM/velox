@@ -351,7 +351,7 @@ buildDwrfSchemaAttributes(
   for (size_t i = 0; i < numColumns; ++i) {
     stampFieldIdAttributes(
         *schemaWithId->childAt(static_cast<uint32_t>(i)),
-        inputColumns[i]->field(),
+        inputColumns[i]->nestedField().toParquetFieldId(),
         attributes);
   }
   return attributes;
@@ -368,7 +368,7 @@ IcebergDwrfStatsCollector::IcebergDwrfStatsCollector(
   const auto numColumns =
       std::min<size_t>(schemaWithId->size(), inputColumns.size());
   for (size_t i = 0; i < numColumns; ++i) {
-    const auto& field = inputColumns[i]->field();
+    const auto& field = inputColumns[i]->nestedField().toParquetFieldId();
     buildNodeInfo(
         *schemaWithId->childAt(static_cast<uint32_t>(i)),
         field,

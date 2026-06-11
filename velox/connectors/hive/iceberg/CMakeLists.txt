@@ -19,22 +19,27 @@ set(
   IcebergColumnHandle.cpp
   IcebergConfig.cpp
   IcebergConnector.cpp
+  DataFileStatsCollector.cpp
   IcebergDataFileStatistics.cpp
   IcebergDataSink.cpp
   IcebergDataSource.cpp
   IcebergDeletionVectorSink.cpp
   IcebergDwrfStatsCollector.cpp
   IcebergMergeProcessor.cpp
-  IcebergMergeSink.cpp
+# needs more work before we enable this  IcebergMergeSink.cpp
   IcebergPartitionName.cpp
+  IcebergPartitionIdGenerator.cpp
   IcebergSplit.cpp
   IcebergSplitReader.cpp
   IcebergStatsCollector.cpp
+  Murmur3.cpp
   PartitionSpec.cpp
   PositionalDeleteFileReader.cpp
   TransformEvaluator.cpp
   TransformExprBuilder.cpp
   WriterOptionsAdapter.cpp
+  TransformFactory.cpp
+  Transforms.cpp
 )
 
 if(VELOX_ENABLE_PARQUET)

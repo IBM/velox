@@ -19,7 +19,7 @@
 #include <folly/container/F14Set.h>
 
 #include "velox/connectors/Connector.h"
-#include "velox/connectors/hive/FileSplitReader.h"
+#include "velox/connectors/hive/HiveSplitReader.h"
 #include "velox/connectors/hive/iceberg/DeletionVectorReader.h"
 #include "velox/connectors/hive/iceberg/EqualityDeleteFileReader.h"
 #include "velox/connectors/hive/iceberg/PositionalDeleteFileReader.h"
@@ -29,7 +29,7 @@ namespace facebook::velox::connector::hive::iceberg {
 struct HiveIcebergSplit;
 struct IcebergDeleteFile;
 
-class IcebergSplitReader : public FileSplitReader {
+class IcebergSplitReader : public HiveSplitReader {
  public:
   IcebergSplitReader(
       const std::shared_ptr<const HiveIcebergSplit>& icebergSplit,
@@ -44,9 +44,13 @@ class IcebergSplitReader : public FileSplitReader {
       FileHandleFactory* fileHandleFactory,
       folly::Executor* executor,
       const std::shared_ptr<common::ScanSpec>& scanSpec,
-      std::shared_ptr<ColumnHandleMap> columnHandles);
+      std::shared_ptr<ColumnHandleMap> columnHandles,
+      const std::unordered_map<std::string, FileColumnHandlePtr>* infoColumns =
+          nullptr,
+      std::vector<column_index_t> bucketChannels = {},
+      const common::SubfieldFilters* subfieldFiltersForValidation = nullptr);
 
-  ~IcebergSplitReader() override = default;
+  ~IcebergSplitReader() override;
 
   void prepareSplit(
       std::shared_ptr<common::MetadataFilter> metadataFilter,

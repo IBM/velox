@@ -349,7 +349,8 @@ class TestStatistics : public PrimitiveTypedTest<TestType> {
         true, // hasNullCount.
         true, // hasDistinctCount.
         false, // hasNaNCount.
-        0); // nanCount.
+        0  // nanCount.
+    );
 
     auto statistics3 = makeStatistics<TestType>(this->schema_.column(0));
     std::vector<uint8_t> validBits(
@@ -619,7 +620,8 @@ void TestStatistics<ByteArrayType>::testMinMaxEncode() {
       true, // hasNullCount
       true, // hasDistinctCount
       false, // hasNaNCount
-      0); // nanCount
+      0 // nanCount
+  );
 
   ASSERT_EQ(encodedMin, statistics2->encodeMin());
   ASSERT_EQ(encodedMax, statistics2->encodeMax());

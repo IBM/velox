@@ -87,6 +87,7 @@ velox_link_libraries(
     velox_exec
     velox_hive_partition_function
     velox_key_encoder
+  PUBLIC velox_hive_iceberg_splitreader
 )
 
 if(VELOX_ENABLE_PARQUET)

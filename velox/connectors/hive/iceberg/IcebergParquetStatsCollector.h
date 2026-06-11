@@ -22,6 +22,7 @@
 #include "velox/connectors/hive/iceberg/IcebergStatsCollector.h"
 #include "velox/dwio/common/FileMetadata.h"
 #include "velox/dwio/common/ParquetFieldId.h"
+#include "velox/type/Type.h"
 
 namespace facebook::velox::connector::hive::iceberg {
 
