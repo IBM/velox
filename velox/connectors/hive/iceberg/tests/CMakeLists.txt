@@ -39,7 +39,12 @@ if(VELOX_ENABLE_BENCHMARKS)
 endif()
 
 if(NOT VELOX_DISABLE_GOOGLETEST)
-  add_executable(velox_hive_iceberg_test IcebergReadTest.cpp IcebergSplitReaderBenchmarkTest.cpp)
+  add_executable(
+    velox_hive_iceberg_test
+    IcebergReadTest.cpp
+    IcebergTestBase.cpp
+    IcebergSplitReaderBenchmarkTest.cpp
+  )
   add_test(velox_hive_iceberg_test velox_hive_iceberg_test)
 
   target_link_libraries(
@@ -51,6 +56,7 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
     velox_dwio_common_exception
     velox_dwio_common_test_utils
     velox_vector_test_lib
+    velox_vector_fuzzer
     velox_exec
     velox_exec_test_lib
     Folly::folly
@@ -62,15 +68,18 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
   add_executable(
     velox_hive_iceberg_insert_test
     IcebergConnectorTest.cpp
+    ColumnTransformTest.cpp
     IcebergInsertTest.cpp
+    IcebergPartitionIdGeneratorTest.cpp
     IcebergParquetStatsTest.cpp
+    IcebergSortOrderTest.cpp
+    IcebergStatsTest.cpp
     IcebergTestBase.cpp
+    IcebergTransformE2ETest.cpp
+    IcebergTransformUnitTest.cpp
+    IcebergWriterModeTest.cpp
     Main.cpp
-    PartitionNameTest.cpp
-    PartitionSpecTest.cpp
-    PartitionValueFormatterTest.cpp
-    TransformE2ETest.cpp
-    TransformTest.cpp
+    Murmur3Test.cpp
   )
   velox_add_test_headers(velox_hive_iceberg_insert_test IcebergTestBase.h)
 
@@ -99,48 +108,12 @@ if(NOT VELOX_DISABLE_GOOGLETEST)
     GTest::gtest_main
   )
 
-  add_executable(velox_hive_iceberg_merge_processor_test IcebergMergeProcessorTest.cpp)
-  add_test(velox_hive_iceberg_merge_processor_test velox_hive_iceberg_merge_processor_test)
-
-  target_link_libraries(
-    velox_hive_iceberg_merge_processor_test
-    velox_hive_connector
-    velox_hive_iceberg_splitreader
-    velox_vector_test_lib
-    GTest::gtest
-    GTest::gtest_main
-  )
-
-  add_executable(
-    velox_hive_iceberg_merge_sink_test
-    IcebergMergeSinkTest.cpp
-    IcebergTestBase.cpp
-    Main.cpp
-  )
-  velox_add_test_headers(velox_hive_iceberg_merge_sink_test IcebergTestBase.h)
-  add_test(velox_hive_iceberg_merge_sink_test velox_hive_iceberg_merge_sink_test)
-
-  target_link_libraries(
-    velox_hive_iceberg_merge_sink_test
-    velox_exec_test_lib
-    velox_hive_connector
-    velox_hive_iceberg_splitreader
-    velox_vector_test_lib
-    velox_vector_fuzzer
-    GTest::gtest
-    GTest::gtest_main
-  )
-
   if(VELOX_ENABLE_PARQUET)
     target_link_libraries(
-      velox_hive_iceberg_merge_sink_test
-      velox_dwio_parquet_reader
+      velox_hive_iceberg_test
       velox_dwio_parquet_writer
+      velox_dwio_parquet_reader
     )
-  endif()
-
-  if(VELOX_ENABLE_PARQUET)
-    target_link_libraries(velox_hive_iceberg_test velox_dwio_parquet_reader)
 
     file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/examples DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 

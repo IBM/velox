@@ -71,11 +71,24 @@ void collectSkipBoundsFieldIds(
 
 IcebergParquetStatsCollector::IcebergParquetStatsCollector(
     const std::vector<IcebergColumnHandlePtr>& inputColumns) {
+  // Helper function to convert IcebergNestedField to ParquetFieldId
+  std::function<parquet::ParquetFieldId(const IcebergNestedField&)>
+      convertField = [&convertField](const IcebergNestedField& icebergField)
+      -> parquet::ParquetFieldId {
+    parquet::ParquetFieldId parquetField;
+    parquetField.fieldId = icebergField.id;
+    for (const auto& child : icebergField.children) {
+      parquetField.children.push_back(convertField(child));
+    }
+    return parquetField;
+  };
+
   parquetFieldIds_.children.reserve(inputColumns.size());
   for (const auto& columnHandle : inputColumns) {
-    parquetFieldIds_.children.emplace_back(columnHandle->field());
+    auto parquetField = convertField(columnHandle->nestedField());
+    parquetFieldIds_.children.push_back(parquetField);
     collectSkipBoundsFieldIds(
-        columnHandle->field(), columnHandle->dataType(), skipBoundsFieldIds_);
+        parquetField, columnHandle->dataType(), skipBoundsFieldIds_);
   }
 }
 
