@@ -32,6 +32,10 @@ target_link_libraries(
   velox_functions_test_lib
   velox_expression
   velox_memory
+  velox_parse_parser
+  velox_function_registry
+  velox_functions_prestosql
+  velox_aggregates
   GTest::gtest
   GTest::gtest_main
 )

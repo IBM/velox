@@ -152,6 +152,9 @@ class PARQUET_EXPORT FileWriter {
   virtual ::arrow::Status writeRecordBatch(
       const ::arrow::RecordBatch& batch) = 0;
 
+  /// \brief Finalize the current buffered row group, if any, without closing
+  /// the file.
+  virtual ::arrow::Status flushBufferedRowGroup() = 0;
   /// \brief Write the footer and close the file.
   virtual ::arrow::Status close() = 0;
   virtual ~FileWriter();
