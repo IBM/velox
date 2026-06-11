@@ -115,6 +115,9 @@ static std::shared_ptr<Statistics> makeTypedColumnStats(
             ->distinct_count()
             .value_or(0),
         apache::thrift::can_throw(metadata.statistics())
+                ->nan_count()
+                .value_or(0),
+        apache::thrift::can_throw(metadata.statistics())
                 ->max_value()
                 .has_value() ||
             apache::thrift::can_throw(metadata.statistics())
@@ -126,8 +129,9 @@ static std::shared_ptr<Statistics> makeTypedColumnStats(
         apache::thrift::can_throw(metadata.statistics())
             ->distinct_count()
             .has_value(),
-        false,
-        0);
+        apache::thrift::can_throw(metadata.statistics())
+            ->nan_count()
+            .has_value());
   }
   // Default behavior
   return makeStatistics<DType>(
@@ -144,6 +148,9 @@ static std::shared_ptr<Statistics> makeTypedColumnStats(
       apache::thrift::can_throw(metadata.statistics())
           ->distinct_count()
           .value_or(0),
+      apache::thrift::can_throw(metadata.statistics())
+          ->nan_count()
+          .value_or(0),
       apache::thrift::can_throw(metadata.statistics())->max().has_value() ||
           apache::thrift::can_throw(metadata.statistics())->min().has_value(),
       apache::thrift::can_throw(metadata.statistics())
@@ -152,8 +159,9 @@ static std::shared_ptr<Statistics> makeTypedColumnStats(
       apache::thrift::can_throw(metadata.statistics())
           ->distinct_count()
           .has_value(),
-      false,
-      0);
+      apache::thrift::can_throw(metadata.statistics())
+          ->nan_count()
+          .has_value());
 }
 
 std::shared_ptr<Statistics> MakeColumnStats(

@@ -237,6 +237,7 @@ struct Statistics {
     */
   5: optional binary max_value;
   6: optional binary min_value;
+  7: optional i64 nan_count;
 }
 
 /** Empty structs to use as logical type annotations */
