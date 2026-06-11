@@ -13,23 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#pragma once
 
-#include "velox/connectors/hive/iceberg/IcebergConfig.h"
-
-#include "velox/common/config/Config.h"
+#include "velox/connectors/hive/iceberg/PartitionSpec.h"
+#include "velox/connectors/hive/iceberg/Transforms.h"
 
 namespace facebook::velox::connector::hive::iceberg {
 
-IcebergConfig::IcebergConfig(
-    const std::shared_ptr<const config::ConfigBase>& config)
-    : config_(config) {
-  VELOX_CHECK_NOT_NULL(
-      config_, "Config is null for IcebergConfig initialization");
-}
-
-std::string IcebergConfig::functionPrefix() const {
-  return config_->get<std::string>(
-      kFunctionPrefixConfig, kDefaultFunctionPrefix);
-}
+std::vector<std::shared_ptr<Transform>> parsePartitionTransformSpecs(
+    const std::vector<IcebergPartitionSpec::Field>& fields,
+    memory::MemoryPool* pool);
 
 } // namespace facebook::velox::connector::hive::iceberg
