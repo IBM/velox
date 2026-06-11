@@ -73,9 +73,10 @@ IcebergParquetStatsCollector::IcebergParquetStatsCollector(
     const std::vector<IcebergColumnHandlePtr>& inputColumns) {
   parquetFieldIds_.children.reserve(inputColumns.size());
   for (const auto& columnHandle : inputColumns) {
-    parquetFieldIds_.children.emplace_back(columnHandle->field());
+    auto parquetField = columnHandle->nestedField().toParquetFieldId();
+    parquetFieldIds_.children.push_back(parquetField);
     collectSkipBoundsFieldIds(
-        columnHandle->field(), columnHandle->dataType(), skipBoundsFieldIds_);
+        parquetField, columnHandle->dataType(), skipBoundsFieldIds_);
   }
 }
 

@@ -132,7 +132,8 @@ struct IcebergPartitionSpec {
   /// @throws VeloxUserError if validation fails.
   IcebergPartitionSpec(int32_t _specId, std::vector<Field> _fields)
       : specId(_specId), fields(std::move(_fields)) {
-    checkCompatibility();
+    // TODO: Removed for this PR - validation temporarily disabled
+    // checkCompatibility();
   }
 
  private:

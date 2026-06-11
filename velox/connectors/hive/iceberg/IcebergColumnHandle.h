@@ -15,16 +15,38 @@
  */
 #pragma once
 
-#include <optional>
-#include <string>
-#include <vector>
-
 #include "velox/connectors/hive/TableHandle.h"
 #include "velox/dwio/common/ParquetFieldId.h"
-#include "velox/type/Subfield.h"
-#include "velox/type/Type.h"
 
 namespace facebook::velox::connector::hive::iceberg {
+
+struct IcebergNestedField {
+  int32_t id;
+  std::vector<IcebergNestedField> children;
+
+  /// Converts this IcebergNestedField to a ParquetFieldId recursively.
+  dwio::common::ParquetFieldId toParquetFieldId() const {
+    dwio::common::ParquetFieldId parquetField;
+    parquetField.fieldId = id;
+    parquetField.children.reserve(children.size());
+    for (const auto& child : children) {
+      parquetField.children.push_back(child.toParquetFieldId());
+    }
+    return parquetField;
+  }
+
+  /// Creates an IcebergNestedField from a ParquetFieldId recursively.
+  static IcebergNestedField fromParquetFieldId(
+      const dwio::common::ParquetFieldId& parquetField) {
+    IcebergNestedField field;
+    field.id = parquetField.fieldId;
+    field.children.reserve(parquetField.children.size());
+    for (const auto& child : parquetField.children) {
+      field.children.push_back(fromParquetFieldId(child));
+    }
+    return field;
+  }
+};
 
 class IcebergColumnHandle : public HiveColumnHandle {
  public:
@@ -32,18 +54,39 @@ class IcebergColumnHandle : public HiveColumnHandle {
       const std::string& name,
       ColumnType columnType,
       TypePtr dataType,
-      parquet::ParquetFieldId icebergField,
+      TypePtr hiveType,
+      const IcebergNestedField& nestedField,
       std::vector<common::Subfield> requiredSubfields = {},
-      std::optional<std::string> initialDefaultValue = std::nullopt);
+      std::optional<std::string> initialDefaultValue = std::nullopt,
+      ColumnParseParameters columnParseParameters = {});
 
-  const parquet::ParquetFieldId& field() const;
+  // Constructor overload that accepts ParquetFieldId for convenience
+  IcebergColumnHandle(
+      const std::string& name,
+      ColumnType columnType,
+      TypePtr dataType,
+      const dwio::common::ParquetFieldId& parquetField,
+      std::vector<common::Subfield> requiredSubfields = {},
+      std::optional<std::string> initialDefaultValue = std::nullopt,
+      ColumnParseParameters columnParseParameters = {})
+      : IcebergColumnHandle(
+            name,
+            columnType,
+            dataType,
+            dataType,
+            IcebergNestedField::fromParquetFieldId(parquetField),
+            std::move(requiredSubfields),
+            std::move(initialDefaultValue),
+            columnParseParameters) {}
+
+  const IcebergNestedField& nestedField() const;
 
   const std::optional<std::string>& initialDefaultValue() const {
     return initialDefaultValue_;
   }
 
  private:
-  const parquet::ParquetFieldId field_;
+  const IcebergNestedField nestedField_;
   const std::optional<std::string> initialDefaultValue_;
 };
 

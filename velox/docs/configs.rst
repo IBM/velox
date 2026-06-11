@@ -1014,6 +1014,11 @@ must be specified as raw byte counts.
        materialization during the scan. If all rows from a stripe have been filtered out, lazy IO will
        not be triggered. NOTE: lazy IO applies the same restriction as lazy materialization which doesn't
        allow lazy IO across stripes.
+   * - fanout-enabled
+     - fanout_enabled
+     - bool
+     - true
+     - Controls the writer mode, whether the fanout mode writer is enabled, default value is true, setting to false means clustered mode. Currently applies only to the Iceberg writer.
 
 ``ORC File Format Configuration``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
