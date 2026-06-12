@@ -16,6 +16,8 @@ set(
   DeletionVectorReader.cpp
   DeletionVectorWriter.cpp
   EqualityDeleteFileReader.cpp
+  IcebergColumnHandle.cpp
+  IcebergConfig.cpp
   IcebergConnector.cpp
   DataFileStatsCollector.cpp
   IcebergColumnHandle.cpp
@@ -23,6 +25,9 @@ set(
   IcebergDataSink.cpp
   IcebergDataSource.cpp
   IcebergPartitionIdGenerator.cpp
+  IcebergDeletionVectorSink.cpp
+  IcebergMergeProcessor.cpp
+  IcebergMergeSink.cpp
   IcebergSplit.cpp
   IcebergSplitReader.cpp
   Murmur3.cpp
