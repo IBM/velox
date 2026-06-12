@@ -127,14 +127,45 @@ VectorPtr CastExpr::castFromDate(
   switch (toType->kind()) {
     case TypeKind::VARCHAR: {
       auto* resultFlatVector = castResult->as<FlatVector<StringView>>();
+      // Format options are constant for the whole call; hoist out.
+      TimestampToStringOptions options;
+      options.mode = TimestampToStringOptions::Mode::kDateOnly;
+      options.zeroPaddingYear = true;
+      // getMaxStringLength(kDateOnly) is 17 (signed 10-digit year +
+      // "-MM-DD"). The vast majority of DATE values render as
+      // "YYYY-MM-DD" (10 chars) which fits inside StringView's 12-byte
+      // inline storage - those rows never need an out-of-line string
+      // buffer at all. Only year out of [-9999, 999999] produces a
+      // longer output that has to be persisted in a result-owned
+      // buffer.
+      constexpr size_t kMaxDateLen = 17;
       applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
         try {
-          // TODO Optimize to avoid creating an intermediate string.
-          auto output = DATE()->toString(inputFlatVector->valueAt(row));
-          auto writer = exec::StringWriter(resultFlatVector, row);
-          writer.resize(output.size());
-          ::memcpy(writer.data(), output.data(), output.size());
-          writer.finalize();
+          char stackBuf[kMaxDateLen];
+          const int32_t days = inputFlatVector->valueAt(row);
+          const int64_t daySeconds = static_cast<int64_t>(days) * 86400;
+          std::tm tm;
+          VELOX_CHECK(
+              Timestamp::epochToCalendarUtc(daySeconds, tm),
+              "Can't convert days to date: {}",
+              days);
+          const auto sv =
+              Timestamp::tmToStringView(tm, 0, options, stackBuf);
+          // For sv.size() <= StringView::kInlineSize (12) the
+          // StringView ctor copied the bytes into sv's own inline
+          // storage - stackBuf is unreferenced after this point and
+          // we can store sv directly. For larger outputs (rare large
+          // year) sv points into stackBuf so we must persist the bytes
+          // in a result-owned buffer before storing.
+          if (FOLLY_LIKELY(sv.isInline())) {
+            resultFlatVector->setNoCopy(row, sv);
+          } else {
+            char* persistent =
+                resultFlatVector->getRawStringBufferWithSpace(sv.size());
+            ::memcpy(persistent, sv.data(), sv.size());
+            resultFlatVector->setNoCopy(
+                row, StringView(persistent, sv.size()));
+          }
         } catch (const VeloxException& ue) {
           if (!ue.isUserError()) {
             throw;
