@@ -327,6 +327,36 @@ class Expr {
     return false;
   }
 
+  /// Returns true if recomputing this expression on the peeled base is
+  /// cheap enough that proactively evaluating all uncached base positions
+  /// (rather than only the rows touched by the current input vector) is
+  /// a net win once the dictionary cache becomes complete. Used by
+  /// Expr::evalWithMemo's eager-fill path: on the second sighting of a
+  /// stable dictionary base, an expression that opts in pays the cost of
+  /// filling every base position once and turns every subsequent batch
+  /// over that base into an O(1) dictionary wrap of the cache (no
+  /// per-batch peel, evaluate, result allocation, or copy). Defaults to
+  /// false. Overridden by CastExpr to return true for fast numeric
+  /// upcasts (e.g. INT->BIGINT, REAL->DOUBLE) where the per-row cost is
+  /// a single static_cast.
+  /// Whether the per-row evaluation of this expression is cheap and
+  /// non-throwing enough that Expr::evalWithMemo's eager-fill path
+  /// can speculatively evaluate every position of the peeled
+  /// dictionary base, not just the rows the current batch requests.
+  /// Eager-fill pays one full-base eval up front so subsequent
+  /// batches over the same base hit cache-covers-base in
+  /// peelEncodings and return the cached vector directly without
+  /// the per-row FlatVector<StringView>::copy ->
+  /// acquireSharedStringBuffers -> atomic-refcount-bump chain.
+  ///
+  /// Default Expr implementation (in Expr.cpp) returns true for
+  /// function calls whose registered name is in the curated
+  /// cheap-and-non-throwing set (date / time accessors, basic string
+  /// ops, simple math, comparisons) and false otherwise. Subclasses
+  /// override - CastExpr returns true for fast numeric upcasts and
+  /// date conversions.
+  virtual bool isCheapToReevaluate() const;
+
   bool hasConditionals() const {
     return hasConditionals_;
   }
