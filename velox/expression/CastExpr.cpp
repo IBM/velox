@@ -50,6 +50,70 @@ const tz::TimeZone* getTimeZoneFromConfig(const core::QueryConfig& config) {
 
 } // namespace
 
+bool CastExpr::isSupportedFastUpcast(
+    const TypePtr& fromType,
+    const TypePtr& toType) {
+  auto isIntegralType = [](const TypePtr& type) {
+    return type == TINYINT() || type == SMALLINT() || type == INTEGER() ||
+        type == BIGINT();
+  };
+
+  auto isBasicNumericType = [&isIntegralType](const TypePtr& type) {
+    return isIntegralType(type) || type == REAL() || type == DOUBLE();
+  };
+
+  if (isIntegralType(fromType) && isBasicNumericType(toType)) {
+    if (fromType->cppSizeInBytes() < toType->cppSizeInBytes()) {
+      return true;
+    }
+    if (fromType == INTEGER() && toType == REAL()) {
+      return true;
+    }
+    if (fromType == BIGINT() && (toType == REAL() || toType == DOUBLE())) {
+      return true;
+    }
+  }
+
+  if (fromType == REAL() && toType == DOUBLE()) {
+    return true;
+  }
+  return false;
+}
+
+bool CastExpr::isCheapToReevaluate() const {
+  // Three families of casts qualify as "cheap":
+  //
+  // 1. Fast numeric upcasts (see applyNumericUpcast) - one static_cast
+  //    per row over a flat input. Non-throwing by construction.
+  // 2. DATE -> TIMESTAMP - integer multiply by 86'400'000 plus a
+  //    divmod in Timestamp::fromMillis, optionally followed by a
+  //    timezone shift in Timestamp::toGMT. DATE values always
+  //    represent midnight; midnight does not fall in any IANA DST
+  //    gap, so toGMT is in practice non-throwing for date-derived
+  //    timestamps. The per-row cost is single-digit cycles plus a
+  //    constant timezone-table lookup when adjustment is active.
+  // 3. DATE -> VARCHAR - format DATE(int32 days) into a fixed-width
+  //    "YYYY-MM-DD" string. Non-throwing for valid date values and
+  //    the formatted string is small enough to stay inline in
+  //    StringView, so we avoid out-of-line buffer churn too.
+  //
+  // Filling every base position up front on second sight pays for
+  // itself across the subsequent O(1) dictionary wraps the eager-fill
+  // path enables in Expr::evalWithMemo.
+  if (inputs_.empty()) {
+    return false;
+  }
+  const auto& fromType = inputs_[0]->type();
+  if (isSupportedFastUpcast(fromType, type_)) {
+    return true;
+  }
+  if (fromType->isDate() &&
+      (type_->isTimestamp() || type_->kind() == TypeKind::VARCHAR)) {
+    return true;
+  }
+  return false;
+}
+
 VectorPtr CastExpr::castFromDate(
     const SelectivityVector& rows,
     const BaseVector& input,
