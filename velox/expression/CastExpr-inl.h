@@ -586,7 +586,10 @@ void CastExpr::applyCastPrimitives(
   auto* resultFlatVector = result->as<FlatVector<To>>();
   auto* inputSimpleVector = input.as<SimpleVector<From>>();
 
-  switch (hooks_->getPolicy()) {
+  // hooks_->getPolicy() is constant for the lifetime of this CastExpr;
+  // policy() caches the resolved value on the first call so the switch
+  // below doesn't pay a virtual call per applyCastPrimitives.
+  switch (policy()) {
     case LegacyCastPolicy:
       applyToSelectedNoThrowLocal(context, rows, result, [&](int row) {
         applyCastKernel<ToKind, FromKind, util::LegacyCastPolicy>(
@@ -613,7 +616,7 @@ void CastExpr::applyCastPrimitives(
       break;
 
     default:
-      VELOX_NYI("Policy {} not yet implemented.", hooks_->getPolicy());
+      VELOX_NYI("Policy {} not yet implemented.", policy());
   }
 }
 
