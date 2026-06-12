@@ -255,22 +255,13 @@ VectorPtr CastExpr::castFromDate(
 
       const auto* timeZone =
           getTimeZoneFromConfig(context.execCtx()->queryCtx()->queryConfig());
-      // Hoist the timezone-presence branch out of the per-row loop:
-      // pick one of two specialized loops here, so the inner body has no
-      // condition to evaluate for every row.
-      if (timeZone != nullptr) {
-        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
-          auto timestamp = Timestamp::fromDate(inputFlatVector->valueAt(row));
-          hooks_->castDateTimestampToGMT(timestamp, *timeZone);
-          resultFlatVector->set(row, timestamp);
-        });
-      } else {
-        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
-          resultFlatVector->set(
-              row, Timestamp::fromDate(inputFlatVector->valueAt(row)));
-        });
-      }
-
+      // Single per-batch virtual call. The hook owns the row loop, so
+      // the body inside (fromDate, optional Timestamp::toGMT, store) is
+      // concrete code in the hook implementation that the compiler can
+      // inline and partially vectorize. No per-row virtual dispatch, no
+      // per-row exception frame.
+      hooks_->castDateToTimestampVector(
+          rows, *inputFlatVector, *resultFlatVector, timeZone);
       return castResult;
     }
     default:
