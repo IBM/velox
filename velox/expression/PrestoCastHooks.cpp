@@ -180,4 +180,29 @@ PolicyType PrestoCastHooks::getPolicy() const {
   return legacyCast_ ? PolicyType::LegacyCastPolicy
                      : PolicyType::PrestoCastPolicy;
 }
+
+void PrestoCastHooks::castDateToTimestampVector(
+    const SelectivityVector& rows,
+    const SimpleVector<int32_t>& input,
+    FlatVector<Timestamp>& result,
+    const tz::TimeZone* timeZone) const {
+  // Mirrors the default CastHooks::castDateToTimestampVector body but
+  // calls Timestamp::toGMT directly instead of dispatching through the
+  // virtual castDateTimestampToGMT hook on every row. Since Presto's
+  // castDateTimestampToGMT just calls Timestamp::toGMT, the two paths
+  // are semantically identical here - the difference is that this
+  // version is concrete code the compiler can inline into the loop
+  // body.
+  if (timeZone == nullptr) {
+    rows.applyToSelected([&](vector_size_t row) {
+      result.set(row, Timestamp::fromDate(input.valueAt(row)));
+    });
+  } else {
+    rows.applyToSelected([&](vector_size_t row) {
+      auto ts = Timestamp::fromDate(input.valueAt(row));
+      ts.toGMT(*timeZone);
+      result.set(row, ts);
+    });
+  }
+}
 } // namespace facebook::velox::exec
