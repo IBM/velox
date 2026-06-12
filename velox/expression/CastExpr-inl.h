@@ -58,36 +58,6 @@ inline std::exception_ptr makeBadCastException(
       false));
 }
 
-// Returns true if casting from 'fromType' to 'toType' is a supported fast
-// upcast.
-bool isSupportedFastUpcast(const TypePtr& fromType, const TypePtr& toType) {
-  auto isIntegralType = [](const TypePtr& type) {
-    return type == TINYINT() || type == SMALLINT() || type == INTEGER() ||
-        type == BIGINT();
-  };
-
-  auto isBasicNumericType = [&isIntegralType](const TypePtr& type) {
-    return isIntegralType(type) || type == REAL() || type == DOUBLE();
-  };
-
-  if (isIntegralType(fromType) && isBasicNumericType(toType)) {
-    if (fromType->cppSizeInBytes() < toType->cppSizeInBytes()) {
-      return true;
-    }
-    if (fromType == INTEGER() && toType == REAL()) {
-      return true;
-    }
-    if (fromType == BIGINT() && (toType == REAL() || toType == DOUBLE())) {
-      return true;
-    }
-  }
-
-  if (fromType == REAL() && toType == DOUBLE()) {
-    return true;
-  }
-  return false;
-}
-
 } // namespace
 
 template <typename Func>
@@ -728,7 +698,7 @@ void CastExpr::applyCastPrimitivesDispatch(
     VELOX_DCHECK(toType->equivalent(*TIMESTAMP()));
   }
 
-  if (isSupportedFastUpcast(fromType, toType)) {
+  if (CastExpr::isSupportedFastUpcast(fromType, toType)) {
     VELOX_DYNAMIC_SCALAR_TEMPLATE_TYPE_DISPATCH(
         applyNumericUpcast,
         ToKind,

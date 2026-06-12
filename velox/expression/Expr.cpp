@@ -251,6 +251,123 @@ bool Expr::isCurrentFunctionDeterministic() const {
   }
 }
 
+namespace {
+
+// Function names whose per-row eval is cheap and non-throwing on
+// arbitrary in-range inputs. evalWithMemo's eager-fill speculation
+// calls these over the entire peeled dictionary base on the second
+// sighting; surfacing errors from speculative rows or paying
+// expensive per-row eval would defeat the win. The list is
+// conservative: only entries that are clearly cheap AND clearly
+// don't throw on plausible inputs are included.
+//
+// Throwing functions deliberately omitted: cast(varchar as <type>)
+// (parsing), mod / divide (divide-by-zero), json_*, regexp_*, md5 /
+// sha*, to_base64 / from_base64, levenshtein, url_*, etc. Casts
+// have their own override in CastExpr.
+const folly::F14FastSet<std::string_view>& cheapFunctionNames() {
+  static const folly::F14FastSet<std::string_view> kSet{
+      // Date / time accessors - extract a field from a date /
+      // timestamp / interval.
+      "year",
+      "month",
+      "day",
+      "day_of_month",
+      "day_of_week",
+      "day_of_year",
+      "hour",
+      "minute",
+      "second",
+      "millisecond",
+      "week",
+      "week_of_year",
+      "year_of_week",
+      "quarter",
+      "yow",
+      "dow",
+      "doy",
+      "last_day_of_month",
+      // Date / time arithmetic and formatting. date_add and date_diff
+      // are bounded arithmetic on integer day / millisecond counts;
+      // date_format / format_datetime / from_unixtime / to_unixtime
+      // are pure formatting that don't throw on any in-range
+      // timestamp.
+      "date_trunc",
+      "date_format",
+      "format_datetime",
+      "to_unixtime",
+      "from_unixtime",
+      "date_add",
+      "date_diff",
+      "current_date",
+      // Simple primitive string ops. Bounded by input size; no
+      // parsing failures.
+      "length",
+      "char_length",
+      "character_length",
+      "lower",
+      "upper",
+      "reverse",
+      "substr",
+      "substring",
+      "trim",
+      "ltrim",
+      "rtrim",
+      "strpos",
+      "position",
+      "starts_with",
+      "ends_with",
+      "split_part",
+      "concat",
+      // Math - non-throwing on IEEE inputs (NaN / Inf instead of
+      // throw). Excludes mod / divide which throw on zero.
+      "abs",
+      "sign",
+      "ceil",
+      "ceiling",
+      "floor",
+      "round",
+      "exp",
+      "ln",
+      "log10",
+      "log2",
+      "sqrt",
+      "cbrt",
+      "cos",
+      "sin",
+      "tan",
+      "acos",
+      "asin",
+      "atan",
+      "atan2",
+      "cosh",
+      "sinh",
+      "tanh",
+      "degrees",
+      "radians",
+      "is_nan",
+      "is_finite",
+      "is_infinite",
+      // Container size accessors. Just a length read.
+      "cardinality",
+      "array_length",
+  };
+  return kSet;
+}
+
+} // namespace
+
+bool Expr::isCheapToReevaluate() const {
+  // For non-special-form expressions (function calls), classify by
+  // the registered function name. Special forms inherit this default
+  // and stay false; CastExpr overrides to return true for known-safe
+  // cast variants.
+  if (vectorFunction_ != nullptr) {
+    return cheapFunctionNames().count(name_) > 0;
+  }
+  return false;
+}
+
 void Expr::computeMetadata() {
   if (metaDataComputed_) {
     return;
@@ -1293,6 +1410,79 @@ void Expr::evalWithMemo(
   }
 
   ++baseOfDictionaryRepeats_;
+
+  // Eager full-base fill: on the second (or later) sighting of a stable
+  // base, expressions whose per-row cost is trivial (see
+  // isCheapToReevaluate, currently CastExpr's fast numeric upcasts) gain
+  // by paying one full-base compute once and turning every subsequent
+  // batch over this base into an O(1) dictionary wrap of the cache. The
+  // alternative incremental path below allocates a fresh `result`,
+  // copies cached values into it, evaluates uncached rows, and copies
+  // back into the cache every batch - all of which is more work per
+  // batch than the cast itself for these types.
+  //
+  // Only fires when isCheapToReevaluate() is true so we never surface
+  // errors from base positions that the caller did not request - the
+  // fast upcast path is non-throwing by construction.
+  if (isCheapToReevaluate()) {
+    const auto baseSize = base->size();
+    LocalSelectivityVector toFillHolder(context, baseSize);
+    auto* toFill = toFillHolder.get();
+    toFill->setAll();
+    // Whether to deselect already-cached positions before evaluating.
+    // The deselect itself is O(baseSize/64), and the resulting sparse
+    // toFill makes the subsequent evalWithNulls / copy slower because
+    // they iterate set bits instead of running over a dense range.
+    // The crossover point: when only a minority of base positions are
+    // already cached, paying the deselect cost to skip <50% of rows
+    // loses more than it saves; re-evaluating every position is
+    // cheaper. When the majority is already cached, deselect saves
+    // enough work to be worth it. Threshold at 50%.
+    const auto cachedCount = cachedDictionaryIndices_->size() > 0
+        ? cachedDictionaryIndices_->countSelected()
+        : 0;
+    const bool deselectCached = cachedCount * 2 >= baseSize;
+    if (deselectCached) {
+      toFill->deselect(*cachedDictionaryIndices_);
+    }
+    if (toFill->hasSelections()) {
+      if (dictionaryCache_->size() < baseSize) {
+        dictionaryCache_->resize(baseSize);
+      }
+      if (cachedDictionaryIndices_->size() < baseSize) {
+        cachedDictionaryIndices_->resize(baseSize, false);
+      }
+      LocalSelectivityVector writableHolder(context, baseSize);
+      auto* writable = writableHolder.get();
+      writable->setAll();
+      if (deselectCached) {
+        writable->deselect(*cachedDictionaryIndices_);
+      }
+      context.ensureWritable(*writable, type(), dictionaryCache_);
+
+      // Evaluate the cast on every selected base position and write
+      // the results directly into the cache. ScopedFinalSelectionSetter
+      // widens the finalSelection so the child evaluator does not
+      // narrow back to `rows`.
+      ScopedFinalSelectionSetter scopedFinalSelectionSetter(
+          context, &rows, /*newFinalSelection=*/true);
+      VectorPtr fillResult;
+      evalWithNulls(*toFill, context, fillResult);
+      context.deselectErrors(*toFill);
+      if (toFill->hasSelections()) {
+        dictionaryCache_->copy(fillResult.get(), *toFill, nullptr);
+        cachedDictionaryIndices_->select(*toFill);
+      }
+      context.releaseVector(fillResult);
+    }
+    // Hand back the (now-complete-for-this-base) cache as the peeled
+    // result. evalEncodings re-wraps with the original dictionary
+    // indices; subsequent batches with the same base hit this branch
+    // again with `toFill` empty and return in O(1).
+    result = dictionaryCache_;
+    context.releaseVector(base);
+    return;
+  }
 
   if (cachedDictionaryIndices_) {
     LocalSelectivityVector cachedHolder(context, rows);
