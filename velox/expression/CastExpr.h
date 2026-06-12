@@ -108,6 +108,19 @@ class CastExpr : public SpecialForm {
       const TypePtr& toType,
       VectorPtr& result);
 
+  /// Returns true if casting from 'fromType' to 'toType' takes the fast
+  /// numeric upcast path: a single static_cast per row over a flat input
+  /// (see applyNumericUpcast). Casts on this path are cheap and non-
+  /// throwing, which Expr::evalWithMemo's eager-fill strategy relies on:
+  /// computing every base position up front is acceptable because the
+  /// per-position cost is single-digit cycles and no surprise errors
+  /// from un-requested positions can occur.
+  static bool isSupportedFastUpcast(
+      const TypePtr& fromType,
+      const TypePtr& toType);
+
+  bool isCheapToReevaluate() const override;
+
  private:
   VectorPtr applyMap(
       const SelectivityVector& rows,
