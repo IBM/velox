@@ -1129,50 +1129,78 @@ void CastExpr::apply(
 
   context.deselectErrors(*remainingRows);
 
-  LocalDecodedVector decoded(context, *input, *remainingRows);
-  auto* rawNulls = decoded->nulls(remainingRows.get());
-
-  if (rawNulls) {
-    remainingRows->deselectNulls(
-        rawNulls, remainingRows->begin(), remainingRows->end());
-  }
-
   VectorPtr localResult;
-  if (!remainingRows->hasSelections()) {
-    localResult =
-        BaseVector::createNullConstant(toType, rows.end(), context.pool());
-  } else if (decoded->isIdentityMapping()) {
-    applyPeeled(
-        *remainingRows,
-        *decoded->base(),
-        context,
-        fromType,
-        toType,
-        localResult);
-  } else {
-    withContextSaver([&](ContextSaver& saver) {
-      LocalSelectivityVector newRowsHolder(*context.execCtx());
 
-      LocalDecodedVector localDecoded(context);
-      std::vector<VectorPtr> peeledVectors;
-      auto peeledEncoding = PeeledEncoding::peel(
-          {input}, *remainingRows, localDecoded, true, peeledVectors);
-      VELOX_CHECK_EQ(peeledVectors.size(), 1);
-      if (peeledVectors[0]->isLazy()) {
-        peeledVectors[0] =
-            peeledVectors[0]->as<LazyVector>()->loadedVectorShared();
-      }
-      auto newRows =
-          peeledEncoding->translateToInnerRows(*remainingRows, newRowsHolder);
-      // Save context and set the peel.
-      context.saveAndReset(saver, *remainingRows);
-      context.setPeeledEncoding(peeledEncoding);
+  // Flat-identity fast path: skip the LocalDecodedVector + DecodedVector::
+  // decode setup entirely. For a flat input the DecodedVector would set
+  // isIdentityMapping=true with base()==&input and nulls()==input->raw-
+  // Nulls(); we can reach the same state directly without the per-call
+  // allocation and decode cost. This is the common shape at the top of
+  // evaluate() once a child expression has produced a flat result.
+  const uint64_t* rawNulls = nullptr;
+  if (input->isFlatEncoding()) {
+    rawNulls = input->rawNulls();
+    if (rawNulls) {
+      remainingRows->deselectNulls(
+          rawNulls, remainingRows->begin(), remainingRows->end());
+    }
+    if (!remainingRows->hasSelections()) {
+      localResult =
+          BaseVector::createNullConstant(toType, rows.end(), context.pool());
+    } else {
       applyPeeled(
-          *newRows, *peeledVectors[0], context, fromType, toType, localResult);
+          *remainingRows, *input, context, fromType, toType, localResult);
+    }
+  } else {
+    LocalDecodedVector decoded(context, *input, *remainingRows);
+    rawNulls = decoded->nulls(remainingRows.get());
 
-      localResult = context.getPeeledEncoding()->wrap(
-          toType, context.pool(), localResult, *remainingRows);
-    });
+    if (rawNulls) {
+      remainingRows->deselectNulls(
+          rawNulls, remainingRows->begin(), remainingRows->end());
+    }
+
+    if (!remainingRows->hasSelections()) {
+      localResult =
+          BaseVector::createNullConstant(toType, rows.end(), context.pool());
+    } else if (decoded->isIdentityMapping()) {
+      applyPeeled(
+          *remainingRows,
+          *decoded->base(),
+          context,
+          fromType,
+          toType,
+          localResult);
+    } else {
+      withContextSaver([&](ContextSaver& saver) {
+        LocalSelectivityVector newRowsHolder(*context.execCtx());
+
+        LocalDecodedVector localDecoded(context);
+        std::vector<VectorPtr> peeledVectors;
+        auto peeledEncoding = PeeledEncoding::peel(
+            {input}, *remainingRows, localDecoded, true, peeledVectors);
+        VELOX_CHECK_EQ(peeledVectors.size(), 1);
+        if (peeledVectors[0]->isLazy()) {
+          peeledVectors[0] =
+              peeledVectors[0]->as<LazyVector>()->loadedVectorShared();
+        }
+        auto newRows = peeledEncoding->translateToInnerRows(
+            *remainingRows, newRowsHolder);
+        // Save context and set the peel.
+        context.saveAndReset(saver, *remainingRows);
+        context.setPeeledEncoding(peeledEncoding);
+        applyPeeled(
+            *newRows,
+            *peeledVectors[0],
+            context,
+            fromType,
+            toType,
+            localResult);
+
+        localResult = context.getPeeledEncoding()->wrap(
+            toType, context.pool(), localResult, *remainingRows);
+      });
+    }
   }
   context.moveOrCopyResult(localResult, *remainingRows, result);
   context.releaseVector(localResult);
