@@ -16,6 +16,7 @@
 #pragma once
 
 #include "velox/connectors/hive/HiveConnector.h"
+#include "velox/connectors/hive/iceberg/IcebergConfig.h"
 
 namespace facebook::velox::connector::hive::iceberg {
 
@@ -63,6 +64,7 @@ class IcebergConnector final : public HiveConnector {
 
  private:
   const std::string functionPrefix_;
+  const std::shared_ptr<IcebergConfig> icebergConfig_;
 };
 
 class IcebergConnectorFactory final : public ConnectorFactory {
