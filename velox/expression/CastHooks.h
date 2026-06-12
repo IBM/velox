@@ -19,6 +19,8 @@
 #include "velox/expression/StringWriter.h"
 #include "velox/type/Timestamp.h"
 #include "velox/type/tz/TimeZoneMap.h"
+#include "velox/vector/FlatVector.h"
+#include "velox/vector/SelectivityVector.h"
 
 namespace facebook::velox::exec {
 
@@ -101,6 +103,37 @@ class CastHooks {
       Timestamp& timestamp,
       const tz::TimeZone& timeZone) const {
     timestamp.toGMT(timeZone);
+  }
+
+  /// Vector-level entry point for CAST(DATE AS TIMESTAMP). Reads
+  /// int32 days-since-epoch from 'input' at every selected row, builds
+  /// the corresponding Timestamp at midnight UTC, and stores it in
+  /// 'result'. When 'timeZone' is non-null, the timestamp is shifted
+  /// from local-time-at-that-zone to GMT via castDateTimestampToGMT.
+  ///
+  /// The default implementation iterates rows and calls the per-row
+  /// castDateTimestampToGMT hook for each one. Subclasses can override
+  /// to skip the per-row virtual call entirely (the loop body becomes
+  /// concrete code the compiler can inline and partially vectorize).
+  virtual void castDateToTimestampVector(
+      const SelectivityVector& rows,
+      const SimpleVector<int32_t>& input,
+      FlatVector<Timestamp>& result,
+      const tz::TimeZone* timeZone) const {
+    static constexpr int64_t kMillisPerDay = 86'400'000;
+    if (timeZone == nullptr) {
+      rows.applyToSelected([&](vector_size_t row) {
+        result.set(
+            row, Timestamp::fromMillis(input.valueAt(row) * kMillisPerDay));
+      });
+    } else {
+      rows.applyToSelected([&](vector_size_t row) {
+        auto ts =
+            Timestamp::fromMillis(input.valueAt(row) * kMillisPerDay);
+        castDateTimestampToGMT(ts, *timeZone);
+        result.set(row, ts);
+      });
+    }
   }
 };
 } // namespace facebook::velox::exec
