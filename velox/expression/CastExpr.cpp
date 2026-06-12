@@ -154,14 +154,23 @@ VectorPtr CastExpr::castFromDate(
       const auto* timeZone =
           getTimeZoneFromConfig(context.execCtx()->queryCtx()->queryConfig());
       auto* resultFlatVector = castResult->as<FlatVector<Timestamp>>();
-      applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
-        auto timestamp = Timestamp::fromMillis(
-            inputFlatVector->valueAt(row) * kMillisPerDay);
-        if (timeZone) {
+      // Hoist the timezone-presence branch out of the per-row loop:
+      // pick one of two specialized loops here, so the inner body has no
+      // condition to evaluate for every row.
+      if (timeZone != nullptr) {
+        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+          auto timestamp = Timestamp::fromMillis(
+              inputFlatVector->valueAt(row) * kMillisPerDay);
           hooks_->castDateTimestampToGMT(timestamp, *timeZone);
-        }
-        resultFlatVector->set(row, timestamp);
-      });
+          resultFlatVector->set(row, timestamp);
+        });
+      } else {
+        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+          auto timestamp = Timestamp::fromMillis(
+              inputFlatVector->valueAt(row) * kMillisPerDay);
+          resultFlatVector->set(row, timestamp);
+        });
+      }
 
       return castResult;
     }
@@ -298,22 +307,9 @@ VectorPtr CastExpr::castFromTime(
           true /*exactSize*/);
       char* rawBuffer = buffer->asMutable<char>() + buffer->size();
 
-      applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+      // Hoist the timezone-presence branch out of the per-row loop.
+      auto rowBody = [&](int row, int64_t adjustedTime) {
         try {
-          // Use timezone-aware conversion
-          auto systemTime =
-              systemDay.count() * kMillisInDay + inputFlatVector->valueAt(row);
-
-          int64_t adjustedTime{0};
-          if (timeZone) {
-            adjustedTime =
-                (timeZone->to_local(std::chrono::milliseconds{systemTime}) %
-                 kMillisInDay)
-                    .count();
-          } else {
-            adjustedTime = systemTime % kMillisInDay;
-          }
-
           if (adjustedTime < 0) {
             adjustedTime += kMillisInDay;
           }
@@ -331,7 +327,24 @@ VectorPtr CastExpr::castFromTime(
           VELOX_USER_FAIL(
               makeErrorMessage(input, row, toType) + " " + e.what());
         }
-      });
+      };
+      if (timeZone != nullptr) {
+        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+          const auto systemTime =
+              systemDay.count() * kMillisInDay + inputFlatVector->valueAt(row);
+          const int64_t adjustedTime =
+              (timeZone->to_local(std::chrono::milliseconds{systemTime}) %
+               kMillisInDay)
+                  .count();
+          rowBody(row, adjustedTime);
+        });
+      } else {
+        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+          const auto systemTime =
+              systemDay.count() * kMillisInDay + inputFlatVector->valueAt(row);
+          rowBody(row, systemTime % kMillisInDay);
+        });
+      }
 
       buffer->setSize(rawBuffer - buffer->asMutable<char>());
       return castResult;
