@@ -233,28 +233,16 @@ VectorPtr CastExpr::castFromDate(
     }
     case TypeKind::TIMESTAMP: {
       VELOX_DCHECK(toType->equivalent(*TIMESTAMP()));
-      static const int64_t kMillisPerDay{86'400'000};
       const auto* timeZone =
           getTimeZoneFromConfig(context.execCtx()->queryCtx()->queryConfig());
       auto* resultFlatVector = castResult->as<FlatVector<Timestamp>>();
-      // Hoist the timezone-presence branch out of the per-row loop:
-      // pick one of two specialized loops here, so the inner body has no
-      // condition to evaluate for every row.
-      if (timeZone != nullptr) {
-        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
-          auto timestamp = Timestamp::fromMillis(
-              inputFlatVector->valueAt(row) * kMillisPerDay);
-          hooks_->castDateTimestampToGMT(timestamp, *timeZone);
-          resultFlatVector->set(row, timestamp);
-        });
-      } else {
-        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
-          auto timestamp = Timestamp::fromMillis(
-              inputFlatVector->valueAt(row) * kMillisPerDay);
-          resultFlatVector->set(row, timestamp);
-        });
-      }
-
+      // Single per-batch virtual call. The hook owns the row loop, so
+      // the body inside (multiply, fromMillis, optional Timestamp::
+      // toGMT, store) is concrete code in the hook implementation that
+      // the compiler can inline and partially vectorize. No per-row
+      // virtual dispatch, no per-row exception frame.
+      hooks_->castDateToTimestampVector(
+          rows, *inputFlatVector, *resultFlatVector, timeZone);
       return castResult;
     }
     default:
