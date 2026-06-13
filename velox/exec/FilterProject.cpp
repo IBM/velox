@@ -223,7 +223,7 @@ RowVectorPtr FilterProject::getOutput() {
 
   if (!hasFilter_) {
     VELOX_CHECK(!isIdentityProjection_);
-    auto results = project(*rows, evalCtx);
+    const auto& results = project(*rows, evalCtx);
     if (!lazyDereference_) {
       loadReusedLazyVectors(input_, reusedInputChannels_);
     }
@@ -240,12 +240,11 @@ RowVectorPtr FilterProject::getOutput() {
 
   const bool allRowsSelected = (numOut == size);
   // evaluate projections (if present)
-  std::vector<VectorPtr> results;
   if (!isIdentityProjection_) {
     if (!allRowsSelected) {
       rows->setFromBits(filterEvalCtx_.selectedBits->as<uint64_t>(), size);
     }
-    results = project(*rows, evalCtx);
+    project(*rows, evalCtx);
   }
 
   if (!lazyDereference_) {
@@ -254,25 +253,41 @@ RowVectorPtr FilterProject::getOutput() {
   auto output = fillOutput(
       numOut,
       allRowsSelected ? nullptr : filterEvalCtx_.selectedIndices,
-      results);
+      projectResults_);
   return output;
 }
 
-std::vector<VectorPtr> FilterProject::project(
+const std::vector<VectorPtr>& FilterProject::project(
     const SelectivityVector& rows,
     EvalCtx& evalCtx) {
-  std::vector<VectorPtr> results;
+  // Push the prior call's outputs back to execCtx's VectorPool. The pool
+  // only accepts singly-referenced flat vectors and silently skips
+  // anything still held by a downstream consumer - so this is safe
+  // regardless of how the consumer drained the prior output. exprs_->eval
+  // resizes projectResults_ and writes into the (now-null) entries; each
+  // ensureWritable inside the per-Expr eval finds a recycled vector via
+  // VectorPool::get instead of allocating fresh.
+  evalCtx.releaseVectors(projectResults_);
   exprs_->eval(
-      hasFilter_ ? 1 : 0, numExprs_, !hasFilter_, rows, evalCtx, results);
-  return results;
+      hasFilter_ ? 1 : 0,
+      numExprs_,
+      !hasFilter_,
+      rows,
+      evalCtx,
+      projectResults_);
+  return projectResults_;
 }
 
 vector_size_t FilterProject::filter(
     EvalCtx& evalCtx,
     const SelectivityVector& allRows) {
-  std::vector<VectorPtr> results;
-  exprs_->eval(0, 1, true, allRows, evalCtx, results);
-  return processFilterResults(results[0], allRows, filterEvalCtx_, pool());
+  // Same recycle pattern as project(). processFilterResults reads
+  // filterResults_[0] inline and does not retain a reference, so the
+  // boolean vector is free to be reclaimed on the next call.
+  evalCtx.releaseVectors(filterResults_);
+  exprs_->eval(0, 1, true, allRows, evalCtx, filterResults_);
+  return processFilterResults(
+      filterResults_[0], allRows, filterEvalCtx_, pool());
 }
 
 OperatorStats FilterProject::stats(bool clear) {
