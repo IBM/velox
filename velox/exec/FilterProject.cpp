@@ -260,14 +260,20 @@ RowVectorPtr FilterProject::getOutput() {
 const std::vector<VectorPtr>& FilterProject::project(
     const SelectivityVector& rows,
     EvalCtx& evalCtx) {
-  // Push the prior call's outputs back to execCtx's VectorPool. The pool
-  // only accepts singly-referenced flat vectors and silently skips
-  // anything still held by a downstream consumer - so this is safe
-  // regardless of how the consumer drained the prior output. exprs_->eval
-  // resizes projectResults_ and writes into the (now-null) entries; each
-  // ensureWritable inside the per-Expr eval finds a recycled vector via
-  // VectorPool::get instead of allocating fresh.
+  // Drop the prior call's outputs before the next eval so per-Expr state
+  // that wraps a result vector (most importantly Expr::evalWithMemo's
+  // dictionaryCache_) ends the call at use_count == 1 and the next
+  // ensureWritable can rewrite it in place rather than fall through to
+  // BaseVector::ensureWritable's copy-on-write allocation.
+  //
+  // releaseVectors moves any singly-referenced flat entries into
+  // execCtx's VectorPool (those then satisfy subsequent ensureWritable
+  // calls via VectorPool::get without an allocation); clear() drops
+  // anything VectorPool::release rejected - in practice the Dictionary-
+  // Vector wrappers produced by encoding-peeled evaluation, whose
+  // wrapped flat bases are what we actually want to free for reuse.
   evalCtx.releaseVectors(projectResults_);
+  projectResults_.clear();
   exprs_->eval(
       hasFilter_ ? 1 : 0,
       numExprs_,
@@ -285,6 +291,7 @@ vector_size_t FilterProject::filter(
   // filterResults_[0] inline and does not retain a reference, so the
   // boolean vector is free to be reclaimed on the next call.
   evalCtx.releaseVectors(filterResults_);
+  filterResults_.clear();
   exprs_->eval(0, 1, true, allRows, evalCtx, filterResults_);
   return processFilterResults(
       filterResults_[0], allRows, filterEvalCtx_, pool());
