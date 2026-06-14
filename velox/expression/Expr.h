@@ -550,8 +550,15 @@ class Expr {
     SelectivityVector* newFinalSelection;
     bool mayCache;
 
+    /// When true, the dictionaryCache_ is already populated for every
+    /// position of the peeled base, so the caller can wrap the cache
+    /// directly with the peeled encoding and skip evalWithMemo /
+    /// evalWithNulls entirely. newRows / newFinalSelection are not
+    /// computed in this case (translateToInnerRows is bypassed).
+    bool cacheCoversBase;
+
     static PeelEncodingsResult empty() {
-      return {nullptr, nullptr, false};
+      return {nullptr, nullptr, false, false};
     }
   };
 
