@@ -325,10 +325,17 @@ class BlockedOperatorFactory : public Operator::PlanNodeTranslator {
 
 /// Creates VectorSerde::Options for the given VectorSerde kind with compression
 /// settings. Optionally configures minimum compression ratio.
+/// If `kind` is "Presto" and `sessionTimezone` is non-empty, the resulting
+/// PrestoOptions::sessionTimezone is populated by looking up the zone via
+/// tz::locateZone; this is needed for PushDownWidenCast's DATE -> TIMESTAMP
+/// coercion to match Velox's CastExpr::castFromDate behavior. Pass an empty
+/// string when the caller has no session zone (serialization-only paths) or
+/// when adjust_timestamp_to_session_timezone is false.
 std::unique_ptr<VectorSerde::Options> getVectorSerdeOptions(
     common::CompressionKind compressionKind,
     const std::string& kind,
     std::optional<float> minCompressionRatio = std::nullopt,
-    int32_t minCompressionPageSizeBytes = 0);
+    int32_t minCompressionPageSizeBytes = 0,
+    std::string_view sessionTimezone = "");
 
 } // namespace facebook::velox::exec
