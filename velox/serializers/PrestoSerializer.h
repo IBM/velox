@@ -20,6 +20,7 @@
 #include "velox/common/base/Crc.h"
 #include "velox/common/compression/Compression.h"
 #include "velox/serializers/PrestoVectorLexer.h"
+#include "velox/type/tz/TimeZoneMap.h"
 #include "velox/vector/VectorStream.h"
 
 namespace facebook::velox::serializer::presto {
@@ -90,6 +91,14 @@ class PrestoVectorSerde : public VectorSerde {
     /// affect the encoding of the input vectors. This is only relevant when
     /// using BatchVectorSerializer.
     bool preserveEncodings{false};
+
+    /// Session timezone used by PushDownWidenCast deserialization-time
+    /// coercions whose semantics depend on the session zone (currently only
+    /// DATE -> TIMESTAMP). Owned by the timezone registry returned by
+    /// tz::locateZone(); not owned here. nullptr means no adjustment is
+    /// applied (matches Velox CastExpr behavior when
+    /// adjust_timestamp_to_session_timezone is false or the zone is empty).
+    const tz::TimeZone* sessionTimezone{nullptr};
   };
 
   PrestoVectorSerde() : VectorSerde(kSerdeKind) {}
