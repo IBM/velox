@@ -191,6 +191,7 @@ VectorPtr CastExpr::castFromDate(
       // virtual dispatch, no per-row exception frame.
       hooks_->castDateToTimestampVector(
           rows, *inputFlatVector, *resultFlatVector, timeZone);
+
       return castResult;
     }
     default:
@@ -211,11 +212,15 @@ VectorPtr CastExpr::castToDate(
   switch (fromType->kind()) {
     case TypeKind::VARCHAR: {
       auto* inputVector = input.as<SimpleVector<StringView>>();
+      // Cache the raw hook pointer outside the loop - skip the
+      // shared_ptr<CastHooks> indirection per row, and let LTO
+      // devirtualize the call given PrestoCastHooks is final.
+      auto* hooks = hooks_.get();
       applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
         bool wrapException = true;
         try {
           const auto result =
-              hooks_->castStringToDate(inputVector->valueAt(row));
+              hooks->castStringToDate(inputVector->valueAt(row));
           setResultOrError(
               row,
               result,
