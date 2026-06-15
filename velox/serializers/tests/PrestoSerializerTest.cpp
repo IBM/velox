@@ -128,6 +128,8 @@ class PrestoSerializerTest
     serializer::presto::PrestoVectorSerde::PrestoOptions paramOptions{
         useLosslessTimestamp, kind, 0.8, nullsFirst, preserveEncodings};
     paramOptions.useMicrosecondPrecision = useMicrosecondPrecision;
+    paramOptions.sessionTimezone =
+        serdeOptions == nullptr ? nullptr : serdeOptions->sessionTimezone;
 
     return paramOptions;
   }
@@ -1757,6 +1759,195 @@ TEST_P(PrestoSerializerTest, typeMismatch) {
       deserialize(ROW({BIGINT(), DOUBLE()}), serialized, nullptr),
       "Serialized encoding is not compatible with requested type: DOUBLE. "
       "Expected LONG_ARRAY. Got VARIABLE_WIDTH.");
+}
+
+// Consumer-side widening: when PushDownWidenCast rewrites the consumer's source
+// operator to declare a wider type, the producer still emits narrow-typed bytes
+// on the wire. The deserializer must read the narrow bytes and emit a widened
+// vector. One test per supported widening pair.
+TEST_P(PrestoSerializerTest, wideningCoercionTinyintToBigint) {
+  auto narrow = makeRowVector({
+      makeFlatVector<int8_t>({-5, 0, 7, 42, 127, -128}),
+  });
+  std::ostringstream out;
+  serialize(narrow, &out, nullptr);
+  // skipLexer=true because the lexer validates encoding-vs-type matching, which
+  // is exactly the constraint widening intentionally crosses.
+  auto deserialized = deserialize(
+      ROW({BIGINT()}), out.str(), nullptr, /*skipLexer=*/true);
+  assertEqualVectors(
+      deserialized,
+      makeRowVector(
+          {makeFlatVector<int64_t>({-5, 0, 7, 42, 127, -128})}));
+}
+
+TEST_P(PrestoSerializerTest, wideningCoercionSmallintToInteger) {
+  auto narrow = makeRowVector({
+      makeFlatVector<int16_t>({-1000, 0, 1000, 32767, -32768}),
+  });
+  std::ostringstream out;
+  serialize(narrow, &out, nullptr);
+  auto deserialized = deserialize(ROW({INTEGER()}), out.str(), nullptr);
+  assertEqualVectors(
+      deserialized,
+      makeRowVector(
+          {makeFlatVector<int32_t>({-1000, 0, 1000, 32767, -32768})}));
+}
+
+TEST_P(PrestoSerializerTest, wideningCoercionIntegerToBigint) {
+  auto narrow = makeRowVector({
+      makeFlatVector<int32_t>(
+          {-100'000, 0, 100'000, 2'147'483'647, -2'147'483'648}),
+  });
+  std::ostringstream out;
+  serialize(narrow, &out, nullptr);
+  auto deserialized = deserialize(ROW({BIGINT()}), out.str(), nullptr);
+  assertEqualVectors(
+      deserialized,
+      makeRowVector({makeFlatVector<int64_t>(
+          {-100'000, 0, 100'000, 2'147'483'647, -2'147'483'648})}));
+}
+
+TEST_P(PrestoSerializerTest, wideningCoercionRealToDouble) {
+  auto narrow = makeRowVector({
+      makeFlatVector<float>({-1.5f, 0.0f, 1.5f, 3.14159f}),
+  });
+  std::ostringstream out;
+  serialize(narrow, &out, nullptr);
+  auto deserialized = deserialize(ROW({DOUBLE()}), out.str(), nullptr);
+  // Float -> double widens exactly (no precision loss for the round-trip),
+  // so static_cast<double>(static_cast<float>(v)) preserves the bits.
+  assertEqualVectors(
+      deserialized,
+      makeRowVector({makeFlatVector<double>(
+          {static_cast<double>(-1.5f),
+           static_cast<double>(0.0f),
+           static_cast<double>(1.5f),
+           static_cast<double>(3.14159f)})}));
+}
+
+TEST_P(PrestoSerializerTest, wideningCoercionDateToTimestamp) {
+  // DATE is stored as int32 days since epoch. After widening to TIMESTAMP with
+  // no session timezone we expect Timestamp(days * 86400, 0) -- UTC midnight.
+  auto narrow = makeRowVector({
+      makeFlatVector<int32_t>(
+          {0 /* 1970-01-01 */,
+           1 /* 1970-01-02 */,
+           20'089 /* ~ 2025-01-01 */,
+           -1 /* 1969-12-31 */},
+          DATE()),
+  });
+  std::ostringstream out;
+  serialize(narrow, &out, nullptr);
+  auto deserialized = deserialize(ROW({TIMESTAMP()}), out.str(), nullptr);
+  assertEqualVectors(
+      deserialized,
+      makeRowVector({makeFlatVector<Timestamp>(
+          {Timestamp(0 * Timestamp::kSecondsInDay, 0),
+           Timestamp(1 * Timestamp::kSecondsInDay, 0),
+           Timestamp(20'089 * Timestamp::kSecondsInDay, 0),
+           Timestamp(-1 * Timestamp::kSecondsInDay, 0)})}));
+}
+
+TEST_P(PrestoSerializerTest, wideningCoercionDateToTimestampWithSessionTimezone) {
+  // When the session timezone is set, the DATE -> TIMESTAMP coercion must
+  // match CastExpr::castFromDate: compute wall-clock midnight, then call
+  // toGMT(zone) to convert to UTC instant. Without the adjustment,
+  // DATE '2024-01-15' in America/Los_Angeles would render as
+  // 2024-01-14 16:00:00 instead of 2024-01-15 00:00:00.
+  const std::vector<int32_t> days = {
+      0 /* 1970-01-01 */,
+      1 /* 1970-01-02 */,
+      19'737 /* 2024-01-15 */,
+      -1 /* 1969-12-31 */,
+  };
+  auto narrow = makeRowVector({makeFlatVector<int32_t>(days, DATE())});
+
+  for (const std::string zoneName : {"America/Los_Angeles", "Asia/Tokyo"}) {
+    SCOPED_TRACE("session zone " + zoneName);
+    const auto* zone = tz::locateZone(zoneName);
+    ASSERT_NE(zone, nullptr);
+
+    serializer::presto::PrestoVectorSerde::PrestoOptions opts;
+    opts.sessionTimezone = zone;
+
+    std::ostringstream out;
+    serialize(narrow, &out, &opts);
+    auto deserialized =
+        deserialize(ROW({TIMESTAMP()}), out.str(), &opts);
+
+    // Expected: same formula as CastExpr::castFromDate.
+    constexpr int64_t kMillisPerDay{86'400'000};
+    std::vector<Timestamp> expected;
+    expected.reserve(days.size());
+    for (auto d : days) {
+      auto t = Timestamp::fromMillis(static_cast<int64_t>(d) * kMillisPerDay);
+      t.toGMT(*zone);
+      expected.push_back(t);
+    }
+    assertEqualVectors(
+        deserialized, makeRowVector({makeFlatVector<Timestamp>(expected)}));
+  }
+}
+
+TEST_P(PrestoSerializerTest, wideningCoercionWithNulls) {
+  // Verify the null bitmap is preserved across widening.
+  auto narrow = makeRowVector({
+      makeNullableFlatVector<int32_t>(
+          {1, std::nullopt, 3, std::nullopt, 5}),
+  });
+  std::ostringstream out;
+  serialize(narrow, &out, nullptr);
+  auto deserialized = deserialize(ROW({BIGINT()}), out.str(), nullptr);
+  assertEqualVectors(
+      deserialized,
+      makeRowVector({makeNullableFlatVector<int64_t>(
+          {(int64_t)1, std::nullopt, (int64_t)3, std::nullopt, (int64_t)5})}));
+}
+
+TEST_P(PrestoSerializerTest, wideningCoercionUnsupportedPairStillThrows) {
+  // Pairs not in the widening map still get rejected with the original
+  // encoding-mismatch error. Here BIGINT (LONG_ARRAY) -> INTEGER (INT_ARRAY)
+  // is a narrowing, not a widening — must throw.
+  auto data = makeRowVector({
+      makeFlatVector<int64_t>({1, 2, 3}),
+  });
+  std::ostringstream out;
+  serialize(data, &out, nullptr);
+  VELOX_ASSERT_THROW(
+      deserialize(ROW({INTEGER()}), out.str(), nullptr),
+      "Serialized encoding is not compatible with requested type: INTEGER. "
+      "Expected INT_ARRAY. Got LONG_ARRAY.");
+}
+
+TEST_P(PrestoSerializerTest, wideningCoercionWithNestedStructInRow) {
+  // Forces the two-pass deserialization path: when hasNestedStructs(childTypes)
+  // is true, PrestoSerializer runs a structured-nulls pre-pass before the main
+  // read pass. The pre-pass shares the encoding-mismatch check; we must skip
+  // the right number of *source* bytes there too, or it'll throw before the
+  // main pass gets a chance to coerce.
+  //
+  // Schema:  row( int32, row(double) )
+  // - widened column at position 0: producer INTEGER -> consumer BIGINT
+  // - nested struct at position 1 triggers hasNestedStructs(childTypes) == true
+  auto inner = makeRowVector({
+      makeFlatVector<double>({1.5, 2.5, 3.5}),
+  });
+  auto wireRow = makeRowVector({
+      makeFlatVector<int32_t>({10, 20, 30}),
+      inner,
+  });
+  std::ostringstream out;
+  serialize(wireRow, &out, nullptr);
+  // Consumer schema: column 0 widened to BIGINT.
+  auto deserialized = deserialize(
+      ROW({BIGINT(), ROW({DOUBLE()})}), out.str(), nullptr, /*skipLexer=*/true);
+
+  auto expected = makeRowVector({
+      makeFlatVector<int64_t>({10, 20, 30}),
+      makeRowVector({makeFlatVector<double>({1.5, 2.5, 3.5})}),
+  });
+  assertEqualVectors(deserialized, expected);
 }
 
 TEST_P(PrestoSerializerTest, lexer) {
