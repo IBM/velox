@@ -81,7 +81,11 @@ Exchange::Exchange(
           std::nullopt,
           operatorCtx_->driverCtx()
               ->queryConfig()
-              .minShuffleCompressionPageSizeBytes())},
+              .minShuffleCompressionPageSizeBytes(),
+          // Threaded through for PushDownWidenCast DATE -> TIMESTAMP coercion.
+          operatorCtx_->driverCtx()->queryConfig().adjustTimestampToTimezone()
+              ? operatorCtx_->driverCtx()->queryConfig().sessionTimezone()
+              : std::string{})},
       processSplits_{operatorCtx_->driverCtx()->driverId == 0},
       driverId_{driverCtx->driverId},
       exchangeClient_{std::move(exchangeClient)} {}
