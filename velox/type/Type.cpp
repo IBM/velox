@@ -1434,13 +1434,21 @@ std::string IntervalDayTimeType::valueToString(int64_t value) const {
   }
   const int64_t days = remainMillis / kMillisInDay;
   remainMillis -= days * kMillisInDay;
-  const int64_t hours = remainMillis / kMillisInHour;
-  remainMillis -= hours * kMillisInHour;
-  const int64_t minutes = remainMillis / kMillisInMinute;
-  remainMillis -= minutes * kMillisInMinute;
-  const int64_t seconds = remainMillis / kMillisInSecond;
-  remainMillis -= seconds * kMillisInSecond;
-  const int64_t millis = static_cast<int64_t>(remainMillis);
+  // After the day divmod every remaining component (hours, minutes,
+  // seconds, milliseconds) fits in int by construction:
+  // hours < 24, minutes < 60, seconds < 60, milliseconds < 1000.
+  // Narrow to int so the %d / %02d / %03d specifiers in the format
+  // string receive arguments of the type they expect - passing the
+  // wider int64_t / int128_t through varargs to a %d conversion is
+  // undefined behavior on common ABIs and produced garbage millis
+  // in practice.
+  const int hours = static_cast<int>(remainMillis / kMillisInHour);
+  remainMillis -= int64_t{hours} * kMillisInHour;
+  const int minutes = static_cast<int>(remainMillis / kMillisInMinute);
+  remainMillis -= int64_t{minutes} * kMillisInMinute;
+  const int seconds = static_cast<int>(remainMillis / kMillisInSecond);
+  remainMillis -= int64_t{seconds} * kMillisInSecond;
+  const int millis = static_cast<int>(remainMillis);
   char buf[64];
   snprintf(
       buf,
@@ -1448,10 +1456,10 @@ std::string IntervalDayTimeType::valueToString(int64_t value) const {
       kIntervalFormat,
       sign.c_str(),
       days,
-      (int)hours,
-      (int)minutes,
-      (int)seconds,
-      (int)millis);
+      hours,
+      minutes,
+      seconds,
+      millis);
 
   return buf;
 }
