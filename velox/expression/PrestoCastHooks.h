@@ -22,7 +22,12 @@
 namespace facebook::velox::exec {
 
 // This class provides cast hooks following Presto semantics.
-class PrestoCastHooks : public CastHooks {
+//
+// Marked `final` so the compiler/LTO can devirtualize calls made
+// through a statically-known PrestoCastHooks*. Hot kernels in
+// CastExpr.cpp now also cache the raw CastHooks* outside per-row
+// loops so each row no longer pays a shared_ptr indirection.
+class PrestoCastHooks final : public CastHooks {
  public:
   explicit PrestoCastHooks(const core::QueryConfig& config);
 
