@@ -612,7 +612,8 @@ std::unique_ptr<VectorSerde::Options> getVectorSerdeOptions(
     common::CompressionKind compressionKind,
     const std::string& kind,
     std::optional<float> minCompressionRatio,
-    int32_t minCompressionPageSizeBytes) {
+    int32_t minCompressionPageSizeBytes,
+    std::string_view sessionTimezone) {
   std::unique_ptr<VectorSerde::Options> options = kind == "Presto"
       ? std::make_unique<serializer::presto::PrestoVectorSerde::PrestoOptions>()
       : std::make_unique<VectorSerde::Options>();
@@ -621,6 +622,12 @@ std::unique_ptr<VectorSerde::Options> getVectorSerdeOptions(
     options->minCompressionRatio = minCompressionRatio.value();
   }
   options->minCompressionPageSizeBytes = minCompressionPageSizeBytes;
+  if (kind == "Presto" && !sessionTimezone.empty()) {
+    static_cast<serializer::presto::PrestoVectorSerde::PrestoOptions*>(
+        options.get())
+        ->sessionTimezone =
+        tz::locateZone(sessionTimezone, /*failOnError=*/false);
+  }
   return options;
 }
 
