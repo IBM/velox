@@ -786,7 +786,11 @@ MergeExchange::MergeExchange(
               driverCtx->queryConfig().shuffleCompressionKind()),
           mergeExchangeNode->serdeKind(),
           std::nullopt,
-          driverCtx->queryConfig().minShuffleCompressionPageSizeBytes())) {}
+          driverCtx->queryConfig().minShuffleCompressionPageSizeBytes(),
+          // Threaded through for PushDownWidenCast DATE -> TIMESTAMP coercion.
+          driverCtx->queryConfig().adjustTimestampToTimezone()
+              ? driverCtx->queryConfig().sessionTimezone()
+              : std::string{})) {}
 
 BlockingReason MergeExchange::addMergeSources(ContinueFuture* future) {
   if (operatorCtx_->driverCtx()->driverId != 0) {
