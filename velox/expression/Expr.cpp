@@ -1277,6 +1277,7 @@ void Expr::evalEncodings(
           // translateToInnerRows. Wrap the cache directly without
           // running evalWithMemo/evalWithNulls - they would just
           // return dictionaryCache_ anyway.
+          ++stats_.numMemoBypass;
           wrappedResult = context.getPeeledEncoding()->wrap(
               this->type(), context.pool(), dictionaryCache_, rows);
         } else if (auto* newRows = peelEncodingsResult.newRows) {
@@ -1398,6 +1399,7 @@ void Expr::evalWithMemo(
     const SelectivityVector& rows,
     EvalCtx& context,
     VectorPtr& result) {
+  ++stats_.numEvalWithMemo;
   VectorPtr base;
   distinctFields_[0]->evalSpecialForm(rows, context, base);
 
@@ -1415,6 +1417,7 @@ void Expr::evalWithMemo(
 
   if (base.get() != baseOfDictionaryRawPtr_ ||
       baseOfDictionaryWeakPtr_.expired()) {
+    ++stats_.numMemoBaseChange;
     baseOfDictionaryRepeats_ = 0;
     baseOfDictionaryWeakPtr_.reset();
     baseOfDictionaryRawPtr_ = nullptr;
@@ -1428,6 +1431,7 @@ void Expr::evalWithMemo(
   }
 
   if (baseOfDictionaryRepeats_ == 0) {
+    ++stats_.numMemoFirstRepeat;
     evalWithNulls(rows, context, result);
 
     ++baseOfDictionaryRepeats_;
@@ -1458,6 +1462,7 @@ void Expr::evalWithMemo(
   // errors from base positions that the caller did not request - the
   // fast upcast path is non-throwing by construction.
   if (isCheapToReevaluate()) {
+    ++stats_.numMemoEagerFill;
     const auto baseSize = base->size();
     LocalSelectivityVector toFillHolder(context, baseSize);
     auto* toFill = toFillHolder.get();
@@ -1476,7 +1481,10 @@ void Expr::evalWithMemo(
         : 0;
     const bool deselectCached = cachedCount * 2 >= baseSize;
     if (deselectCached) {
+      ++stats_.numEagerFillDeselect;
       toFill->deselect(*cachedDictionaryIndices_);
+    } else {
+      ++stats_.numEagerFillFullReeval;
     }
     if (toFill->hasSelections()) {
       if (dictionaryCache_->size() < baseSize) {
@@ -1500,6 +1508,15 @@ void Expr::evalWithMemo(
       ScopedFinalSelectionSetter scopedFinalSelectionSetter(
           context, &rows, /*newFinalSelection=*/true);
       VectorPtr fillResult;
+      // Rows being evaluated speculatively are those not in `rows` (the
+      // caller's selection). We can only know that approximately - rows
+      // is the outer-row selection, toFill is the inner-row selection -
+      // so use toFill's count minus rows' count as a coarse signal.
+      // Negative deltas (uncommon) clamp to zero.
+      const auto toFillCount = toFill->countSelected();
+      const auto callerCount = rows.countSelected();
+      stats_.numEagerFillSpeculativeRows +=
+          toFillCount > callerCount ? toFillCount - callerCount : 0;
       evalWithNulls(*toFill, context, fillResult);
       context.deselectErrors(*toFill);
       if (toFill->hasSelections()) {
@@ -1517,6 +1534,7 @@ void Expr::evalWithMemo(
     return;
   }
 
+  ++stats_.numMemoIncremental;
   if (cachedDictionaryIndices_) {
     LocalSelectivityVector cachedHolder(context, rows);
     auto cached = cachedHolder.get();
