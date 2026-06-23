@@ -465,6 +465,14 @@ class Expr {
     return trackCpuUsage_;
   }
 
+  /// Returns the per-Expr output tracer if one has been installed by
+  /// ExprSet::maybeSetupTracers, or nullptr otherwise.  Exposed
+  /// publicly so the V2 evaluator can route trace writes through the
+  /// V1 tracer state during the migration period.
+  trace::TraceExprWriter* outputTracer() const {
+    return outputTracer_.get();
+  }
+
   std::vector<VectorPtr>& inputValues() {
     return inputValues_;
   }

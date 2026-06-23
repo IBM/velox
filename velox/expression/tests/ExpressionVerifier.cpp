@@ -22,6 +22,7 @@
 #include "velox/core/PlanNode.h"
 #include "velox/exec/fuzzer/FuzzerUtil.h"
 #include "velox/expression/Expr.h"
+#include "velox/expression/ExprSetV2.h"
 #include "velox/parse/TypeResolver.h"
 #include "velox/vector/VectorSaver.h"
 #include "velox/vector/tests/utils/VectorMaker.h"
@@ -303,6 +304,30 @@ ExpressionVerifier::verify(
       createExprSetCommon(plans, execCtx_, options_.disableConstantFolding);
   exec::ExprSetSimplified exprSetSimplified(plans, execCtx_);
 
+  // Optional V2 ExprSet built alongside the canonical V1 pair so the
+  // fuzzer can compare V2 output against V1 common on every test case.
+  // The compiler must see exprEvalV2=true during construction so it
+  // emits V2 special-form classes (e.g., CastExprV2).  We save and
+  // restore the full QueryConfig because testingOverrideConfigUnsafe
+  // replaces (not merges) the underlying config map.
+  std::optional<exec::ExprSetV2> exprSetV2;
+  if (options_.enableV2Fuzzing) {
+    auto savedConfig =
+        execCtx_->queryCtx()->queryConfig().rawConfigsCopy();
+    auto v2Config = savedConfig;
+    v2Config[core::QueryConfig::kExprEvalV2] = "true";
+    execCtx_->queryCtx()->testingOverrideConfigUnsafe(std::move(v2Config));
+    try {
+      exprSetV2.emplace(
+          plans, execCtx_, !options_.disableConstantFolding);
+    } catch (...) {
+      execCtx_->queryCtx()->testingOverrideConfigUnsafe(
+          std::move(savedConfig));
+      throw;
+    }
+    execCtx_->queryCtx()->testingOverrideConfigUnsafe(std::move(savedConfig));
+  }
+
   int testCaseItr = 0;
   for (auto [rowVector, rows] : transformedInputTestCases) {
     LOG(INFO) << "Executing test case: " << testCaseItr++;
@@ -378,6 +403,8 @@ ExpressionVerifier::verify(
       }
       LOG(INFO) << "Common eval succeeded.";
     } catch (const VeloxException& e) {
+      // Capture common eval failure pre-V2.  V2 comparison below is
+      // gated on whether common path threw too.
       LOG(INFO) << "Common eval failed.";
       if (e.errorCode() == error_code::kUnsupportedInputUncatchable) {
         unsupportedInputUncatchableError = true;
@@ -408,6 +435,115 @@ ExpressionVerifier::verify(
           sql,
           complexConstants);
       throw;
+    }
+
+    // === V2 fuzzing — evaluate the same expression through ExprSetV2
+    // and compare against the V1 common path's results / exception
+    // pattern.  Any divergence is a V2 bug; we throw out of the test
+    // case so the fuzzer harness reports it with the full repro
+    // context.
+    std::vector<VectorPtr> v2EvalResult;
+    std::exception_ptr exceptionV2Ptr;
+    if (exprSetV2.has_value()) {
+      VLOG(1) << "Starting V2 eval execution.";
+      if (resultVector) {
+        auto resultRowVector = resultVector->asUnchecked<RowVector>();
+        v2EvalResult.resize(resultRowVector->children().size());
+        for (int i = 0; i < resultRowVector->children().size(); ++i) {
+          v2EvalResult[i] = resultRowVector->children()[i];
+        }
+      }
+      try {
+        // Re-fuzz lazy wrapping using the same metadata so V1 and V2
+        // see equivalent inputs.  V2 uses its own freshly-wrapped row
+        // vector; the V1 common path already consumed the previous
+        // wrap above.
+        auto v2InputRowVector = transformInput(
+            rowVector,
+            execCtx_,
+            options_.disableConstantFolding,
+            transformPlans,
+            originalInputFields);
+        v2InputRowVector = VectorFuzzer::fuzzRowChildrenToLazy(
+            v2InputRowVector, inputRowMetadata.columnsToWrapInLazy);
+        exec::EvalCtx evalCtxV2(
+            execCtx_, &*exprSetV2, v2InputRowVector.get());
+        exprSetV2->eval(
+            0,
+            exprSetV2->size(),
+            true /*initialize*/,
+            rows,
+            evalCtxV2,
+            v2EvalResult);
+        LOG(INFO) << "V2 eval succeeded.";
+      } catch (const VeloxException& e) {
+        if (e.errorCode() == error_code::kUnsupportedInputUncatchable) {
+          unsupportedInputUncatchableError = true;
+        } else if (!(canThrow && e.isUserError())) {
+          if (!canThrow) {
+            LOG(ERROR)
+                << "V2 eval wasn't supposed to throw, but it did. Aborting.";
+          } else if (!e.isUserError()) {
+            LOG(ERROR)
+                << "V2 eval: VeloxRuntimeErrors other than UNSUPPORTED_INPUT_UNCATCHABLE are not allowed.";
+          }
+          persistReproInfoIfNeeded(
+              inputTestCases,
+              inputRowMetadata,
+              copiedResult,
+              sql,
+              complexConstants);
+          throw;
+        }
+        exceptionV2Ptr = std::current_exception();
+      } catch (...) {
+        LOG(ERROR) << "V2 eval threw a non-Velox exception.";
+        persistReproInfoIfNeeded(
+            inputTestCases,
+            inputRowMetadata,
+            copiedResult,
+            sql,
+            complexConstants);
+        throw;
+      }
+
+      // Compare V1 common vs V2.  Any mismatch is a V2 parity bug.
+      try {
+        if (exceptionCommonPtr || exceptionV2Ptr) {
+          if (!unsupportedInputUncatchableError) {
+            if (exceptionCommonPtr && exceptionV2Ptr) {
+              fuzzer::compareExceptions(exceptionCommonPtr, exceptionV2Ptr);
+            } else {
+              LOG(ERROR) << fmt::format(
+                  "V1 common vs V2 divergence: only {} threw an exception.",
+                  exceptionCommonPtr ? "V1 common" : "V2");
+              if (exceptionCommonPtr) {
+                std::rethrow_exception(exceptionCommonPtr);
+              } else {
+                std::rethrow_exception(exceptionV2Ptr);
+              }
+            }
+          }
+        } else {
+          VELOX_CHECK_EQ(commonEvalResult.size(), v2EvalResult.size());
+          for (int i = 0; i < commonEvalResult.size(); ++i) {
+            fuzzer::compareVectors(
+                commonEvalResult[i],
+                v2EvalResult[i],
+                "V1 common path results",
+                "V2 path results",
+                rows);
+          }
+        }
+      } catch (...) {
+        persistReproInfoIfNeeded(
+            inputTestCases,
+            inputRowMetadata,
+            copiedResult,
+            sql,
+            complexConstants);
+        throw;
+      }
     }
 
     VLOG(1) << "Starting reference eval execution.";
