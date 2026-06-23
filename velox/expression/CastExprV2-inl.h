@@ -542,7 +542,10 @@ void CastExprV2::castPrimitives(
     return;
   }
 
-  switch (hooks_->getPolicy()) {
+  // hooks_->getPolicy() is constant for the lifetime of this
+  // CastExprV2; policy() caches the resolved value on the first call
+  // so the switch below doesn't pay a virtual call per castPrimitives.
+  switch (policy()) {
     case LegacyCastPolicy:
       applyToSelectedNoThrowLocal(context, rows, result, [&](int row) {
         castKernel<ToKind, FromKind, util::LegacyCastPolicy>(
@@ -569,7 +572,7 @@ void CastExprV2::castPrimitives(
       break;
 
     default:
-      VELOX_NYI("Policy {} not yet implemented.", hooks_->getPolicy());
+      VELOX_NYI("Policy {} not yet implemented.", policy());
   }
 }
 

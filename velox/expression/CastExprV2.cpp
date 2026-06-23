@@ -798,8 +798,13 @@ void CastExprV2::castPeeled(
     const TypePtr& fromType,
     const TypePtr& toType,
     VectorPtr& result) {
-  auto castFromOperator = getCastOperator(fromType);
-  auto castToOperator = getCastOperator(toType);
+  // The (fromType, toType) pair is the same across every per-vector
+  // call for the top-level cast, so cache the operator lookups once
+  // on the CastExprV2 instance instead of hashing castOperators_
+  // twice per call.
+  ensureTopLevelCastOperators(fromType, toType);
+  const auto& castFromOperator = topLevelCastFromOperator_;
+  const auto& castToOperator = topLevelCastToOperator_;
 
   // CastRulesRegistry is the source of truth for all custom type cast
   // validation, including container types (e.g., ARRAY<T> → JSON).
@@ -1155,6 +1160,17 @@ CastOperatorPtr CastExprV2::getCastOperator(const TypePtr& type) {
 
   castOperators_.emplace(key, castOperator);
   return castOperator;
+}
+
+void CastExprV2::ensureTopLevelCastOperators(
+    const TypePtr& fromType,
+    const TypePtr& toType) {
+  if (topLevelCastOperatorsCached_) {
+    return;
+  }
+  topLevelCastFromOperator_ = getCastOperator(fromType);
+  topLevelCastToOperator_ = getCastOperator(toType);
+  topLevelCastOperatorsCached_ = true;
 }
 
 // V1's CastCallToSpecialForm / TryCastCallToSpecialForm registration
