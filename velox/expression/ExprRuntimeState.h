@@ -1,5 +1,6 @@
 /*
  * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) 2026 IBM Corporation.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,10 +27,6 @@
 #include "velox/expression/ExprStats.h"
 #include "velox/vector/BaseVector.h"
 #include "velox/vector/SelectivityVector.h"
-
-namespace facebook::velox::exec::trace {
-class TraceExprWriter;
-} // namespace facebook::velox::exec::trace
 
 namespace facebook::velox::exec {
 
@@ -158,11 +155,10 @@ struct ExprRuntimeState {
   DictionaryMemoState dictMemo;
   ExprStats stats;
   AdaptiveSamplingState adaptiveState;
-
-  // Per-Expr output tracer.  Set up by ExprSetV2::maybeSetupTracers
-  // when the containing operator has tracing enabled and this
-  // expression's name is in the trace set.  Null when tracing is off.
-  std::unique_ptr<trace::TraceExprWriter> outputTracer;
+  // Tracer is read directly from the source Expr via
+  // ExprV2::sourceExpr()->outputTracer().  V2 doesn't own its own
+  // tracer; ExprSet::maybeSetupTracers (inherited by ExprSetV2)
+  // installs tracers on the V1 Expr nodes that V2 wraps.
 };
 
 /// Tree of runtime state parallel-indexed with an ExprV2 forest.  Look
