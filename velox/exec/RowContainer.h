@@ -26,6 +26,8 @@
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
 
+#include <string_view>
+
 namespace facebook::velox::exec {
 
 class Aggregate;
@@ -429,6 +431,11 @@ class RowContainer {
     return layout_.countOffset != 0;
   }
 
+  /// Whether rows have a probed flag, for right and full outer joins.
+  bool hasProbedFlag() const {
+    return layout_.probedFlagOffset != 0;
+  }
+
   /// The allocator of the variable-width data of rows: strings and complex
   /// type values of columns, and the variable-width state of accumulators.
   HashStringAllocator& stringAllocator() {
@@ -509,6 +516,10 @@ class RowContainer {
       const FlatVector<StringView>& vector,
       vector_size_t index,
       char* row);
+
+  /// Copies serialized row bytes produced by 'extractSerializedRows' into the
+  /// container.
+  void storeSerializedRow(std::string_view serialized, char* row);
 
   // Reading values.
 
@@ -784,6 +795,12 @@ class RowContainer {
   /// transitioned from false to true.
   FOLLY_DISABLE_THREAD_SANITIZER
   bool testAndSetProbedFlag(char* row);
+
+  /// Clears the 'probed' flag of a single non-null row.
+  void clearProbedFlag(char* row) const {
+    VELOX_DCHECK_NE(layout_.probedFlagOffset, 0);
+    bits::clearBit(row, layout_.probedFlagOffset);
+  }
 
   /// Writes the probed flags of 'rows' into 'result',
   /// which must be a flat BOOLEAN vector. Used by right semi project joins,
