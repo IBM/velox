@@ -1,5 +1,6 @@
 /*
  * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) 2026 IBM Corporation.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -939,8 +940,12 @@ void ExprEvaluatorV2::applyFunction(EvalFrame& f) {
     }
   }
 
-  // Tracer hook.  Mirrors Expr::traceOutput (Expr.cpp:2131).
-  auto& tracer = f.nodeRuntime.outputTracer;
+  // Tracer hook.  Mirrors Expr::traceOutput (Expr.cpp:2131).  V2
+  // delegates to the V1 Expr's tracer (installed by
+  // ExprSet::maybeSetupTracers, inherited via ExprSetV2) so we don't
+  // duplicate tracer state across V1 and V2 trees during the
+  // migration period.
+  auto* tracer = f.expr.sourceExpr()->outputTracer();
   if (FOLLY_UNLIKELY(tracer != nullptr) && f.result != nullptr) {
     try {
       tracer->write(f.result);
