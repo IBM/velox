@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -23,6 +24,7 @@
 #include "velox/type/Filter.h"
 
 #include "velox/common/EnumDefine.h"
+#include "velox/common/serialization/NativeSerdeIO.h"
 
 namespace facebook::velox::common {
 
@@ -432,6 +434,44 @@ std::unique_ptr<Filter> BigintValuesUsingBloomFilter::clone(
           newNullAllowed,
           blocks_,
           exact_ ? exact_->clone(newNullAllowed) : nullptr));
+}
+
+void BigintValuesUsingBloomFilter::serializeBinary(std::string& out) const {
+  VELOX_CHECK_NULL(
+      exact_, "Serialization of a merged bloom filter is not supported");
+  common::NativeStringWriter writer(out);
+  writer.writeValue<bool>(nullAllowed());
+  writer.writeValue<uint32_t>(xsimd::batch<uint32_t>::size);
+  writer.writeValue<uint32_t>(blocks_.size());
+  for (const auto& block : blocks_) {
+    for (auto word : block.data) {
+      writer.writeValue<uint32_t>(word);
+    }
+  }
+}
+
+std::unique_ptr<Filter> BigintValuesUsingBloomFilter::deserializeBinary(
+    std::string_view data) {
+  common::NativeStringReader reader(data);
+  const auto nullAllowed = reader.readValue<bool>();
+  const auto simdWidth = reader.readValue<uint32_t>();
+  VELOX_USER_CHECK_EQ(
+      simdWidth,
+      xsimd::batch<uint32_t>::size,
+      "Cannot deserialize BigintValuesUsingBloomFilter serialized on hardware with different SIMD length");
+  const auto numBlocks = reader.readValue<uint32_t>();
+  std::vector<SplitBlockBloomFilter::Block> blocks(numBlocks);
+  for (auto& block : blocks) {
+    for (auto& word : block.data) {
+      word = reader.readValue<uint32_t>();
+    }
+  }
+  VELOX_USER_CHECK(
+      reader.atEnd(),
+      "Trailing bytes in BigintValuesUsingBloomFilter binary data");
+  return std::unique_ptr<BigintValuesUsingBloomFilter>(
+      new BigintValuesUsingBloomFilter(
+          nullAllowed, std::move(blocks), /*exact=*/nullptr));
 }
 
 bool BigintValuesUsingBloomFilter::testingEquals(const Filter& other) const {
