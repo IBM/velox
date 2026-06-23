@@ -135,6 +135,7 @@ set(
   UnnestTest.cpp
   PlanNodeSerdeTest.cpp
   HashJoinBridgeTest.cpp
+  HashTableSerializationTest.cpp
   SortBufferTest.cpp
   VectorHasherTest.cpp
   # group7 (~449s): IndexLookupJoinTestExtra 188
