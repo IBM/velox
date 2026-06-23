@@ -44,7 +44,12 @@ namespace facebook::velox::exec {
 /// CastHooks interface (for V1 CastOperator compatibility) call the
 /// same private helpers as the vector overrides, so behavior matches
 /// V1 row-for-row by construction.
-class PrestoCastHooksV2 : public CastHooksV2 {
+// Marked `final` so the compiler/LTO can devirtualize calls made
+// through a statically-known PrestoCastHooksV2*.  V2's vector hooks
+// already keep per-row dispatch out of CastExprV2's hot loops; this
+// closes the same hole when callers reach the hooks through the base
+// CastHooks or CastHooksV2 surface.
+class PrestoCastHooksV2 final : public CastHooksV2 {
  public:
   explicit PrestoCastHooksV2(const core::QueryConfig& config)
       : legacyCast_(config.isLegacyCast()) {
