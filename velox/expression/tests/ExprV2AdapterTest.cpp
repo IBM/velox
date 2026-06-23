@@ -140,22 +140,23 @@ TEST_F(ExprV2AdapterTest, fieldReferencePointersPreserved) {
       root->multiplyReferencedFields().size());
 }
 
-// ExprSetV2 should adapt every root from the source ExprSet and build a
-// runtime-state tree covering all unique nodes.
+// ExprSetV2 should build both the inherited V1 tree (via the base
+// ExprSet constructor) and the parallel V2 tree covering every
+// reachable node.
 TEST_F(ExprV2AdapterTest, exprSetV2Construction) {
   auto rowType = ROW({{"a", BIGINT()}, {"b", BIGINT()}});
-  parse::ParseOptions options;
   std::vector<core::TypedExprPtr> typed{
       parseExpression("a + b", rowType),
       parseExpression("a * b", rowType),
   };
-  auto exprSet = std::make_shared<ExprSet>(std::move(typed), execCtx_.get());
+  ExprSetV2 v2{typed, execCtx_.get()};
 
-  ExprSetV2 v2{exprSet};
-
+  // Inherited V1 surface still works through ExprSetV2.
   ASSERT_EQ(v2.exprs().size(), 2);
-  EXPECT_EQ(v2.exprs()[0]->sourceExpr().get(), exprSet->exprs()[0].get());
-  EXPECT_EQ(v2.exprs()[1]->sourceExpr().get(), exprSet->exprs()[1].get());
+  // V2 mirror tree, parallel to v2.exprs().
+  ASSERT_EQ(v2.exprsV2().size(), 2);
+  EXPECT_EQ(v2.exprsV2()[0]->sourceExpr().get(), v2.exprs()[0].get());
+  EXPECT_EQ(v2.exprsV2()[1]->sourceExpr().get(), v2.exprs()[1].get());
 
   // Runtime-state tree should cover at least the 2 roots + their unique
   // descendants.  Each root is binary so total >= 2 (roots) + 4
@@ -164,8 +165,8 @@ TEST_F(ExprV2AdapterTest, exprSetV2Construction) {
   EXPECT_GE(v2.runtimeStates().size(), 6u);
 
   // at() returns distinct state instances per node.
-  auto& s0 = v2.runtimeStates().at(*v2.exprs()[0]);
-  auto& s1 = v2.runtimeStates().at(*v2.exprs()[1]);
+  auto& s0 = v2.runtimeStates().at(*v2.exprsV2()[0]);
+  auto& s1 = v2.runtimeStates().at(*v2.exprsV2()[1]);
   EXPECT_NE(&s0, &s1);
 }
 
