@@ -43,6 +43,7 @@ velox_add_library(
   BooleanMix.cpp
   CaseExpr.cpp
   CastExpr.cpp
+  CastExprV2.cpp
   CastHooks.cpp
   CoalesceExpr.cpp
   ConjunctExpr.cpp
@@ -80,6 +81,8 @@ velox_add_library(
   CaseExpr.h
   CastExpr-inl.h
   CastExpr.h
+  CastExprV2-inl.h
+  CastExprV2.h
   CastHooks.h
   CastTypeChecker.h
   CoalesceExpr.h

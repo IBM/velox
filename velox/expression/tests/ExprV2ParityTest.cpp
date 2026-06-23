@@ -57,7 +57,9 @@ class ExprV2ParityTest : public testing::Test,
     auto typed = core::Expressions::inferTypes(
         untyped, rowType, execCtx_->pool());
 
-    // V1 path.
+    // V1 path -- compile with exprEvalV2 off so special-form factories
+    // produce V1 forms (e.g., CastExpr, not CastExprV2).
+    setV2Flag(false);
     auto v1Set = std::make_shared<ExprSet>(
         std::vector<core::TypedExprPtr>{typed}, execCtx_.get());
     SelectivityVector rows{input->size()};
@@ -65,14 +67,23 @@ class ExprV2ParityTest : public testing::Test,
     std::vector<VectorPtr> v1Results(1);
     v1Set->eval(rows, v1Ctx, v1Results);
 
-    // V2 path -- adapt the same compiled ExprSet.
+    // V2 path -- compile with exprEvalV2 on so the compiler emits V2
+    // special forms (CastExprV2 etc.) where supported.
+    setV2Flag(true);
     ExprSetV2 v2Set{
         std::vector<core::TypedExprPtr>{typed}, execCtx_.get()};
     EvalCtx v2Ctx{execCtx_.get(), &v2Set, input.get()};
     std::vector<VectorPtr> v2Results(1);
     v2Set.eval(rows, v2Ctx, v2Results);
+    setV2Flag(false);
 
     velox::test::assertEqualVectors(v1Results[0], v2Results[0]);
+  }
+
+  void setV2Flag(bool enabled) {
+    queryCtx_->testingOverrideConfigUnsafe({
+        {core::QueryConfig::kExprEvalV2, enabled ? "true" : "false"},
+    });
   }
 
   std::shared_ptr<core::QueryCtx> queryCtx_{velox::core::QueryCtx::create()};
@@ -96,6 +107,29 @@ TEST_F(ExprV2ParityTest, simplePlus) {
       {makeFlatVector<int64_t>({1, 2, 3, 4, 5}),
        makeFlatVector<int64_t>({10, 20, 30, 40, 50})});
   assertParity("a + b", input);
+}
+
+// Cast expression — V2 path routes through CastExprV2 (compiler
+// produces CastExprV2 when exprEvalV2 is on; behaves identically to
+// V1 CastExpr until V2-specific optimizations land).
+TEST_F(ExprV2ParityTest, castBigintToVarchar) {
+  auto input = makeRowVector(
+      {"a"}, {makeFlatVector<int64_t>({1, 20, 300, 4000, 50000})});
+  assertParity("cast(a as varchar)", input);
+}
+
+TEST_F(ExprV2ParityTest, castDoubleToBigint) {
+  auto input = makeRowVector(
+      {"a"}, {makeFlatVector<double>({1.5, 2.7, 3.1, 4.9, 5.0})});
+  assertParity("cast(a as bigint)", input);
+}
+
+TEST_F(ExprV2ParityTest, tryCast) {
+  // try_cast on values that don't fit -- exercises CastExprV2's
+  // isTryCast path which returns NULL on cast errors.
+  auto input = makeRowVector(
+      {"a"}, {makeFlatVector<std::string>({"1", "not_a_number", "3", "4", "x"})});
+  assertParity("try_cast(a as bigint)", input);
 }
 
 // Nested function calls on no-null flat inputs.

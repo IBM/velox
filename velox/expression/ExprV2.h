@@ -27,7 +27,11 @@
 #include "velox/expression/FunctionMetadata.h"
 #include "velox/expression/VectorFunctionListener.h"
 
-namespace facebook::velox::exec {
+namespace facebook::velox {
+namespace core {
+class ExecCtx;
+} // namespace core
+namespace exec {
 
 class FieldReference;
 class VectorFunction;
@@ -47,11 +51,25 @@ class VectorFunction;
 /// delegates to that Expr's evalSpecialForm().  For function-call nodes,
 /// the V1 Expr is kept alive only to ensure raw FieldReference* pointers
 /// in distinctFields_ remain valid.
+///
+/// TODO: this wrapper class is transitional.  It carries no per-node
+/// data the V1 Expr doesn't already expose; the actual V2 win
+/// (immutable nodes + side runtime-state tree) doesn't require a
+/// separate node type.  Once V1 is deleted, either rename ExprV2 ->
+/// Expr (dropping the old Expr) or eliminate ExprV2 outright and have
+/// the V2 evaluator work on Expr& directly.  See ExprV2::from in
+/// ExprV2.cpp for the matching note.
 class ExprV2 {
  public:
   /// Builds a V2 tree from a compiled V1 Expr.  Recursively converts
-  /// children.
-  static std::shared_ptr<ExprV2> from(const std::shared_ptr<Expr>& expr);
+  /// children.  For kCast nodes, substitutes a freshly-built
+  /// CastExprV2 (using the V2 cast hooks factory) for V1's CastExpr,
+  /// so V2 cast evaluation goes through CastExprV2 without modifying
+  /// the V1 cast factory.  'execCtx' provides the QueryConfig used by
+  /// the hooks factory.
+  static std::shared_ptr<ExprV2> from(
+      const std::shared_ptr<Expr>& expr,
+      core::ExecCtx& execCtx);
 
   const TypePtr& type() const {
     return type_;
@@ -87,10 +105,13 @@ class ExprV2 {
     return specialFormKind_;
   }
 
+  /// True if this and all children are deterministic.
   bool deterministic() const {
     return deterministic_;
   }
 
+  /// True if this Expr tree is null for a null in any of the columns
+  /// this depends on.
   bool propagatesNulls() const {
     return propagatesNulls_;
   }
@@ -99,10 +120,14 @@ class ExprV2 {
     return supportsFlatNoNullsFastPath_;
   }
 
+  /// True if this or a sub-expression is an IF, AND or OR.
   bool hasConditionals() const {
     return hasConditionals_;
   }
 
+  /// True when this node has the same distinctFields as its parent and
+  /// is not multiply-referenced — peeling and null-pruning that would
+  /// have been performed identically by the parent are redundant here.
   bool skipFieldDependentOptimizations() const {
     return skipFieldDependentOptimizations_;
   }
@@ -118,10 +143,16 @@ class ExprV2 {
     return trackCpuUsage_;
   }
 
+  /// The distinct references to input columns in this node's
+  /// 'inputs_' subtrees.  Empty if this is the same as the parent
+  /// Expr's distinctFields.
   const std::vector<FieldReference*>& distinctFields() const {
     return distinctFields_;
   }
 
+  /// Fields referenced by multiple inputs.  A subset of
+  /// distinctFields().  Used to determine pre-loading of lazy vectors
+  /// at the current Expr.
   const std::unordered_set<FieldReference*>& multiplyReferencedFields() const {
     return multiplyReferencedFields_;
   }
@@ -148,12 +179,34 @@ class ExprV2 {
   std::optional<SpecialFormKind> specialFormKind_;
 
   // Compile-time metadata copied from sourceExpr_ at construction.
+
+  // True if this and all children are deterministic.
   bool deterministic_{true};
+
+  // True if a null in any of distinctFields_ causes this to be null
+  // for the row.
   bool propagatesNulls_{false};
+
+  // Set at compile time based on whether the function's signature and
+  // input types make the FlatNoNulls fast path safe.
   bool supportsFlatNoNullsFastPath_{false};
+
+  // True if this or a sub-expression is an IF, AND or OR.
   bool hasConditionals_{false};
+
+  // True when this node has the same distinctFields as its parent
+  // and is not multiply-referenced: peeling and null-pruning that
+  // would have been performed identically by the parent are
+  // redundant here.
   bool skipFieldDependentOptimizations_{false};
+
+  // True if this expression appears more than once in the containing
+  // ExprSet.  Drives CSE caching.
   bool isMultiplyReferenced_{false};
+
+  // True if this expression should always track CPU usage (set at
+  // compile time from query config).  Distinct from adaptive
+  // sampling, which is decided at runtime.
   bool trackCpuUsage_{false};
 
   // Raw pointers into the V1 tree owned by sourceExpr_.  Valid as long
@@ -168,4 +221,5 @@ class ExprV2 {
   friend class ExprV2Builder;
 };
 
-} // namespace facebook::velox::exec
+} // namespace exec
+} // namespace facebook::velox

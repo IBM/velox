@@ -73,7 +73,7 @@ TEST_F(ExprV2AdapterTest, functionCallShape) {
   auto exprSet = compile("a + b * 2::bigint", rowType);
   const auto& root = exprSet->exprs().front();
 
-  auto v2 = ExprV2::from(root);
+  auto v2 = ExprV2::from(root, *execCtx_);
   ASSERT_NE(v2, nullptr);
 
   // Root: plus(a, multiply(b, 2)).
@@ -111,7 +111,7 @@ TEST_F(ExprV2AdapterTest, specialFormTag) {
   auto exprSet = compile("case when a > 0 then b else 0::bigint end", rowType);
   const auto& root = exprSet->exprs().front();
 
-  auto v2 = ExprV2::from(root);
+  auto v2 = ExprV2::from(root, *execCtx_);
 
   EXPECT_TRUE(v2->isSpecialForm());
   EXPECT_EQ(v2->specialFormKind(), root->specialFormKind());
@@ -128,7 +128,7 @@ TEST_F(ExprV2AdapterTest, fieldReferencePointersPreserved) {
   auto exprSet = compile("a + a + b", rowType);
   const auto& root = exprSet->exprs().front();
 
-  auto v2 = ExprV2::from(root);
+  auto v2 = ExprV2::from(root, *execCtx_);
 
   EXPECT_EQ(v2->distinctFields().size(), root->distinctFields().size());
   for (size_t i = 0; i < v2->distinctFields().size(); ++i) {
@@ -165,8 +165,8 @@ TEST_F(ExprV2AdapterTest, exprSetV2Construction) {
   EXPECT_GE(v2.runtimeStates().size(), 6u);
 
   // at() returns distinct state instances per node.
-  auto& s0 = v2.runtimeStates().at(*v2.exprs()[0]);
-  auto& s1 = v2.runtimeStates().at(*v2.exprs()[1]);
+  auto& s0 = v2.runtimeStates().at(*v2.exprsV2()[0]);
+  auto& s1 = v2.runtimeStates().at(*v2.exprsV2()[1]);
   EXPECT_NE(&s0, &s1);
 }
 

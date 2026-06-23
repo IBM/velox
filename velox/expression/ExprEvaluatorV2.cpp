@@ -146,7 +146,7 @@ struct FieldPeelResult {
   // Inner-row selection in the peeled row space.  nullptr if peel failed.
   SelectivityVector* newRows{nullptr};
   // True if the peel result is cacheable by base dictionary.  Triggers
-  // the DictionaryMemo phase in step 6.
+  // the DictionaryMemo phase on the inner row space.
   bool mayCache{false};
 };
 
@@ -244,18 +244,20 @@ void ExprEvaluatorV2::evaluateFrame(
     return;
   }
 
-  // TODO(step 10): install ExprExceptionContext / ExceptionContextSetter
-  // here.  Skipped during step 4 because exception-context wiring
-  // requires the V2 equivalent of Expr::onException, which lands later.
+  // TODO: install ExprExceptionContext / ExceptionContextSetter here
+  // so error messages name the V2 expression in their stack.  Requires
+  // a V2 equivalent of Expr::onException; without it, runtime errors
+  // surface with less context than V1.
 
   if (!f.originalRows.hasSelections()) {
     emitEmpty(f);
     return;
   }
 
-  // TODO(step 5+): port the lazy-loading decision tree from
-  // Expr::eval() (lines 868-887).  For step 4 the A/B harness only
-  // covers expressions with no lazy inputs, so lazy loading is a no-op.
+  // TODO: port the lazy-loading decision tree from Expr::eval()
+  // (lines 868-887).  Without it, lazy-vector inputs to conditional
+  // expressions may be loaded more eagerly than V1 would.  Currently
+  // parity-tested only on expressions with no lazy inputs.
 
   if (f.expr.inputs().empty()) {
     evaluateNodeBody(f);
@@ -404,10 +406,12 @@ void ExprEvaluatorV2::evaluateDictionaryMemo(EvalFrame& f) {
     f.ctx.deselectErrors(*uncached);
 
     if (uncached->hasSelections()) {
-      // TODO(step 14): register with V2's memo invalidation registry so
-      // ExprSet::clearMemo / clearCache also clears V2 state.  V1 calls
-      // context.exprSet()->addToMemo(this) here; equivalent V2 plumbing
-      // is deferred to the cutover step.
+      // TODO: register with a V2 memo invalidation registry so
+      // ExprSet::clearMemo / clearCache also clears V2 state.  V1
+      // calls context.exprSet()->addToMemo(this) here; the equivalent
+      // V2 plumbing isn't built yet.  Natural invalidation via the
+      // weak_ptr identity check still works, but explicit clears
+      // currently only reset V1's state.
       auto newCacheSize = uncached->end();
 
       LocalSelectivityVector allUncached(f.ctx, memo.dictionaryCache->size());
@@ -861,8 +865,10 @@ void ExprEvaluatorV2::setAllNulls(
 
 void ExprEvaluatorV2::evaluateSpecialForm(EvalFrame& f) {
   DebugRemainingRowsGuard guard{f};
-  // Delegate to the V1 Expr's evalSpecialForm.  Migration of each
-  // special form to a native V2 implementation happens in step 12.
+  // Delegate to the V1 Expr's evalSpecialForm.  When V2-native
+  // implementations exist for a special form (as CastExprV2 already
+  // does for CAST), the compiler emits the V2 class instead and this
+  // dispatch resolves to the native override.
   f.expr.sourceExpr()->evalSpecialForm(
       f.remainingRows.rows(), f.ctx, f.result);
 }

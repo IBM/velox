@@ -32,7 +32,7 @@ ExprSetV2::ExprSetV2(
   // Walk it once to build the V2 mirror tree.
   roots_.reserve(exprs().size());
   for (const auto& root : exprs()) {
-    roots_.push_back(ExprV2::from(root));
+    roots_.push_back(ExprV2::from(root, *execCtx_));
   }
   runtimeStates_ = std::make_unique<ExprRuntimeStateTree>(roots_);
 }
