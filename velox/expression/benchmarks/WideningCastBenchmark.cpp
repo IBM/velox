@@ -22,6 +22,7 @@
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
 
+#include "velox/expression/Expr.h"
 #include "velox/functions/lib/benchmarks/FunctionBenchmarkBase.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/vector/BaseVector.h"
@@ -131,6 +132,38 @@ class WideningCastBenchmark : public functions::test::FunctionBenchmarkBase {
     functions::prestosql::registerAllScalarFunctions();
   }
 
+  // Toggles the V2 expression evaluator for subsequent compileExprSet
+  // calls.  Applies to the benchmark's shared queryCtx_; for the MT
+  // path, each per-thread queryCtx is configured separately at thread
+  // setup time.
+  void useV2Evaluator(bool enabled) {
+    v2Enabled_ = enabled;
+    queryCtx_->testingOverrideConfigUnsafe(
+        {{core::QueryConfig::kExprEvalV2, enabled ? "true" : "false"}});
+  }
+
+  bool v2Enabled() const {
+    return v2Enabled_;
+  }
+
+  // Builds an ExprSet through makeExprSetFromFlag so it actually
+  // honors the expression.eval_v2 QueryConfig flag.  Returns a
+  // polymorphic unique_ptr — V1 ExprSet or V2 ExprSetV2 depending on
+  // execCtx's config.  Bypassing FunctionBenchmarkBase::compileExpression
+  // because that helper constructs exec::ExprSet directly and ignores
+  // the flag.
+  std::unique_ptr<exec::ExprSet> compileExprSet(
+      const std::string& expression,
+      const TypePtr& rowType,
+      core::ExecCtx* execCtx) {
+    auto untyped =
+        parse::DuckSqlExpressionsParser(options_).parseExpr(expression);
+    auto typed =
+        core::Expressions::inferTypes(untyped, rowType, execCtx->pool());
+    std::vector<core::TypedExprPtr> typedExprs{typed};
+    return exec::makeExprSetFromFlag(std::move(typedExprs), execCtx);
+  }
+
   // Builds a flat numeric base of `baseType` and runs `numVectors`
   // evaluations of `expression` over dictionary wrappers of that
   // base. Each input vector's indices are `(row + vectorIdx *
@@ -161,7 +194,7 @@ class WideningCastBenchmark : public functions::test::FunctionBenchmarkBase {
     auto bases = buildBases<BaseNativeType>(
         baseType, distinctValueCount, numVectors, batchesPerBase, pool());
     auto rowType = ROW({"c0"}, {baseType});
-    auto exprSet = compileExpression(expression, rowType);
+    auto exprSet = compileExprSet(expression, rowType, &execCtx_);
 
     std::vector<RowVectorPtr> inputs;
     inputs.reserve(numVectors);
@@ -181,7 +214,7 @@ class WideningCastBenchmark : public functions::test::FunctionBenchmarkBase {
 
     size_t count = 0;
     for (auto& input : inputs) {
-      auto result = evaluate(exprSet, input);
+      auto result = evaluate(*exprSet, input);
       folly::doNotOptimizeAway(result);
       count += result->size();
     }
@@ -235,6 +268,12 @@ class WideningCastBenchmark : public functions::test::FunctionBenchmarkBase {
       auto& tc = threadCtxs[t];
       tc.pool = memory::memoryManager()->addLeafPool();
       tc.queryCtx = core::QueryCtx::create();
+      // Propagate the V2 flag to every worker's QueryConfig so each
+      // thread's compile picks V1 or V2 the same way the calling
+      // benchmark intended.
+      tc.queryCtx->testingOverrideConfigUnsafe(
+          {{core::QueryConfig::kExprEvalV2,
+            v2Enabled_ ? "true" : "false"}});
       tc.execCtx =
           std::make_unique<core::ExecCtx>(tc.pool.get(), tc.queryCtx.get());
       facebook::velox::test::VectorMaker maker{tc.pool.get()};
@@ -255,13 +294,9 @@ class WideningCastBenchmark : public functions::test::FunctionBenchmarkBase {
       }
 
       // Compile per worker so each holds its own dictionaryCache_.
-      auto untyped =
-          parse::DuckSqlExpressionsParser(options_).parseExpr(expression);
-      auto typed = core::Expressions::inferTypes(
-          untyped, rowType, tc.execCtx->pool());
-      std::vector<core::TypedExprPtr> typedExprs{typed};
-      tc.exprSet =
-          std::make_unique<exec::ExprSet>(typedExprs, tc.execCtx.get());
+      // Routes through makeExprSetFromFlag so the worker's per-thread
+      // exprEvalV2() config decides V1 vs V2.
+      tc.exprSet = compileExprSet(expression, rowType, tc.execCtx.get());
     }
     suspender.dismiss();
 
@@ -319,17 +354,19 @@ class WideningCastBenchmark : public functions::test::FunctionBenchmarkBase {
           baseType);
       inputs.push_back(vectorMaker_.rowVector({flat}));
     }
-    auto exprSet = compileExpression(expression, inputs[0]->type());
+    auto exprSet = compileExprSet(expression, inputs[0]->type(), &execCtx_);
     suspender.dismiss();
 
     size_t count = 0;
     for (auto& input : inputs) {
-      count += evaluate(exprSet, input)->size();
+      count += evaluate(*exprSet, input)->size();
     }
     return count;
   }
 
  private:
+  bool v2Enabled_{false};
+
   // Builds the set of distinct base FlatVectors that the dictionary
   // wraps rotate through. With `batchesPerBase >= numVectors`, this
   // returns a single base (matching the original behavior). Each
@@ -406,6 +443,7 @@ class WideningCastBenchmark : public functions::test::FunctionBenchmarkBase {
 
 unsigned DICT_BigintToVarchar(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t distinctValueCount,
@@ -413,6 +451,7 @@ unsigned DICT_BigintToVarchar(
     int32_t nullPct,
     int32_t batchesPerBase) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runDictionary<int64_t>(
@@ -430,10 +469,12 @@ unsigned DICT_BigintToVarchar(
 
 unsigned FLAT_BigintToVarchar(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t nullPct) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runFlat<int64_t>(
@@ -444,6 +485,7 @@ unsigned FLAT_BigintToVarchar(
 
 unsigned DICT_IntToBigint(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t distinctValueCount,
@@ -451,6 +493,7 @@ unsigned DICT_IntToBigint(
     int32_t nullPct,
     int32_t batchesPerBase) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runDictionary<int32_t>(
@@ -468,10 +511,12 @@ unsigned DICT_IntToBigint(
 
 unsigned FLAT_IntToBigint(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t nullPct) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runFlat<int32_t>(
@@ -483,6 +528,7 @@ unsigned FLAT_IntToBigint(
 // DATE is represented natively as int32 days-since-epoch.
 unsigned DICT_DateToVarchar(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t distinctValueCount,
@@ -490,6 +536,7 @@ unsigned DICT_DateToVarchar(
     int32_t nullPct,
     int32_t batchesPerBase) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runDictionary<int32_t>(
@@ -507,10 +554,12 @@ unsigned DICT_DateToVarchar(
 
 unsigned FLAT_DateToVarchar(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t nullPct) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runFlat<int32_t>(
@@ -521,6 +570,7 @@ unsigned FLAT_DateToVarchar(
 
 unsigned DICT_DateToTimestamp(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t distinctValueCount,
@@ -528,6 +578,7 @@ unsigned DICT_DateToTimestamp(
     int32_t nullPct,
     int32_t batchesPerBase) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runDictionary<int32_t>(
@@ -545,10 +596,12 @@ unsigned DICT_DateToTimestamp(
 
 unsigned FLAT_DateToTimestamp(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t nullPct) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runFlat<int32_t>(
@@ -559,6 +612,7 @@ unsigned FLAT_DateToTimestamp(
 
 unsigned DICT_RealToDouble(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t distinctValueCount,
@@ -566,6 +620,7 @@ unsigned DICT_RealToDouble(
     int32_t nullPct,
     int32_t batchesPerBase) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runDictionary<float>(
@@ -583,10 +638,12 @@ unsigned DICT_RealToDouble(
 
 unsigned FLAT_RealToDouble(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t nullPct) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runFlat<float>(
@@ -608,6 +665,7 @@ unsigned FLAT_RealToDouble(
 
 unsigned DICT_DateFormatProd(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t distinctValueCount,
@@ -615,6 +673,7 @@ unsigned DICT_DateFormatProd(
     int32_t nullPct,
     int32_t batchesPerBase) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runDictionary<int32_t>(
@@ -632,10 +691,12 @@ unsigned DICT_DateFormatProd(
 
 unsigned FLAT_DateFormatProd(
     unsigned iters,
+    bool v2,
     int32_t numVectors,
     int32_t rowsPerVector,
     int32_t nullPct) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runFlat<int32_t>(
@@ -649,6 +710,7 @@ unsigned FLAT_DateFormatProd(
 
 unsigned MT_DICT_BigintToVarchar(
     unsigned iters,
+    bool v2,
     int32_t numThreads,
     int32_t numVectorsPerThread,
     int32_t rowsPerVector,
@@ -657,6 +719,7 @@ unsigned MT_DICT_BigintToVarchar(
     int32_t nullPct,
     int32_t batchesPerBase) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runDictionaryMultiThread<int64_t>(
@@ -675,6 +738,7 @@ unsigned MT_DICT_BigintToVarchar(
 
 unsigned MT_DICT_DateToVarchar(
     unsigned iters,
+    bool v2,
     int32_t numThreads,
     int32_t numVectorsPerThread,
     int32_t rowsPerVector,
@@ -683,6 +747,7 @@ unsigned MT_DICT_DateToVarchar(
     int32_t nullPct,
     int32_t batchesPerBase) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runDictionaryMultiThread<int32_t>(
@@ -701,6 +766,7 @@ unsigned MT_DICT_DateToVarchar(
 
 unsigned MT_DICT_DateToTimestamp(
     unsigned iters,
+    bool v2,
     int32_t numThreads,
     int32_t numVectorsPerThread,
     int32_t rowsPerVector,
@@ -709,6 +775,7 @@ unsigned MT_DICT_DateToTimestamp(
     int32_t nullPct,
     int32_t batchesPerBase) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runDictionaryMultiThread<int32_t>(
@@ -727,6 +794,7 @@ unsigned MT_DICT_DateToTimestamp(
 
 unsigned MT_DICT_DateFormatProd(
     unsigned iters,
+    bool v2,
     int32_t numThreads,
     int32_t numVectorsPerThread,
     int32_t rowsPerVector,
@@ -735,6 +803,7 @@ unsigned MT_DICT_DateFormatProd(
     int32_t nullPct,
     int32_t batchesPerBase) {
   WideningCastBenchmark benchmark;
+  benchmark.useV2Evaluator(v2);
   unsigned total = 0;
   for (unsigned i = 0; i < iters; ++i) {
     total += benchmark.runDictionaryMultiThread<int32_t>(
@@ -761,6 +830,9 @@ unsigned MT_DICT_DateFormatProd(
 // the original "single base" behavior. The `_bpb<n>` suffix opts in
 // to the multi-base behavior.
 
+// Each DICT/DICT_BPB/FLAT/MT entry expands to a V1 + V2 pair.  V1
+// runs first as the absolute baseline; V2 runs as a folly relative
+// benchmark so its column shows V1-vs-V2 percentage right next to V1.
 #define DICT(                                                              \
     funcName,                                                              \
     rowsPerVector,                                                         \
@@ -769,7 +841,18 @@ unsigned MT_DICT_DateFormatProd(
     nullPct)                                                               \
   BENCHMARK_NAMED_PARAM_MULTI(                                             \
       funcName,                                                            \
-      rowsPerVector##_##distinctValueCount##_##newIndicesPerVector##_##nullPct, \
+      rowsPerVector##_##distinctValueCount##_##newIndicesPerVector##_##nullPct##_v1, \
+      false,                                                               \
+      1000,                                                                \
+      rowsPerVector,                                                       \
+      distinctValueCount,                                                  \
+      newIndicesPerVector,                                                 \
+      nullPct,                                                             \
+      1000)                                                                \
+  BENCHMARK_RELATIVE_NAMED_PARAM_MULTI(                                    \
+      funcName,                                                            \
+      rowsPerVector##_##distinctValueCount##_##newIndicesPerVector##_##nullPct##_v2, \
+      true,                                                                \
       1000,                                                                \
       rowsPerVector,                                                       \
       distinctValueCount,                                                  \
@@ -794,7 +877,18 @@ unsigned MT_DICT_DateFormatProd(
     batchesPerBase)                                                        \
   BENCHMARK_NAMED_PARAM_MULTI(                                             \
       funcName,                                                            \
-      rowsPerVector##_##distinctValueCount##_##newIndicesPerVector##_##nullPct##_bpb##batchesPerBase, \
+      rowsPerVector##_##distinctValueCount##_##newIndicesPerVector##_##nullPct##_bpb##batchesPerBase##_v1, \
+      false,                                                               \
+      1000,                                                                \
+      rowsPerVector,                                                       \
+      distinctValueCount,                                                  \
+      newIndicesPerVector,                                                 \
+      nullPct,                                                             \
+      batchesPerBase)                                                      \
+  BENCHMARK_RELATIVE_NAMED_PARAM_MULTI(                                    \
+      funcName,                                                            \
+      rowsPerVector##_##distinctValueCount##_##newIndicesPerVector##_##nullPct##_bpb##batchesPerBase##_v2, \
+      true,                                                                \
       1000,                                                                \
       rowsPerVector,                                                       \
       distinctValueCount,                                                  \
@@ -815,9 +909,21 @@ unsigned MT_DICT_DateFormatProd(
   DICT_ALT(funcName, rowsPerVector, distinctValueCount, newIndicesPerVector, 0) \
   DICT_ALT(funcName, rowsPerVector, distinctValueCount, newIndicesPerVector, 50)
 
-#define FLAT(funcName, rowsPerVector, nullPct)         \
-  BENCHMARK_NAMED_PARAM_MULTI(                         \
-      funcName, rowsPerVector##_##nullPct, 1000, rowsPerVector, nullPct)
+#define FLAT(funcName, rowsPerVector, nullPct)                            \
+  BENCHMARK_NAMED_PARAM_MULTI(                                            \
+      funcName,                                                           \
+      rowsPerVector##_##nullPct##_v1,                                     \
+      false,                                                              \
+      1000,                                                               \
+      rowsPerVector,                                                      \
+      nullPct)                                                            \
+  BENCHMARK_RELATIVE_NAMED_PARAM_MULTI(                                   \
+      funcName,                                                           \
+      rowsPerVector##_##nullPct##_v2,                                     \
+      true,                                                               \
+      1000,                                                               \
+      rowsPerVector,                                                      \
+      nullPct)
 
 #define FLAT_NULLS(funcName, rowsPerVector) \
   FLAT(funcName, rowsPerVector, 0)          \
@@ -835,7 +941,19 @@ unsigned MT_DICT_DateFormatProd(
     batchesPerBase)                                                        \
   BENCHMARK_NAMED_PARAM_MULTI(                                             \
       funcName,                                                            \
-      threads##numThreads##_##rowsPerVector##_##distinctValueCount##_##newIndicesPerVector##_##nullPct##_bpb##batchesPerBase, \
+      threads##numThreads##_##rowsPerVector##_##distinctValueCount##_##newIndicesPerVector##_##nullPct##_bpb##batchesPerBase##_v1, \
+      false,                                                               \
+      numThreads,                                                          \
+      1000,                                                                \
+      rowsPerVector,                                                       \
+      distinctValueCount,                                                  \
+      newIndicesPerVector,                                                 \
+      nullPct,                                                             \
+      batchesPerBase)                                                      \
+  BENCHMARK_RELATIVE_NAMED_PARAM_MULTI(                                    \
+      funcName,                                                            \
+      threads##numThreads##_##rowsPerVector##_##distinctValueCount##_##newIndicesPerVector##_##nullPct##_bpb##batchesPerBase##_v2, \
+      true,                                                                \
       numThreads,                                                          \
       1000,                                                                \
       rowsPerVector,                                                       \
@@ -1158,10 +1276,15 @@ int main(int argc, char** argv) {
   std::cout
       << "\nBenchmark entry names encode the sweep parameters:\n"
       << "  DICT_<from>To<to>("
-         "rowsPerVector_distinctValueCount_newIndicesPerVector_nullPct[_bpb<batchesPerBase>])\n"
-      << "  FLAT_<from>To<to>(rowsPerVector_nullPct)\n"
+         "rowsPerVector_distinctValueCount_newIndicesPerVector_nullPct[_bpb<batchesPerBase>]_v{1,2})\n"
+      << "  FLAT_<from>To<to>(rowsPerVector_nullPct_v{1,2})\n"
       << "  MT_DICT_<from>To<to>("
-         "threads<n>_rowsPerVector_distinctValueCount_newIndicesPerVector_nullPct_bpb<batchesPerBase>)\n"
+         "threads<n>_rowsPerVector_distinctValueCount_newIndicesPerVector_nullPct_bpb<batchesPerBase>_v{1,2})\n"
+      << "\n"
+      << "Every entry runs twice — _v1 routes through the V1 ExprSet\n"
+      << "evaluator and shows absolute time/iter; _v2 routes through\n"
+      << "ExprSetV2 + CastExprV2 + PrestoCastHooksV2 and shows the\n"
+      << "V1-vs-V2 ratio in folly's relative column.\n"
       << "\n"
       << "numVectors is fixed at 1000 for every entry (per worker thread for\n"
       << "MT entries) and is not encoded in the name. Each measurement runs\n"

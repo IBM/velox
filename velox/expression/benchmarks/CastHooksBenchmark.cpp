@@ -18,6 +18,7 @@
 #include <folly/Benchmark.h>
 #include <folly/init/Init.h>
 
+#include "velox/expression/Expr.h"
 #include "velox/functions/lib/benchmarks/FunctionBenchmarkBase.h"
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 
@@ -116,12 +117,20 @@ class CastHooksBenchmark : public functions::test::FunctionBenchmarkBase {
 
   size_t runCast(const std::string& expression, const RowVectorPtr& rowVector) {
     folly::BenchmarkSuspender suspender;
-    auto exprSet = compileExpression(expression, rowVector->type());
+    // Bypass FunctionBenchmarkBase::compileExpression (which constructs
+    // exec::ExprSet directly and ignores the flag) so useV2Evaluator
+    // actually routes evaluation through ExprSetV2 when on.
+    auto untyped =
+        parse::DuckSqlExpressionsParser(options_).parseExpr(expression);
+    auto typed = core::Expressions::inferTypes(
+        untyped, rowVector->type(), execCtx_.pool());
+    std::vector<core::TypedExprPtr> typedExprs{typed};
+    auto exprSet = exec::makeExprSetFromFlag(std::move(typedExprs), &execCtx_);
     suspender.dismiss();
 
     int total = 0;
     for (int i = 0; i < 100; ++i) {
-      total += evaluate(exprSet, rowVector)->size();
+      total += evaluate(*exprSet, rowVector)->size();
     }
     return total;
   }
