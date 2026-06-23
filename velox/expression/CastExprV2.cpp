@@ -220,26 +220,14 @@ VectorPtr CastExprV2::castFromTime(
           true /*exactSize*/);
       char* rawBuffer = buffer->asMutable<char>() + buffer->size();
 
-      applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+      // Hoist the timezone-presence branch out of the per-row loop:
+      // pick one of two specialized loops here, so the inner body has
+      // no condition to evaluate for every row.
+      auto rowBody = [&](int row, int64_t adjustedTime) {
         try {
-          // Use timezone-aware conversion
-          auto systemTime =
-              systemDay.count() * kMillisInDay + inputFlatVector->valueAt(row);
-
-          int64_t adjustedTime{0};
-          if (timeZone) {
-            adjustedTime =
-                (timeZone->to_local(std::chrono::milliseconds{systemTime}) %
-                 kMillisInDay)
-                    .count();
-          } else {
-            adjustedTime = systemTime % kMillisInDay;
-          }
-
           if (adjustedTime < 0) {
             adjustedTime += kMillisInDay;
           }
-
           auto output = TIME()->valueToString(adjustedTime, rawBuffer);
           resultFlatVector->setNoCopy(row, output);
           rawBuffer += output.size();
@@ -253,7 +241,24 @@ VectorPtr CastExprV2::castFromTime(
           VELOX_USER_FAIL(
               makeErrorMessage(input, row, toType) + " " + e.what());
         }
-      });
+      };
+      if (timeZone != nullptr) {
+        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+          const auto systemTime =
+              systemDay.count() * kMillisInDay + inputFlatVector->valueAt(row);
+          const int64_t adjustedTime =
+              (timeZone->to_local(std::chrono::milliseconds{systemTime}) %
+               kMillisInDay)
+                  .count();
+          rowBody(row, adjustedTime);
+        });
+      } else {
+        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+          const auto systemTime =
+              systemDay.count() * kMillisInDay + inputFlatVector->valueAt(row);
+          rowBody(row, systemTime % kMillisInDay);
+        });
+      }
 
       buffer->setSize(rawBuffer - buffer->asMutable<char>());
       return castResult;
