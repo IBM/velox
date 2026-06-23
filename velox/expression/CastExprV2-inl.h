@@ -94,69 +94,14 @@ void CastExprV2::castKernel(
     setCastError(row, context, result, wrapException, errorDetails);
   };
 
-  // If castResult has an error, set the error in context. Otherwise, set the
-  // value in castResult directly to result. This lambda should be called only
-  // when ToKind is primitive and is not VARCHAR or VARBINARY.
-  auto setResultOrStatus = [&](const auto& castResult,
-                               vector_size_t row) INLINE_LAMBDA {
-    setResultOrError(
-        row,
-        castResult,
-        [&](const std::string& details) INLINE_LAMBDA {
-          return makeErrorMessage(*input, row, result->type(), details);
-        },
-        context,
-        result,
-        wrapException);
-  };
-
   try {
     auto inputRowValue = input->valueAt(row);
 
-    if constexpr (
-        (FromKind == TypeKind::TINYINT || FromKind == TypeKind::SMALLINT ||
-         FromKind == TypeKind::INTEGER || FromKind == TypeKind::BIGINT) &&
-        ToKind == TypeKind::TIMESTAMP) {
-      const auto castResult =
-          hooks_->castIntToTimestamp((int64_t)inputRowValue);
-      setResultOrStatus(castResult, row);
-      return;
-    }
-
-    if constexpr (
-        (FromKind == TypeKind::BOOLEAN) && ToKind == TypeKind::TIMESTAMP) {
-      const auto castResult = hooks_->castBooleanToTimestamp(inputRowValue);
-      setResultOrStatus(castResult, row);
-      return;
-    }
-
-    if constexpr (
-        (ToKind == TypeKind::TINYINT || ToKind == TypeKind::SMALLINT ||
-         ToKind == TypeKind::INTEGER || ToKind == TypeKind::BIGINT) &&
-        FromKind == TypeKind::TIMESTAMP) {
-      const auto castResult = hooks_->castTimestampToInt(inputRowValue);
-      setResultOrStatus(castResult, row);
-      return;
-    }
-
-    if constexpr (
-        (FromKind == TypeKind::DOUBLE || FromKind == TypeKind::REAL) &&
-        ToKind == TypeKind::TIMESTAMP) {
-      const auto castResult =
-          hooks_->castDoubleToTimestamp(static_cast<double>(inputRowValue));
-      if (castResult.hasError()) {
-        setError(castResult.error().message());
-      } else {
-        if (castResult.value().has_value()) {
-          result->set(row, castResult.value().value());
-        } else {
-          result->setNull(row, true);
-        }
-      }
-      return;
-    }
-
     // Optimize empty input strings casting by avoiding throwing exceptions.
+    // VARCHAR -> hook-served primitive kinds (TIMESTAMP, DATE, REAL, DOUBLE)
+    // are vectorized through castPrimitives and never reach this kernel;
+    // what remains here is VARCHAR -> INT/HUGEINT/BOOLEAN handled by
+    // util::Converter below.
     if constexpr (is_string_kind(FromKind)) {
       if constexpr (
           TypeTraits<ToKind>::isPrimitiveType &&
@@ -167,22 +112,6 @@ void CastExprV2::castKernel(
           return;
         }
       }
-      if constexpr (ToKind == TypeKind::TIMESTAMP) {
-        const auto castResult = hooks_->castStringToTimestamp(inputRowValue);
-        setResultOrStatus(castResult, row);
-        return;
-      }
-      if constexpr (ToKind == TypeKind::REAL) {
-        const auto castResult = hooks_->castStringToReal(inputRowValue);
-        setResultOrStatus(castResult, row);
-        return;
-      }
-      if constexpr (ToKind == TypeKind::DOUBLE) {
-        const auto castResult = hooks_->castStringToDouble(inputRowValue);
-        setResultOrStatus(castResult, row);
-        return;
-      }
-
       if constexpr (
           ToKind == TypeKind::TINYINT || ToKind == TypeKind::SMALLINT ||
           ToKind == TypeKind::INTEGER || ToKind == TypeKind::BIGINT ||
@@ -561,6 +490,57 @@ void CastExprV2::castPrimitives(
   using From = typename TypeTraits<FromKind>::NativeType;
   auto* resultFlatVector = result->as<FlatVector<To>>();
   auto* inputSimpleVector = input.as<SimpleVector<From>>();
+
+  // Hook-served paths dispatch as whole-column vector calls so the
+  // concrete CastHooksV2 implementation can devirtualize and inline
+  // the scalar parser inside its own row loop.  INT (any width),
+  // BOOLEAN, DOUBLE/REAL -> TIMESTAMP and TIMESTAMP -> INT (any width)
+  // are policy-disallowed in Presto today and record errors in bulk;
+  // they reach this dispatch unchanged for dialects that allow them.
+  if constexpr (
+      (FromKind == TypeKind::TINYINT || FromKind == TypeKind::SMALLINT ||
+       FromKind == TypeKind::INTEGER || FromKind == TypeKind::BIGINT) &&
+      ToKind == TypeKind::TIMESTAMP) {
+    hooks_->castIntToTimestampVector(rows, context);
+    return;
+  }
+  if constexpr (FromKind == TypeKind::BOOLEAN && ToKind == TypeKind::TIMESTAMP) {
+    hooks_->castBooleanToTimestampVector(rows, context);
+    return;
+  }
+  if constexpr (
+      (ToKind == TypeKind::TINYINT || ToKind == TypeKind::SMALLINT ||
+       ToKind == TypeKind::INTEGER || ToKind == TypeKind::BIGINT) &&
+      FromKind == TypeKind::TIMESTAMP) {
+    hooks_->castTimestampToIntVector(rows, context);
+    return;
+  }
+  if constexpr (
+      (FromKind == TypeKind::DOUBLE || FromKind == TypeKind::REAL) &&
+      ToKind == TypeKind::TIMESTAMP) {
+    hooks_->castDoubleToTimestampVector(rows, context);
+    return;
+  }
+
+  // VARCHAR -> {TIMESTAMP, REAL, DOUBLE} all flow through the vector
+  // hooks; whitespace stripping and empty-string error reporting
+  // happen inside the hook to match V1's per-row preprocessing.
+  if constexpr (
+      FromKind == TypeKind::VARCHAR && ToKind == TypeKind::TIMESTAMP) {
+    hooks_->castStringToTimestampVector(
+        rows, *inputSimpleVector, *resultFlatVector, context);
+    return;
+  }
+  if constexpr (FromKind == TypeKind::VARCHAR && ToKind == TypeKind::REAL) {
+    hooks_->castStringToRealVector(
+        rows, *inputSimpleVector, *resultFlatVector, context);
+    return;
+  }
+  if constexpr (FromKind == TypeKind::VARCHAR && ToKind == TypeKind::DOUBLE) {
+    hooks_->castStringToDoubleVector(
+        rows, *inputSimpleVector, *resultFlatVector, context);
+    return;
+  }
 
   switch (hooks_->getPolicy()) {
     case LegacyCastPolicy:

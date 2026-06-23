@@ -41,6 +41,7 @@ add_executable(
   MapWriterTest.cpp
   NullIfExprTest.cpp
   PeeledEncodingTest.cpp
+  PrestoCastHooksV2Test.cpp
   ReverseSignatureBinderTest.cpp
   RowViewTest.cpp
   RowWriterTest.cpp

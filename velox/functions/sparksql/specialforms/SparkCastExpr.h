@@ -16,10 +16,18 @@
 
 #pragma once
 
+#include <functional>
+
 #include "velox/expression/CastExpr.h"
 #include "velox/functions/sparksql/specialforms/SparkCastHooks.h"
 
 namespace facebook::velox::functions::sparksql {
+
+/// Builds a CastHooks instance for a Spark CAST or TRY_CAST.  The
+/// 'isTryCast' parameter is passed through because SparkCastHooks
+/// behaves differently for CAST vs TRY_CAST.
+using SparkCastHooksFactory = std::function<
+    std::shared_ptr<exec::CastHooks>(const core::QueryConfig&, bool isTryCast)>;
 
 class SparkCastExpr : public exec::CastExpr {
  public:
@@ -39,6 +47,14 @@ class SparkCastExpr : public exec::CastExpr {
 
 class SparkCastCallToSpecialForm : public exec::CastCallToSpecialForm {
  public:
+  /// Default constructor: uses SparkCastHooks.
+  SparkCastCallToSpecialForm();
+
+  /// Injects a custom hooks factory.  Use this to register Spark CAST
+  /// with non-default hooks (e.g., a vectorized variant) without
+  /// further subclassing.
+  explicit SparkCastCallToSpecialForm(SparkCastHooksFactory hooksFactory);
+
   exec::ExprPtr constructSpecialForm(
       const TypePtr& type,
       std::vector<exec::ExprPtr>&& compiledChildren,
@@ -52,14 +68,25 @@ class SparkCastCallToSpecialForm : public exec::CastCallToSpecialForm {
   /// @param toType The target type of the cast
   /// @return true if ANSI mode is supported for this cast, false otherwise
   static bool isAnsiSupported(const TypePtr& fromType, const TypePtr& toType);
+
+  SparkCastHooksFactory hooksFactory_;
 };
 
 class SparkTryCastCallToSpecialForm : public exec::TryCastCallToSpecialForm {
  public:
+  /// Default constructor: uses SparkCastHooks.
+  SparkTryCastCallToSpecialForm();
+
+  /// Injects a custom hooks factory.
+  explicit SparkTryCastCallToSpecialForm(SparkCastHooksFactory hooksFactory);
+
   exec::ExprPtr constructSpecialForm(
       const TypePtr& type,
       std::vector<exec::ExprPtr>&& compiledChildren,
       bool trackCpuUsage,
       const core::QueryConfig& config) override;
+
+ private:
+  SparkCastHooksFactory hooksFactory_;
 };
 } // namespace facebook::velox::functions::sparksql

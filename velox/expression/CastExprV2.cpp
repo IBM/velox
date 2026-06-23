@@ -23,7 +23,7 @@
 #include "velox/common/base/Exceptions.h"
 #include "velox/core/CoreTypeSystem.h"
 #include "velox/expression/PeeledEncoding.h"
-#include "velox/expression/PrestoCastHooks.h"
+#include "velox/expression/PrestoCastHooksV2.h"
 #include "velox/expression/ScopedVarSetter.h"
 #include "velox/external/tzdb/time_zone.h"
 #include "velox/functions/lib/RowsTranslationUtil.h"
@@ -39,13 +39,14 @@ namespace facebook::velox::exec {
 
 namespace {
 
-// Default V2 cast hooks factory: PrestoCastHooks.  Behavior matches
-// V1's hardcoded construction at the equivalent point.  Replace via
-// CastExprV2::setHooksFactory to plug in a custom hooks variant.
-std::shared_ptr<CastHooks> makeDefaultV2CastHooks(
+// Default V2 cast hooks factory: PrestoCastHooksV2.  Composes a
+// PrestoCastHooks internally so behavior matches V1 row-for-row;
+// callers register a different factory via CastExprV2::setHooksFactory
+// to plug in another CastHooksV2 implementation (e.g., a Spark variant).
+std::shared_ptr<CastHooksV2> makeDefaultV2CastHooks(
     const core::QueryConfig& config,
     bool /*isTryCast*/) {
-  return std::make_shared<PrestoCastHooks>(config);
+  return std::make_shared<PrestoCastHooksV2>(config);
 }
 
 // Storage for the registered V2 cast hooks factory.  Wrapped in a
@@ -104,19 +105,11 @@ VectorPtr CastExprV2::castFromDate(
     }
     case TypeKind::TIMESTAMP: {
       VELOX_DCHECK(toType->equivalent(*TIMESTAMP()));
-      static const int64_t kMillisPerDay{86'400'000};
       const auto* timeZone =
           getTimeZoneFromConfig(context.execCtx()->queryCtx()->queryConfig());
       auto* resultFlatVector = castResult->as<FlatVector<Timestamp>>();
-      applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
-        auto timestamp = Timestamp::fromMillis(
-            inputFlatVector->valueAt(row) * kMillisPerDay);
-        if (timeZone) {
-          hooks_->castDateTimestampToGMT(timestamp, *timeZone);
-        }
-        resultFlatVector->set(row, timestamp);
-      });
-
+      hooks_->castDateToTimestampVector(
+          rows, *inputFlatVector, *resultFlatVector, timeZone);
       return castResult;
     }
     default:
@@ -137,32 +130,7 @@ VectorPtr CastExprV2::castToDate(
   switch (fromType->kind()) {
     case TypeKind::VARCHAR: {
       auto* inputVector = input.as<SimpleVector<StringView>>();
-      applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
-        bool wrapException = true;
-        try {
-          const auto result =
-              hooks_->castStringToDate(inputVector->valueAt(row));
-          setResultOrError(
-              row,
-              result,
-              [&](const std::string& details) {
-                return makeErrorMessage(input, row, DATE(), details);
-              },
-              context,
-              resultFlatVector,
-              wrapException);
-        } catch (const VeloxUserError& ue) {
-          if (!wrapException) {
-            throw;
-          }
-          VELOX_USER_FAIL(
-              makeErrorMessage(input, row, DATE()) + " " + ue.message());
-        } catch (const std::exception& e) {
-          VELOX_USER_FAIL(
-              makeErrorMessage(input, row, DATE()) + " " + e.what());
-        }
-      });
-
+      hooks_->castStringToDateVector(rows, *inputVector, *resultFlatVector, context);
       return castResult;
     }
     case TypeKind::TIMESTAMP: {

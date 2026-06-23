@@ -46,6 +46,25 @@ bool SparkCastCallToSpecialForm::isAnsiSupported(
   return false;
 }
 
+namespace {
+// Default hooks factory: SparkCastHooks.
+std::shared_ptr<exec::CastHooks> makeDefaultSparkCastHooks(
+    const core::QueryConfig& config,
+    bool isTryCast) {
+  return std::make_shared<SparkCastHooks>(config, isTryCast);
+}
+} // namespace
+
+SparkCastCallToSpecialForm::SparkCastCallToSpecialForm()
+    : hooksFactory_(&makeDefaultSparkCastHooks) {}
+
+SparkCastCallToSpecialForm::SparkCastCallToSpecialForm(
+    SparkCastHooksFactory hooksFactory)
+    : hooksFactory_(std::move(hooksFactory)) {
+  VELOX_CHECK(
+      hooksFactory_, "SparkCastCallToSpecialForm requires a hooks factory");
+}
+
 exec::ExprPtr SparkCastCallToSpecialForm::constructSpecialForm(
     const TypePtr& type,
     std::vector<exec::ExprPtr>&& compiledChildren,
@@ -73,7 +92,17 @@ exec::ExprPtr SparkCastCallToSpecialForm::constructSpecialForm(
       std::move(compiledChildren[0]),
       trackCpuUsage,
       isTryCast,
-      std::make_shared<SparkCastHooks>(config, isTryCast));
+      hooksFactory_(config, isTryCast));
+}
+
+SparkTryCastCallToSpecialForm::SparkTryCastCallToSpecialForm()
+    : hooksFactory_(&makeDefaultSparkCastHooks) {}
+
+SparkTryCastCallToSpecialForm::SparkTryCastCallToSpecialForm(
+    SparkCastHooksFactory hooksFactory)
+    : hooksFactory_(std::move(hooksFactory)) {
+  VELOX_CHECK(
+      hooksFactory_, "SparkTryCastCallToSpecialForm requires a hooks factory");
 }
 
 exec::ExprPtr SparkTryCastCallToSpecialForm::constructSpecialForm(
@@ -93,7 +122,7 @@ exec::ExprPtr SparkTryCastCallToSpecialForm::constructSpecialForm(
       std::move(compiledChildren[0]),
       trackCpuUsage,
       true,
-      std::make_shared<SparkCastHooks>(config, false));
+      hooksFactory_(config, /*isTryCast=*/false));
 }
 
 } // namespace facebook::velox::functions::sparksql

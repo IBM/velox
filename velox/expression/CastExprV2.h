@@ -20,11 +20,11 @@
 #include <functional>
 
 #include "velox/common/base/Status.h"
-// Reuse V1's CastOperator interface (defined in CastExpr.h) and
-// CastHooks plumbing.  CastExprV2 is a parallel evaluation class but
-// shares the same plug-in surface for custom-type cast registration.
+// Reuse V1's CastOperator interface (defined in CastExpr.h).
+// CastExprV2 is a parallel evaluation class but shares the same
+// plug-in surface for custom-type cast registration.
 #include "velox/expression/CastExpr.h"
-#include "velox/expression/CastHooks.h"
+#include "velox/expression/CastHooksV2.h"
 #include "velox/expression/ExprConstants.h"
 #include "velox/expression/FunctionCallToSpecialForm.h"
 #include "velox/expression/SpecialForm.h"
@@ -33,13 +33,14 @@ namespace facebook::velox::exec {
 
 class CastExprV2 : public SpecialForm {
  public:
-  /// Builds a CastHooks instance for a CAST or TRY_CAST going through
+  /// Builds a CastHooksV2 instance for a CAST or TRY_CAST going through
   /// CastExprV2.  The factory is registered globally via
   /// setHooksFactory; V2 cast routing reads it during tree
   /// construction (ExprV2::from) rather than at compile time, which
   /// is how we keep V1's CastExpr.cpp untouched.
-  using HooksFactory = std::function<
-      std::shared_ptr<CastHooks>(const core::QueryConfig& config, bool isTryCast)>;
+  using HooksFactory = std::function<std::shared_ptr<CastHooksV2>(
+      const core::QueryConfig& config,
+      bool isTryCast)>;
 
   /// @param type The target type of the cast expression
   /// @param expr The expression to cast
@@ -49,7 +50,7 @@ class CastExprV2 : public SpecialForm {
       ExprPtr&& expr,
       bool trackCpuUsage,
       bool isTryCast,
-      std::shared_ptr<CastHooks> hooks)
+      std::shared_ptr<CastHooksV2> hooks)
       : SpecialForm(
             SpecialFormKind::kCast,
             type,
@@ -61,9 +62,9 @@ class CastExprV2 : public SpecialForm {
         hooks_(std::move(hooks)) {}
 
   /// Replaces the V2 cast hooks factory.  Default factory produces
-  /// PrestoCastHooks; callers register their own factory at startup
-  /// to plug in a vectorized variant (e.g., PrestoCastHooksV2) or
-  /// any other CastHooks subclass.  Must be non-null.
+  /// PrestoCastHooksV2; callers register their own factory at startup
+  /// to plug in a different CastHooksV2 implementation (e.g., a Spark
+  /// variant).  Must be non-null.
   static void setHooksFactory(HooksFactory factory);
 
   /// Returns the currently-registered V2 cast hooks factory.  Never
@@ -369,7 +370,7 @@ class CastExprV2 : public SpecialForm {
   folly::F14FastMap<std::string, CastOperatorPtr> castOperators_;
 
   bool isTryCast_;
-  std::shared_ptr<CastHooks> hooks_;
+  std::shared_ptr<CastHooksV2> hooks_;
 
   bool inTopLevel = false;
 };
