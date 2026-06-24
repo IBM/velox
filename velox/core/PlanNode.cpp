@@ -1693,6 +1693,7 @@ folly::dynamic HashJoinNode::serialize() const {
   obj["nullAware"] = nullAware_;
   obj["nullAsValue"] = nullAsValue_;
   obj["useHashTableCache"] = useHashTableCache_;
+  obj["joinHasNullKeys"] = joinHasNullKeys_;
   if (cacheKey_.has_value()) {
     obj["cacheKey"] = cacheKey_.value();
   }
@@ -1713,6 +1714,7 @@ PlanNodePtr HashJoinNode::create(const folly::dynamic& obj, void* context) {
   auto nullAware = obj["nullAware"].asBool();
   auto nullAsValue = obj.getDefault("nullAsValue", false).asBool();
   auto useHashTableCache = obj.getDefault("useHashTableCache", false).asBool();
+  auto joinHasNullKeys = obj.getDefault("joinHasNullKeys", false).asBool();
   std::optional<std::string> cacheKey = std::nullopt;
   if (obj.count("cacheKey")) {
     cacheKey = obj["cacheKey"].asString();
@@ -1739,6 +1741,8 @@ PlanNodePtr HashJoinNode::create(const folly::dynamic& obj, void* context) {
       outputType,
       useHashTableCache,
       nullAsValue,
+      joinHasNullKeys,
+      nullptr,
       std::move(cacheKey));
 }
 
