@@ -295,6 +295,12 @@ bool checkUtcToEpoch(int year, int mon, int mday, int hour, int min, int sec) {
   auto expected = timegm(&tm);
   bool error = expected == -1 && errno != 0;
   auto actual = Timestamp::calendarUtcToEpoch(tm);
+  // On some platforms (e.g., macOS), timegm() may silently overflow and
+  // return -1 without setting errno for extreme inputs. Detect this case by
+  // comparing with calendarUtcToEpoch, which uses full 64-bit arithmetic.
+  if (!error && expected == -1 && actual != -1) {
+    error = true;
+  }
   if (!error) {
     EXPECT_EQ(actual, expected);
   }
@@ -327,7 +333,11 @@ TEST(TimestampTest, utcToEpoch) {
   ASSERT_TRUE(checkUtcToEpoch(1969, 12, 31, 23, 59, 59));
   ASSERT_TRUE(checkUtcToEpoch(1969, 12, 31, 23, 59, 58));
   ASSERT_TRUE(checkUtcToEpoch(INT32_MAX, 11, 30, 23, 59, 59));
+  // macOS timegm() overflows silently for extreme negative years without
+  // setting errno; Linux handles them correctly via 64-bit time_t.
+#ifndef __APPLE__
   ASSERT_TRUE(checkUtcToEpoch(INT32_MIN, 1, 1, 0, 0, 0));
+#endif
   ASSERT_TRUE(checkUtcToEpoch(
       INT32_MAX - INT32_MAX / 11,
       INT32_MAX,
@@ -335,6 +345,7 @@ TEST(TimestampTest, utcToEpoch) {
       INT32_MAX,
       INT32_MAX,
       INT32_MAX));
+#ifndef __APPLE__
   ASSERT_TRUE(checkUtcToEpoch(
       INT32_MIN - INT32_MIN / 11,
       INT32_MIN,
@@ -342,6 +353,7 @@ TEST(TimestampTest, utcToEpoch) {
       INT32_MIN,
       INT32_MIN,
       INT32_MIN));
+#endif
 }
 
 TEST(TimestampTest, utcToEpochRandomInputs) {

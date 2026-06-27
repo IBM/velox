@@ -1440,6 +1440,7 @@ std::string IntervalDayTimeType::valueToString(int64_t value) const {
   remainMillis -= minutes * kMillisInMinute;
   const int64_t seconds = remainMillis / kMillisInSecond;
   remainMillis -= seconds * kMillisInSecond;
+  const int64_t millis = static_cast<int64_t>(remainMillis);
   char buf[64];
   snprintf(
       buf,
@@ -1447,10 +1448,10 @@ std::string IntervalDayTimeType::valueToString(int64_t value) const {
       kIntervalFormat,
       sign.c_str(),
       days,
-      hours,
-      minutes,
-      seconds,
-      remainMillis);
+      (int)hours,
+      (int)minutes,
+      (int)seconds,
+      (int)millis);
 
   return buf;
 }

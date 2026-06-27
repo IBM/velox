@@ -961,7 +961,12 @@ Expected<ParsedTimestampWithTimeZone> fromTimestampWithTimezoneString(
     if ((timeZone = tz::locateZone(timeZoneName, false)) == nullptr) {
       int64_t offsetMillis = 0;
       size_t offsetPos = 0;
-      if (parseMode == TimestampParseMode::kPrestoCast &&
+      if (timeZoneName == "Z") {
+        // "Z" is the UTC designator (ISO 8601 / RFC 3339), equivalent to
+        // +00:00.
+        offset = 0;
+      } else if (
+          parseMode == TimestampParseMode::kPrestoCast &&
           tryParsePrestoTimeOffsetString(
               str + pos, timezonePos - pos, offsetPos, offsetMillis)) {
         offset = offsetMillis;
