@@ -16,6 +16,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 
 #include "velox/common/base/BloomFilter.h"
 #include "velox/core/QueryConfig.h"
@@ -32,6 +33,9 @@ struct BloomFilterMightContainFunction {
       const core::QueryConfig&,
       const arg_type<Varbinary>* serialized,
       const arg_type<int64_t>*) {
+    bloomFilterView_.reset();
+    serializedBloom_.clear();
+
     if (serialized == nullptr) {
       return;
     }
@@ -41,7 +45,8 @@ struct BloomFilterMightContainFunction {
         BloomFilterView::kSerializedHeaderSize,
         "Serialized BloomFilter is too small: {}",
         serialized->size());
-    bloomFilterView_.emplace(serialized->data());
+    serializedBloom_.assign(serialized->data(), serialized->size());
+    bloomFilterView_.emplace(serializedBloom_.data());
   }
 
   FOLLY_ALWAYS_INLINE void
@@ -51,6 +56,7 @@ struct BloomFilterMightContainFunction {
   }
 
  private:
+  std::string serializedBloom_;
   std::optional<BloomFilterView> bloomFilterView_;
 };
 
