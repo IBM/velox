@@ -154,28 +154,31 @@ void StructColumnReader::ensureChild(
   if (!useColumnNames || nullStructIfAllFieldsMissing || !children_.empty() ||
       fileType_->size() == 0) {
     return;
-  }
+      }
 
   // Preserve one physical child to source rep/def levels for this struct.
-  auto* repDefSourceSpec =
-      scanSpec_->getOrCreateChild(asRowType(fileType_->type())->nameOf(0));
+  // This ScanSpec is private to this reader. Do not mutate scanSpec_, which is
+  // the query ScanSpec and may be reused across splits.
+  repDefSourceScanSpec_ = std::make_unique<common::ScanSpec>(
+      asRowType(fileType_->type())->nameOf(0));
 
   // Populate nested ScanSpec children recursively. When the first physical
-  // child is ARRAY, MAP, or ROW, its column reader expects the ScanSpec
-  // subtree to exist before build() is called. Without this, the child
-  // reader crashes trying to look up non-existent ScanSpec children.
-  repDefSourceSpec->addAllChildFields(*fileType_->childAt(0)->type());
+  // child is ARRAY, MAP, or ROW, its column reader expects the ScanSpec subtree
+  // to exist before build() is called.
+  repDefSourceScanSpec_->addAllChildFields(*fileType_->childAt(0)->type());
 
-  repDefSourceSpec->setProjectOut(false);
+  repDefSourceScanSpec_->setProjectOut(false);
+
   addChild(
       ParquetColumnReader::build(
           columnReaderOptions,
           fileType_->childAt(0)->type(),
           fileType_->childAt(0),
           params,
-          *repDefSourceSpec,
+          *repDefSourceScanSpec_,
           pool));
-  repDefSourceSpec->setSubscript(children_.size() - 1);
+
+  repDefSourceScanSpec_->setSubscript(children_.size() - 1);
 }
 
 void StructColumnReader::initRepDefState() {
@@ -208,8 +211,7 @@ void StructColumnReader::initRepDefState() {
   }
 }
 
-dwio::common::SelectiveColumnReader* FOLLY_NONNULL
-StructColumnReader::findBestLeaf() {
+dwio::common::SelectiveColumnReader* StructColumnReader::findBestLeaf() {
   SelectiveColumnReader* best = nullptr;
   for (auto i = 0; i < children_.size(); ++i) {
     auto child = children_[i];

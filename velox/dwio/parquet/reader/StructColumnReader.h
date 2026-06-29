@@ -117,6 +117,8 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
 
   bool isRowGroupBuffered(uint32_t index, dwio::common::BufferedInput& input);
 
+  std::unique_ptr<common::ScanSpec> repDefSourceScanSpec_;
+
   // Leaf column reader used for getting nullability information for
   // 'this'. This is nullptr for the root of a table.
   dwio::common::SelectiveColumnReader* childForRepDefs_{nullptr};
