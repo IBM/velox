@@ -166,6 +166,63 @@ TEST_F(ParquetReaderTest, parseParquetV2DeltaLengthByteArray) {
   assertReadWithReaderAndExpected(usersSchema, *rowReader, expected, *leafPool_);
 }
 
+TEST_F(ParquetReaderTest, readerOptionsColumnMappingModeOverridesFormatSpecificOptions) {
+  // Regression test for the DeltaSplitReader flow: configureReaderOptions
+  // installs formatSpecificOptions (ParquetReaderOptions with kPosition from
+  // session config), then DeltaSplitReader calls setColumnMappingMode(kName)
+  // on ReaderOptions.  The non-positional mode on ReaderOptions must win over
+  // the kPosition in formatSpecificOptions.
+  //
+  // parquet_v2_delta_length_byte_array.parquet has physical column order
+  // (email, name, id).  Reading with schema (id, name, email) via kName
+  // produces correct values; kPosition would try to decode the email string
+  // column as BIGINT id and give wrong results.
+  const std::string sample(
+      getExampleFilePath("parquet_v2_delta_length_byte_array.parquet"));
+
+  auto usersSchema =
+      ROW({"id", "name", "email"}, {BIGINT(), VARCHAR(), VARCHAR()});
+
+  dwio::common::ReaderOptions readerOptions{leafPool_.get()};
+  readerOptions.setFileColumnNamesReadAsLowerCase(true);
+  // Simulate what configureReaderOptions does: install formatSpecificOptions
+  // carrying the session-config default (kPosition).
+  auto parquetOpts = std::make_shared<ParquetReaderOptions>();
+  parquetOpts->columnMappingMode = ColumnMappingMode::kPosition;
+  readerOptions.setFormatSpecificOptions(std::move(parquetOpts));
+  // DeltaSplitReader then overrides to kName; must win over formatSpecificOptions.
+  readerOptions.setColumnMappingMode(ColumnMappingMode::kName);
+
+  auto reader = createReader(sample, readerOptions);
+  EXPECT_EQ(reader->numberOfRows(), 10ULL);
+
+  auto rowReaderOpts = makeRowReaderOpts(usersSchema);
+  auto scanSpec = makeScanSpec(usersSchema);
+  rowReaderOpts.setScanSpec(scanSpec);
+  auto rowReader = reader->createRowReader(rowReaderOpts);
+
+  auto expected = makeRowVector({
+      makeFlatVector<int64_t>(10, [](auto row) { return row + 11; }),
+      makeFlatVector<std::string>(10, [](auto row) -> std::string {
+        static const std::vector<std::string> names = {
+            "Alice_1",   "Bob_1",     "Charlie_1", "David_1", "Eve_1",
+            "Frank_1",   "Grace_1",   "Hannah_1",  "Ivan_1",  "Julia_1"};
+        return names[row];
+      }),
+      makeFlatVector<std::string>(10, [](auto row) -> std::string {
+        static const std::vector<std::string> emails = {
+            "alice@example.com",   "bob@example.com",
+            "charlie@example.com", "david@example.com",
+            "eve@example.com",     "frank@example.com",
+            "grace@example.com",   "hannah@example.com",
+            "ivan@example.com",    "julia@example.com"};
+        return emails[row];
+      }),
+  });
+
+  assertReadWithReaderAndExpected(usersSchema, *rowReader, expected, *leafPool_);
+}
+
 TEST_F(ParquetReaderTest, parseEmptyNestedList) {
   // parse_empty_nested_list.parquet holds 1,000 rows of the following data:
   //

@@ -139,8 +139,16 @@ bool isInt64Compatible(const TypePtr& type) {
 ParquetReaderOptions getParquetReaderOptions(
     const dwio::common::ReaderOptions& options) {
   if (options.formatSpecificOptions()) {
-    return *checkedPointerCast<ParquetReaderOptions>(
+    auto parquetOptions = *checkedPointerCast<ParquetReaderOptions>(
         options.formatSpecificOptions());
+    // configureReaderOptions always sets kPosition on ReaderOptions for Parquet
+    // (non-ORC formats use the default). An explicit non-positional mode (e.g.
+    // kName set by DeltaSplitReader) means the caller wants to override the
+    // session-config default stored in formatSpecificOptions, so let it win.
+    if (options.columnMappingMode() != dwio::common::ColumnMappingMode::kPosition) {
+      parquetOptions.columnMappingMode = options.columnMappingMode();
+    }
+    return parquetOptions;
   }
 
   ParquetReaderOptions parquetOptions;
