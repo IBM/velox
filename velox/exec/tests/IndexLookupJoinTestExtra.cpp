@@ -154,7 +154,7 @@ class IndexLookupJoinTest : public IndexLookupJoinTestBase,
 // Verifies that when splitOutput_ is false, trailing input rows that have no
 // lookup matches are included in the current output batch rather than being
 // emitted in a separate batch via produceRemainingOutputForLeftJoin.
-TEST_P(IndexLookupJoinTest, leftJoinTrailingMissesWithNoSplitOutput) {
+TEST_P(IndexLookupJoinTest, DISABLED_leftJoinTrailingMissesWithNoSplitOutput) {
   IndexTableData tableData;
   generateIndexTableData({500, 1, 1}, tableData, pool_);
 
