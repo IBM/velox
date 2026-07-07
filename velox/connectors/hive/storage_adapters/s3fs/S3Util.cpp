@@ -41,8 +41,30 @@ std::string getErrorStringFromS3Error(
       return "Service unavailable";
     case Aws::S3::S3Errors::NETWORK_CONNECTION:
       return "Network connection";
+    case Aws::S3::S3Errors::INTERNAL_FAILURE:
+      return "Internal failure (possible incomplete response from S3)";
+    case Aws::S3::S3Errors::THROTTLING:
+      return "Throttling";
+    case Aws::S3::S3Errors::SLOW_DOWN:
+      return "Slow down";
+    case Aws::S3::S3Errors::REQUEST_TIMEOUT:
+      return "Request timeout";
+    case Aws::S3::S3Errors::REQUEST_EXPIRED:
+      return "Request expired";
+    case Aws::S3::S3Errors::REQUEST_TIME_TOO_SKEWED:
+      return "Request time too skewed";
+    case Aws::S3::S3Errors::INVALID_ACCESS_KEY_ID:
+      return "Invalid access key ID";
+    case Aws::S3::S3Errors::INVALID_OBJECT_STATE:
+      return "Invalid object state";
     default:
-      return "Unknown error";
+      auto exceptionName = error.GetExceptionName();
+      if (!exceptionName.empty()) {
+        return std::string(exceptionName.c_str());
+      }
+      return fmt::format(
+          "Unknown error (SDK error type: {})",
+          static_cast<int>(error.GetErrorType()));
   }
 }
 
