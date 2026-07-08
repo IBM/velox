@@ -57,6 +57,12 @@ class ParquetFileMetadata : public dwio::common::FileMetadata {
   std::shared_ptr<arrow::FileMetaData> metadata_;
 };
 
+/// Parquet writer enforces the row-count cap via Arrow, and this policy
+/// supplements it with a byte threshold. For Parquet,
+/// - stripeSizeEstimate: the actual compressed bytes of current row group.
+/// - stripeRowCount: remains 0.
+/// Custom Parquet policies should derive from DefaultFlushPolicy to preserve
+/// this contract.
 class DefaultFlushPolicy : public dwio::common::FlushPolicy {
  public:
   DefaultFlushPolicy()
@@ -70,8 +76,7 @@ class DefaultFlushPolicy : public dwio::common::FlushPolicy {
 
   bool shouldFlush(
       const dwio::common::StripeProgress& stripeProgress) override {
-    return stripeProgress.stripeRowCount >= rowsInRowGroup_ ||
-        stripeProgress.stripeSizeEstimate >= bytesInRowGroup_;
+    return stripeProgress.stripeSizeEstimate >= bytesInRowGroup_;
   }
 
   void onClose() override {
@@ -161,11 +166,11 @@ struct WriterOptions : public dwio::common::WriterOptions {
 // Writes Velox vectors into  a DataSink using Arrow Parquet writer.
 class Writer : public dwio::common::Writer {
  public:
-  // Constructs a writer with output to 'sink'. A new row group is
-  // started every 'rowsInRowGroup' top level rows. 'pool' is used for
-  // temporary memory. 'properties' specifies Parquet-specific
-  // options. 'schema' specifies the file's overall schema, and it is always
-  // non-null.
+  // Constructs a writer with output to 'sink'. 'options' carries common writer
+  // options and Parquet-specific format options. For Parquet,
+  // 'options.flushPolicyFactory' must create a DefaultFlushPolicy (or a
+  // subclass); 'pool' is used for temporary memory. 'schema' specifies the
+  // file's overall schema, and it is always non-null.
   Writer(
       std::unique_ptr<dwio::common::FileSink> sink,
       const WriterOptions& options,
