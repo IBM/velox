@@ -37,6 +37,15 @@ static constexpr uint8_t kParquetEMagic[4] = {'P', 'A', 'R', 'E'};
 
 class PARQUET_EXPORT RowGroupWriter {
  public:
+  /// Estimated uncompressed byte sizes of data buffered by column writers
+  /// that have not yet been serialized into pages.
+  struct BufferedStats {
+    int64_t defLevelBytes = 0;
+    int64_t repLevelBytes = 0;
+    int64_t valueBytes = 0;
+    int64_t dictBytes = 0;
+  };
+
   // Forward declare a virtual class 'Contents' to aid dependency injection and
   // more easily create test fixtures. An implementation of the Contents class
   // is defined in the .cpp file.
@@ -61,6 +70,9 @@ class PARQUET_EXPORT RowGroupWriter {
     virtual int64_t totalCompressedBytesWritten() const = 0;
     /// \brief Estimated size of the values that are not written to a page yet.
     virtual int64_t estimatedBufferedValueBytes() const = 0;
+    /// \brief Estimated sizes of buffered data (levels, values, dict) not yet
+    /// written to pages.
+    virtual BufferedStats estimatedBufferedStats() const = 0;
 
     virtual bool buffered() const = 0;
   };
@@ -105,6 +117,9 @@ class PARQUET_EXPORT RowGroupWriter {
   /// \brief Including compressed bytes in page writer and uncompressed data
   /// value buffer.
   int64_t totalBufferedBytes() const;
+  /// \brief Estimated sizes of buffered data (levels, values, dict) not yet
+  /// written to pages.
+  BufferedStats estimatedBufferedStats() const;
   /// Returns whether the current RowGroupWriter is in the buffered mode and is
   /// created by calling ParquetFileWriter::appendBufferedRowGroup().
   bool buffered() const;
@@ -163,6 +178,8 @@ class PARQUET_EXPORT ParquetFileWriter {
 
     virtual RowGroupWriter* appendRowGroup() = 0;
     virtual RowGroupWriter* appendBufferedRowGroup() = 0;
+
+    virtual void finishRowGroup() = 0;
 
     virtual int64_t numRows() const = 0;
     virtual int numColumns() const = 0;
@@ -232,6 +249,12 @@ class PARQUET_EXPORT ParquetFileWriter {
   /// only valid until the next call to appendRowGroup() or
   /// appendBufferedRowGroup() or close().
   RowGroupWriter* appendBufferedRowGroup();
+
+  /// Finalize the current row group if one is active. Pages and column
+  /// metadata of the buffered row group are serialized to the underlying
+  /// sink and the active RowGroupWriter is destroyed.
+  /// No-op if there is no active row group.
+  void finishRowGroup();
 
   /// \brief Add key-value metadata to the file.
   /// \param[in] keyValueMetadata The metadata to add.

@@ -211,13 +211,14 @@ class ParquetTestBase : public testing::Test,
       const WriterOptions& writerOptions,
       const RowTypePtr& rowType = nullptr);
 
-  /// Writes each batch as a separate Parquet row group by flushing between
-  /// batches. Uses batches[0]->rowType() as the file schema. Configure
+  /// Writes batches data into Parquet file.
+  /// Uses batches[0]->rowType() as the file schema. Configure
   /// WriterOptions (e.g. flushPolicyFactory) so batch sizes are not split
   /// further by the writer.
   dwio::common::MemorySink* write(
       const std::vector<RowVectorPtr>& batches,
-      const WriterOptions& writerOptions);
+      const dwio::common::WriterOptions& options,
+      const ParquetWriterOptions& writerOptions);
 
   dwio::common::MemorySink* write(
       const RowVectorPtr& data,
