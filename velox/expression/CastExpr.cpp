@@ -50,6 +50,70 @@ const tz::TimeZone* getTimeZoneFromConfig(const core::QueryConfig& config) {
 
 } // namespace
 
+bool CastExpr::isSupportedFastUpcast(
+    const TypePtr& fromType,
+    const TypePtr& toType) {
+  auto isIntegralType = [](const TypePtr& type) {
+    return type == TINYINT() || type == SMALLINT() || type == INTEGER() ||
+        type == BIGINT();
+  };
+
+  auto isBasicNumericType = [&isIntegralType](const TypePtr& type) {
+    return isIntegralType(type) || type == REAL() || type == DOUBLE();
+  };
+
+  if (isIntegralType(fromType) && isBasicNumericType(toType)) {
+    if (fromType->cppSizeInBytes() < toType->cppSizeInBytes()) {
+      return true;
+    }
+    if (fromType == INTEGER() && toType == REAL()) {
+      return true;
+    }
+    if (fromType == BIGINT() && (toType == REAL() || toType == DOUBLE())) {
+      return true;
+    }
+  }
+
+  if (fromType == REAL() && toType == DOUBLE()) {
+    return true;
+  }
+  return false;
+}
+
+bool CastExpr::isCheapToReevaluate() const {
+  // Three families of casts qualify as "cheap":
+  //
+  // 1. Fast numeric upcasts (see applyNumericUpcast) - one static_cast
+  //    per row over a flat input. Non-throwing by construction.
+  // 2. DATE -> TIMESTAMP - integer multiply by 86'400'000 plus a
+  //    divmod in Timestamp::fromMillis, optionally followed by a
+  //    timezone shift in Timestamp::toGMT. DATE values always
+  //    represent midnight; midnight does not fall in any IANA DST
+  //    gap, so toGMT is in practice non-throwing for date-derived
+  //    timestamps. The per-row cost is single-digit cycles plus a
+  //    constant timezone-table lookup when adjustment is active.
+  // 3. DATE -> VARCHAR - format DATE(int32 days) into a fixed-width
+  //    "YYYY-MM-DD" string. Non-throwing for valid date values and
+  //    the formatted string is small enough to stay inline in
+  //    StringView, so we avoid out-of-line buffer churn too.
+  //
+  // Filling every base position up front on second sight pays for
+  // itself across the subsequent O(1) dictionary wraps the eager-fill
+  // path enables in Expr::evalWithMemo.
+  if (inputs_.empty()) {
+    return false;
+  }
+  const auto& fromType = inputs_[0]->type();
+  if (isSupportedFastUpcast(fromType, type_)) {
+    return true;
+  }
+  if (fromType->isDate() &&
+      (type_->isTimestamp() || type_->kind() == TypeKind::VARCHAR)) {
+    return true;
+  }
+  return false;
+}
+
 VectorPtr CastExpr::castFromDate(
     const SelectivityVector& rows,
     const BaseVector& input,
@@ -63,14 +127,45 @@ VectorPtr CastExpr::castFromDate(
   switch (toType->kind()) {
     case TypeKind::VARCHAR: {
       auto* resultFlatVector = castResult->as<FlatVector<StringView>>();
+      // Format options are constant for the whole call; hoist out.
+      TimestampToStringOptions options;
+      options.mode = TimestampToStringOptions::Mode::kDateOnly;
+      options.zeroPaddingYear = true;
+      // getMaxStringLength(kDateOnly) is 17 (signed 10-digit year +
+      // "-MM-DD"). The vast majority of DATE values render as
+      // "YYYY-MM-DD" (10 chars) which fits inside StringView's 12-byte
+      // inline storage - those rows never need an out-of-line string
+      // buffer at all. Only year out of [-9999, 999999] produces a
+      // longer output that has to be persisted in a result-owned
+      // buffer.
+      constexpr size_t kMaxDateLen = 17;
       applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
         try {
-          // TODO Optimize to avoid creating an intermediate string.
-          auto output = DATE()->toString(inputFlatVector->valueAt(row));
-          auto writer = exec::StringWriter(resultFlatVector, row);
-          writer.resize(output.size());
-          ::memcpy(writer.data(), output.data(), output.size());
-          writer.finalize();
+          char stackBuf[kMaxDateLen];
+          const int32_t days = inputFlatVector->valueAt(row);
+          const int64_t daySeconds = static_cast<int64_t>(days) * 86400;
+          std::tm tm;
+          VELOX_CHECK(
+              Timestamp::epochToCalendarUtc(daySeconds, tm),
+              "Can't convert days to date: {}",
+              days);
+          const auto sv =
+              Timestamp::tmToStringView(tm, 0, options, stackBuf);
+          // For sv.size() <= StringView::kInlineSize (12) the
+          // StringView ctor copied the bytes into sv's own inline
+          // storage - stackBuf is unreferenced after this point and
+          // we can store sv directly. For larger outputs (rare large
+          // year) sv points into stackBuf so we must persist the bytes
+          // in a result-owned buffer before storing.
+          if (FOLLY_LIKELY(sv.isInline())) {
+            resultFlatVector->setNoCopy(row, sv);
+          } else {
+            char* persistent =
+                resultFlatVector->getRawStringBufferWithSpace(sv.size());
+            ::memcpy(persistent, sv.data(), sv.size());
+            resultFlatVector->setNoCopy(
+                row, StringView(persistent, sv.size()));
+          }
         } catch (const VeloxException& ue) {
           if (!ue.isUserError()) {
             throw;
@@ -86,19 +181,16 @@ VectorPtr CastExpr::castFromDate(
     }
     case TypeKind::TIMESTAMP: {
       VELOX_DCHECK(toType->equivalent(*TIMESTAMP()));
-      static const int64_t kMillisPerDay{86'400'000};
       const auto* timeZone =
           getTimeZoneFromConfig(context.execCtx()->queryCtx()->queryConfig());
       auto* resultFlatVector = castResult->as<FlatVector<Timestamp>>();
-      applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
-        auto timestamp = Timestamp::fromMillis(
-            inputFlatVector->valueAt(row) * kMillisPerDay);
-        if (timeZone) {
-          hooks_->castDateTimestampToGMT(timestamp, *timeZone);
-        }
-        resultFlatVector->set(row, timestamp);
-      });
-
+      // Single per-batch virtual call. The hook owns the row loop, so
+      // the body inside (multiply, fromMillis, optional Timestamp::
+      // toGMT, store) is concrete code in the hook implementation that
+      // the compiler can inline and partially vectorize. No per-row
+      // virtual dispatch, no per-row exception frame.
+      hooks_->castDateToTimestampVector(
+          rows, *inputFlatVector, *resultFlatVector, timeZone);
       return castResult;
     }
     default:
@@ -234,22 +326,9 @@ VectorPtr CastExpr::castFromTime(
           true /*exactSize*/);
       char* rawBuffer = buffer->asMutable<char>() + buffer->size();
 
-      applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+      // Hoist the timezone-presence branch out of the per-row loop.
+      auto rowBody = [&](int row, int64_t adjustedTime) {
         try {
-          // Use timezone-aware conversion
-          auto systemTime =
-              systemDay.count() * kMillisInDay + inputFlatVector->valueAt(row);
-
-          int64_t adjustedTime{0};
-          if (timeZone) {
-            adjustedTime =
-                (timeZone->to_local(std::chrono::milliseconds{systemTime}) %
-                 kMillisInDay)
-                    .count();
-          } else {
-            adjustedTime = systemTime % kMillisInDay;
-          }
-
           if (adjustedTime < 0) {
             adjustedTime += kMillisInDay;
           }
@@ -267,7 +346,24 @@ VectorPtr CastExpr::castFromTime(
           VELOX_USER_FAIL(
               makeErrorMessage(input, row, toType) + " " + e.what());
         }
-      });
+      };
+      if (timeZone != nullptr) {
+        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+          const auto systemTime =
+              systemDay.count() * kMillisInDay + inputFlatVector->valueAt(row);
+          const int64_t adjustedTime =
+              (timeZone->to_local(std::chrono::milliseconds{systemTime}) %
+               kMillisInDay)
+                  .count();
+          rowBody(row, adjustedTime);
+        });
+      } else {
+        applyToSelectedNoThrowLocal(context, rows, castResult, [&](int row) {
+          const auto systemTime =
+              systemDay.count() * kMillisInDay + inputFlatVector->valueAt(row);
+          rowBody(row, systemTime % kMillisInDay);
+        });
+      }
 
       buffer->setSize(rawBuffer - buffer->asMutable<char>());
       return castResult;
