@@ -123,8 +123,9 @@ bool tryStructNullsSkipWidened(
     // TINYINT (int8_t) on the wire.
     sourceBytes = 1;
     auto k = columnType->kind();
-    isWidening = (k == TypeKind::SMALLINT || k == TypeKind::INTEGER ||
-                  k == TypeKind::BIGINT);
+    isWidening =
+        (k == TypeKind::SMALLINT || k == TypeKind::INTEGER ||
+         k == TypeKind::BIGINT);
   } else if (encoding == kShortArray) {
     // SMALLINT (int16_t) on the wire.
     sourceBytes = 2;
@@ -139,8 +140,9 @@ bool tryStructNullsSkipWidened(
       return false;
     }
     auto k = columnType->kind();
-    isWidening = (k == TypeKind::BIGINT || k == TypeKind::DOUBLE ||
-                  k == TypeKind::TIMESTAMP);
+    isWidening =
+        (k == TypeKind::BIGINT || k == TypeKind::DOUBLE ||
+         k == TypeKind::TIMESTAMP);
   } else {
     return false;
   }
@@ -1368,9 +1370,10 @@ void readWideningValues(
   }
 }
 
-// Top-level widened column reader: reads the size + nulls header, then dispatches
-// to `readWideningValues<SourceT, TargetT>` to fill `result`. `result` must be a
-// FlatVector<TargetT> of the wide `columnType` (the caller ensures this).
+// Top-level widened column reader: reads the size + nulls header, then
+// dispatches to `readWideningValues<SourceT, TargetT>` to fill `result`.
+// `result` must be a FlatVector<TargetT> of the wide `columnType` (the caller
+// ensures this).
 template <typename SourceT, typename TargetT, typename Converter>
 void readWidened(
     ByteInputStream* source,
@@ -1386,7 +1389,8 @@ void readWidened(
   } else if (
       result->encoding() == VectorEncoding::Simple::CONSTANT ||
       result->encoding() == VectorEncoding::Simple::DICTIONARY) {
-    BaseVector::ensureWritable(SelectivityVector::empty(), columnType, pool, result);
+    BaseVector::ensureWritable(
+        SelectivityVector::empty(), columnType, pool, result);
   }
   const int32_t size = source->read<int32_t>();
   const auto numNewValues = sizeWithIncomingNulls(size, numIncomingNulls);
@@ -1396,12 +1400,19 @@ void readWidened(
       source, size, resultOffset, incomingNulls, numIncomingNulls, *flatResult);
   BufferPtr values = flatResult->mutableValues();
   readWideningValues<SourceT, TargetT>(
-      source, numNewValues, resultOffset, flatResult->nulls(), nullCount, values, cvt);
+      source,
+      numNewValues,
+      resultOffset,
+      flatResult->nulls(),
+      nullCount,
+      values,
+      cvt);
 }
 
 // Returns true if `encoding` is a narrow wire encoding that can be widened to
 // `columnType`, and reads + widens the column into `result`. Returns false (and
-// leaves the stream / result unchanged) if the pair is not a supported widening.
+// leaves the stream / result unchanged) if the pair is not a supported
+// widening.
 //
 // Supported widening pairs (mirrors WIDENING_CAST_MAP in
 // PushDownWidenCast.java):
@@ -1442,17 +1453,35 @@ bool tryReadWidenedColumn(
     switch (columnType->kind()) {
       case TypeKind::SMALLINT:
         readWidened<int8_t, int16_t>(
-            source, columnType, resultOffset, incomingNulls, numIncomingNulls, pool, result,
+            source,
+            columnType,
+            resultOffset,
+            incomingNulls,
+            numIncomingNulls,
+            pool,
+            result,
             [](int8_t v) { return static_cast<int16_t>(v); });
         return true;
       case TypeKind::INTEGER:
         readWidened<int8_t, int32_t>(
-            source, columnType, resultOffset, incomingNulls, numIncomingNulls, pool, result,
+            source,
+            columnType,
+            resultOffset,
+            incomingNulls,
+            numIncomingNulls,
+            pool,
+            result,
             [](int8_t v) { return static_cast<int32_t>(v); });
         return true;
       case TypeKind::BIGINT:
         readWidened<int8_t, int64_t>(
-            source, columnType, resultOffset, incomingNulls, numIncomingNulls, pool, result,
+            source,
+            columnType,
+            resultOffset,
+            incomingNulls,
+            numIncomingNulls,
+            pool,
+            result,
             [](int8_t v) { return static_cast<int64_t>(v); });
         return true;
       default:
@@ -1464,12 +1493,24 @@ bool tryReadWidenedColumn(
     switch (columnType->kind()) {
       case TypeKind::INTEGER:
         readWidened<int16_t, int32_t>(
-            source, columnType, resultOffset, incomingNulls, numIncomingNulls, pool, result,
+            source,
+            columnType,
+            resultOffset,
+            incomingNulls,
+            numIncomingNulls,
+            pool,
+            result,
             [](int16_t v) { return static_cast<int32_t>(v); });
         return true;
       case TypeKind::BIGINT:
         readWidened<int16_t, int64_t>(
-            source, columnType, resultOffset, incomingNulls, numIncomingNulls, pool, result,
+            source,
+            columnType,
+            resultOffset,
+            incomingNulls,
+            numIncomingNulls,
+            pool,
+            result,
             [](int16_t v) { return static_cast<int64_t>(v); });
         return true;
       default:
@@ -1489,13 +1530,25 @@ bool tryReadWidenedColumn(
       case TypeKind::BIGINT:
         // INTEGER -> BIGINT.
         readWidened<int32_t, int64_t>(
-            source, columnType, resultOffset, incomingNulls, numIncomingNulls, pool, result,
+            source,
+            columnType,
+            resultOffset,
+            incomingNulls,
+            numIncomingNulls,
+            pool,
+            result,
             [](int32_t v) { return static_cast<int64_t>(v); });
         return true;
       case TypeKind::DOUBLE:
         // REAL -> DOUBLE. The 4 bytes are float bits.
         readWidened<float, double>(
-            source, columnType, resultOffset, incomingNulls, numIncomingNulls, pool, result,
+            source,
+            columnType,
+            resultOffset,
+            incomingNulls,
+            numIncomingNulls,
+            pool,
+            result,
             [](float v) { return static_cast<double>(v); });
         return true;
       case TypeKind::TIMESTAMP: {
@@ -1508,11 +1561,17 @@ bool tryReadWidenedColumn(
         // 2024-01-14 16:00:00 instead of 2024-01-15 00:00:00).
         const tz::TimeZone* timeZone = opts.sessionTimezone;
         readWidened<int32_t, Timestamp>(
-            source, columnType, resultOffset, incomingNulls, numIncomingNulls, pool, result,
+            source,
+            columnType,
+            resultOffset,
+            incomingNulls,
+            numIncomingNulls,
+            pool,
+            result,
             [timeZone](int32_t days) {
               constexpr int64_t kMillisPerDay{86'400'000};
-              auto timestamp =
-                  Timestamp::fromMillis(static_cast<int64_t>(days) * kMillisPerDay);
+              auto timestamp = Timestamp::fromMillis(
+                  static_cast<int64_t>(days) * kMillisPerDay);
               if (timeZone != nullptr) {
                 timestamp.toGMT(*timeZone);
               }
