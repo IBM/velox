@@ -628,7 +628,7 @@ class ConvertDateToTimestampTest : public ::testing::Test {
 
   void SetUp() override {
     pool_ = memory::memoryManager()->addLeafPool("ConvertDateToTimestampTest");
-    stats_ = std::make_unique<ColumnReaderStatistics>();
+    stats_ = std::make_unique<SplitStats>(FileFormat::DWRF);
     params_ = std::make_unique<StubFormatParams>(*pool_, *stats_);
     scanSpec_ = std::make_unique<velox::common::ScanSpec>("test");
     scanSpec_->setProjectOut(true);
@@ -659,7 +659,7 @@ class ConvertDateToTimestampTest : public ::testing::Test {
   }
 
   std::shared_ptr<memory::MemoryPool> pool_;
-  std::unique_ptr<ColumnReaderStatistics> stats_;
+  std::unique_ptr<SplitStats> stats_;
   std::unique_ptr<StubFormatParams> params_;
   std::unique_ptr<velox::common::ScanSpec> scanSpec_;
 };
@@ -783,8 +783,7 @@ TEST_F(ConvertDateToTimestampTest, smallSubsetThenBulk) {
   const std::vector<int32_t> bulkSelected = {0, 1, 2, 3, 4, 5, 6, 7};
   const RowSet bulkRows(bulkSelected.data(), bulkSelected.size());
   VectorPtr bulkResult;
-  reader->convertDateToTimestampValues(
-      bulkRows, &bulkResult, /*isFinal=*/true);
+  reader->convertDateToTimestampValues(bulkRows, &bulkResult, /*isFinal=*/true);
   EXPECT_EQ(reader->valueSize(), sizeof(Timestamp));
   EXPECT_FALSE(reader->mayGetValues());
 
@@ -846,16 +845,7 @@ TEST_F(ConvertDateToTimestampTest, smallSubsetWithNulls) {
   // 10 source values with nulls at rows 1, 4, 7.
   const std::vector<int32_t> days = {10, 0, 20, 30, 0, 50, 60, 0, 80, 90};
   const std::vector<bool> nulls = {
-      false,
-      true,
-      false,
-      false,
-      true,
-      false,
-      false,
-      true,
-      false,
-      false};
+      false, true, false, false, true, false, false, true, false, false};
   std::vector<int32_t> rowNums(days.size());
   std::iota(rowNums.begin(), rowNums.end(), 0);
   reader->setupValuesWithNulls(days, nulls, rowNums);
