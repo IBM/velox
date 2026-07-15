@@ -137,8 +137,8 @@ void checkTypeCompatibility(
   // the file-side kind() is INTEGER in both the genuine-DATE case (DateType
   // inherits from IntegerType, kind() == INTEGER) and the post-roundtrip
   // case.  Match on kind() == INTEGER so both shapes resolve.
-  const bool isIntToTimestamp = from.kind() == TypeKind::INTEGER &&
-      kind(to) == TypeKind::TIMESTAMP;
+  const bool isIntToTimestamp =
+      from.kind() == TypeKind::INTEGER && kind(to) == TypeKind::TIMESTAMP;
 
   if (shouldRead(to) && !isIntToTimestamp &&
       !isCompatible(from.kind(), kind(to))) {
