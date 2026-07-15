@@ -1743,12 +1743,11 @@ TEST_P(PrestoSerializerTest, wideningCoercionTinyintToBigint) {
   serialize(narrow, &out, nullptr);
   // skipLexer=true because the lexer validates encoding-vs-type matching, which
   // is exactly the constraint widening intentionally crosses.
-  auto deserialized = deserialize(
-      ROW({BIGINT()}), out.str(), nullptr, /*skipLexer=*/true);
+  auto deserialized =
+      deserialize(ROW({BIGINT()}), out.str(), nullptr, /*skipLexer=*/true);
   assertEqualVectors(
       deserialized,
-      makeRowVector(
-          {makeFlatVector<int64_t>({-5, 0, 7, 42, 127, -128})}));
+      makeRowVector({makeFlatVector<int64_t>({-5, 0, 7, 42, 127, -128})}));
 }
 
 TEST_P(PrestoSerializerTest, wideningCoercionSmallintToInteger) {
@@ -1819,7 +1818,9 @@ TEST_P(PrestoSerializerTest, wideningCoercionDateToTimestamp) {
            Timestamp(-1 * Timestamp::kSecondsInDay, 0)})}));
 }
 
-TEST_P(PrestoSerializerTest, wideningCoercionDateToTimestampWithSessionTimezone) {
+TEST_P(
+    PrestoSerializerTest,
+    wideningCoercionDateToTimestampWithSessionTimezone) {
   // When the session timezone is set, the DATE -> TIMESTAMP coercion must
   // match CastExpr::castFromDate: compute wall-clock midnight, then call
   // toGMT(zone) to convert to UTC instant. Without the adjustment,
@@ -1843,8 +1844,7 @@ TEST_P(PrestoSerializerTest, wideningCoercionDateToTimestampWithSessionTimezone)
 
     std::ostringstream out;
     serialize(narrow, &out, &opts);
-    auto deserialized =
-        deserialize(ROW({TIMESTAMP()}), out.str(), &opts);
+    auto deserialized = deserialize(ROW({TIMESTAMP()}), out.str(), &opts);
 
     // Expected: same formula as CastExpr::castFromDate.
     constexpr int64_t kMillisPerDay{86'400'000};
@@ -1863,8 +1863,7 @@ TEST_P(PrestoSerializerTest, wideningCoercionDateToTimestampWithSessionTimezone)
 TEST_P(PrestoSerializerTest, wideningCoercionWithNulls) {
   // Verify the null bitmap is preserved across widening.
   auto narrow = makeRowVector({
-      makeNullableFlatVector<int32_t>(
-          {1, std::nullopt, 3, std::nullopt, 5}),
+      makeNullableFlatVector<int32_t>({1, std::nullopt, 3, std::nullopt, 5}),
   });
   std::ostringstream out;
   serialize(narrow, &out, nullptr);
