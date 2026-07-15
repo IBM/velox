@@ -2132,10 +2132,12 @@ TEST_F(ParquetReaderTest, readRealColumnAsDouble) {
   auto writeData = makeRowVector({floatData});
 
   auto fileSchema = ROW({"val"}, {REAL()});
-  parquet::WriterOptions writerOptions;
-  writerOptions.memoryPool = leafPool_.get();
+  parquet::ParquetWriterOptions writerOptions;
+  dwio::common::WriterOptions options;
+  options.formatSpecificOptions =
+      std::make_shared<parquet::ParquetWriterOptions>(writerOptions);
   auto writer = std::make_unique<facebook::velox::parquet::Writer>(
-      std::move(sink), writerOptions, rootPool_, fileSchema);
+      std::move(sink), options, rootPool_, fileSchema);
   writer->write(writeData);
   writer->close();
 
@@ -2146,11 +2148,10 @@ TEST_F(ParquetReaderTest, readRealColumnAsDouble) {
 
   std::string dataBuf(sinkPtr->data(), sinkPtr->size());
   auto file = std::make_shared<InMemoryReadFile>(std::move(dataBuf));
-  auto buffer =
-      std::make_unique<dwio::common::BufferedInput>(file, *leafPool_);
+  auto buffer = std::make_unique<dwio::common::BufferedInput>(file, *leafPool_);
   ParquetReader reader(std::move(buffer), readerOptions);
 
-  auto rowReaderOpts = getReaderOpts(requestedSchema);
+  auto rowReaderOpts = makeRowReaderOpts(requestedSchema);
   rowReaderOpts.setScanSpec(makeScanSpec(requestedSchema));
   auto rowReader = reader.createRowReader(rowReaderOpts);
 
@@ -2178,10 +2179,12 @@ TEST_F(ParquetReaderTest, readRealColumnAsDoubleWithNulls) {
   auto writeData = makeRowVector({floatData});
 
   auto fileSchema = ROW({"val"}, {REAL()});
-  parquet::WriterOptions writerOptions;
-  writerOptions.memoryPool = leafPool_.get();
+  parquet::ParquetWriterOptions writerOptions;
+  dwio::common::WriterOptions options;
+  options.formatSpecificOptions =
+      std::make_shared<parquet::ParquetWriterOptions>(writerOptions);
   auto writer = std::make_unique<facebook::velox::parquet::Writer>(
-      std::move(sink), writerOptions, rootPool_, fileSchema);
+      std::move(sink), options, rootPool_, fileSchema);
   writer->write(writeData);
   writer->close();
 
@@ -2191,11 +2194,10 @@ TEST_F(ParquetReaderTest, readRealColumnAsDoubleWithNulls) {
 
   std::string dataBuf(sinkPtr->data(), sinkPtr->size());
   auto file = std::make_shared<InMemoryReadFile>(std::move(dataBuf));
-  auto buffer =
-      std::make_unique<dwio::common::BufferedInput>(file, *leafPool_);
+  auto buffer = std::make_unique<dwio::common::BufferedInput>(file, *leafPool_);
   ParquetReader reader(std::move(buffer), readerOptions);
 
-  auto rowReaderOpts = getReaderOpts(requestedSchema);
+  auto rowReaderOpts = makeRowReaderOpts(requestedSchema);
   rowReaderOpts.setScanSpec(makeScanSpec(requestedSchema));
   auto rowReader = reader.createRowReader(rowReaderOpts);
 
@@ -2224,10 +2226,12 @@ TEST_F(ParquetReaderTest, readDateColumnAsTimestamp) {
   auto writeData = makeRowVector({dateData});
 
   auto fileSchema = ROW({"dt"}, {DATE()});
-  parquet::WriterOptions writerOptions;
-  writerOptions.memoryPool = leafPool_.get();
+  parquet::ParquetWriterOptions writerOptions;
+  dwio::common::WriterOptions options;
+  options.formatSpecificOptions =
+      std::make_shared<parquet::ParquetWriterOptions>(writerOptions);
   auto writer = std::make_unique<facebook::velox::parquet::Writer>(
-      std::move(sink), writerOptions, rootPool_, fileSchema);
+      std::move(sink), options, rootPool_, fileSchema);
   writer->write(writeData);
   writer->close();
 
@@ -2238,19 +2242,17 @@ TEST_F(ParquetReaderTest, readDateColumnAsTimestamp) {
 
   std::string dataBuf(sinkPtr->data(), sinkPtr->size());
   auto file = std::make_shared<InMemoryReadFile>(std::move(dataBuf));
-  auto buffer =
-      std::make_unique<dwio::common::BufferedInput>(file, *leafPool_);
+  auto buffer = std::make_unique<dwio::common::BufferedInput>(file, *leafPool_);
   ParquetReader reader(std::move(buffer), readerOptions);
 
-  auto rowReaderOpts = getReaderOpts(requestedSchema);
+  auto rowReaderOpts = makeRowReaderOpts(requestedSchema);
   rowReaderOpts.setScanSpec(makeScanSpec(requestedSchema));
   auto rowReader = reader.createRowReader(rowReaderOpts);
 
   // Expected: Timestamp(days * 86400, 0) for each day value.
   constexpr int64_t kSecondsPerDay = 86400;
-  auto expected = makeRowVector({makeFlatVector<Timestamp>(
-      kNumRows,
-      [kSecondsPerDay](auto row) {
+  auto expected = makeRowVector(
+      {makeFlatVector<Timestamp>(kNumRows, [kSecondsPerDay](auto row) {
         return Timestamp((row + 1) * kSecondsPerDay, 0);
       })});
 
@@ -2272,10 +2274,12 @@ TEST_F(ParquetReaderTest, readDateColumnAsTimestampWithNulls) {
   auto writeData = makeRowVector({dateData});
 
   auto fileSchema = ROW({"dt"}, {DATE()});
-  parquet::WriterOptions writerOptions;
-  writerOptions.memoryPool = leafPool_.get();
+  parquet::ParquetWriterOptions writerOptions;
+  dwio::common::WriterOptions options;
+  options.formatSpecificOptions =
+      std::make_shared<parquet::ParquetWriterOptions>(writerOptions);
   auto writer = std::make_unique<facebook::velox::parquet::Writer>(
-      std::move(sink), writerOptions, rootPool_, fileSchema);
+      std::move(sink), options, rootPool_, fileSchema);
   writer->write(writeData);
   writer->close();
 
@@ -2285,11 +2289,10 @@ TEST_F(ParquetReaderTest, readDateColumnAsTimestampWithNulls) {
 
   std::string dataBuf(sinkPtr->data(), sinkPtr->size());
   auto file = std::make_shared<InMemoryReadFile>(std::move(dataBuf));
-  auto buffer =
-      std::make_unique<dwio::common::BufferedInput>(file, *leafPool_);
+  auto buffer = std::make_unique<dwio::common::BufferedInput>(file, *leafPool_);
   ParquetReader reader(std::move(buffer), readerOptions);
 
-  auto rowReaderOpts = getReaderOpts(requestedSchema);
+  auto rowReaderOpts = makeRowReaderOpts(requestedSchema);
   rowReaderOpts.setScanSpec(makeScanSpec(requestedSchema));
   auto rowReader = reader.createRowReader(rowReaderOpts);
 
