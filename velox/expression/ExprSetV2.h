@@ -53,6 +53,11 @@ class ExprSetV2 : public ExprSet {
 
   ~ExprSetV2() override = default;
 
+  // Un-hide the base-class eval overloads (notably the 3-argument
+  // convenience wrapper) that the eval override below would otherwise
+  // hide via name lookup.
+  using ExprSet::eval;
+
   /// Drives the V2 pipeline.  Mirrors ExprSet::eval's setup work
   /// (clearSharedSubexprs, initializeAdaptiveCpuSampling, lazy field
   /// pre-loading) and then iterates V2 roots through ExprEvaluatorV2
