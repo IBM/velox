@@ -165,8 +165,8 @@ TEST_F(ExprV2AdapterTest, exprSetV2Construction) {
   EXPECT_GE(v2.runtimeStates().size(), 6u);
 
   // at() returns distinct state instances per node.
-  auto& s0 = v2.runtimeStates().at(*v2.exprs()[0]);
-  auto& s1 = v2.runtimeStates().at(*v2.exprs()[1]);
+  auto& s0 = v2.runtimeStates().at(*v2.exprsV2()[0]);
+  auto& s1 = v2.runtimeStates().at(*v2.exprsV2()[1]);
   EXPECT_NE(&s0, &s1);
 }
 
