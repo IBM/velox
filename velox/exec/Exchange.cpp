@@ -82,6 +82,9 @@ Exchange::Exchange(
           operatorCtx_->driverCtx()
               ->queryConfig()
               .minShuffleCompressionPageSizeBytes(),
+          operatorCtx_->driverCtx()
+               ->queryConfig()
+               .isExchangeChecksumEnabled(),
           // Threaded through for PushDownWidenCast DATE -> TIMESTAMP coercion.
           operatorCtx_->driverCtx()->queryConfig().adjustTimestampToTimezone()
               ? operatorCtx_->driverCtx()->queryConfig().sessionTimezone()

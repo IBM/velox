@@ -787,6 +787,7 @@ MergeExchange::MergeExchange(
           mergeExchangeNode->serdeKind(),
           std::nullopt,
           driverCtx->queryConfig().minShuffleCompressionPageSizeBytes(),
+          driverCtx->queryConfig().isExchangeChecksumEnabled(),
           // Threaded through for PushDownWidenCast DATE -> TIMESTAMP coercion.
           driverCtx->queryConfig().adjustTimestampToTimezone()
               ? driverCtx->queryConfig().sessionTimezone()
