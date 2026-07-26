@@ -751,11 +751,10 @@ TEST_F(ParquetWriterTest, writerMagic) {
 TEST_F(ParquetWriterTest, flushWhenStreamBuffersGrow) {
   constexpr int64_t kNumRows = 200;
 
-  ParquetWriterOptions writerOptions;
-  dwio::common::WriterOptions options;
+  parquet::WriterOptions writerOptions;
+  writerOptions.memoryPool = rootPool_.get();
   writerOptions.enableDictionary = false;
-  options.memoryPool = rootPool_.get();
-  options.flushPolicyFactory =
+  writerOptions.flushPolicyFactory =
       []() -> std::unique_ptr<dwio::common::FlushPolicy> {
     return std::make_unique<DefaultFlushPolicy>(
         /*rowsInRowGroup=*/1,
@@ -766,10 +765,8 @@ TEST_F(ParquetWriterTest, flushWhenStreamBuffersGrow) {
   auto sink = std::make_unique<MemorySink>(
       200 * 1024 * 1024, FileSink::Options{.pool = leafPool_.get()});
   auto* sinkPtr = sink.get();
-  options.formatSpecificOptions =
-      std::make_shared<ParquetWriterOptions>(writerOptions);
   auto writer = std::make_unique<facebook::velox::parquet::Writer>(
-      std::move(sink), options, schema);
+      std::move(sink), writerOptions, schema);
   const auto data = makeRowVector(
       {makeFlatVector<int64_t>(kNumRows, [](auto row) { return row; })});
 
@@ -786,10 +783,9 @@ TEST_F(ParquetWriterTest, flushWhenStreamBuffersGrow) {
 }
 
 TEST_F(ParquetWriterTest, flushRowGroupByBufferedSize) {
-  ParquetWriterOptions writerOptions;
-  dwio::common::WriterOptions options;
-  options.memoryPool = rootPool_.get();
-  options.flushPolicyFactory = []() {
+  parquet::WriterOptions writerOptions;
+  writerOptions.memoryPool = rootPool_.get();
+  writerOptions.flushPolicyFactory = []() {
     return std::make_unique<DefaultFlushPolicy>(
         /*rowsInRowGroup=*/10'000,
         /*bytesInRowGroup=*/200);
@@ -804,7 +800,7 @@ TEST_F(ParquetWriterTest, flushRowGroupByBufferedSize) {
               makeRowVector({makeFlatVector<int32_t>({1, 1, 1, 1, 1})}));
         }
 
-        const auto* sinkPtr = write(batches, options, writerOptions);
+        const auto* sinkPtr = write(batches, writerOptions);
         const auto reader = createReaderInMemory(*sinkPtr);
         EXPECT_EQ(expectedNumRowGroups, reader->fileMetaData().numRowGroups());
         EXPECT_EQ(expectedNumRows, reader->numberOfRows());
@@ -815,10 +811,9 @@ TEST_F(ParquetWriterTest, flushRowGroupByBufferedSize) {
 }
 
 TEST_F(ParquetWriterTest, flushEmptyRowGroup) {
-  ParquetWriterOptions writerOptions;
-  dwio::common::WriterOptions options;
-  options.memoryPool = rootPool_.get();
-  options.flushPolicyFactory = []() {
+  parquet::WriterOptions writerOptions;
+  writerOptions.memoryPool = rootPool_.get();
+  writerOptions.flushPolicyFactory = []() {
     return std::make_unique<DefaultFlushPolicy>(
         /*rowsInRowGroup=*/50,
         /*bytesInRowGroup=*/128 * 1'024 * 1'024);
@@ -830,7 +825,7 @@ TEST_F(ParquetWriterTest, flushEmptyRowGroup) {
         makeRowVector({makeFlatVector<int32_t>({1, 1, 1, 1, 1})}));
   }
 
-  const auto* sinkPtr = write(batches, options, writerOptions);
+  const auto* sinkPtr = write(batches, writerOptions);
   const auto reader = createReaderInMemory(*sinkPtr);
   EXPECT_EQ(1, reader->fileMetaData().numRowGroups());
   EXPECT_EQ(50, reader->numberOfRows());
