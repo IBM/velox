@@ -2074,12 +2074,21 @@ TEST_F(ParquetReaderTest, nullBufferSizeAcrossRowGroups) {
       return std::make_unique<DefaultFlushPolicy>(
           kSecondRowGroupRows, kBytesInRowGroup);
     };
-    auto* sink = write(
-        {makeRowVector({"a"}, {columnData->slice(0, kFirstRowGroupRows)}),
-         makeRowVector(
-             {"a"},
-             {columnData->slice(kFirstRowGroupRows, kSecondRowGroupRows)})},
-        writerOptions);
+    // Flush between the two batches so each becomes its own row group; the
+    // writer otherwise repacks rows into fixed-size row groups.
+    auto memSink = std::make_unique<dwio::common::MemorySink>(
+        200 * 1024 * 1024,
+        dwio::common::FileSink::Options{.pool = leafPool_.get()});
+    auto* sink = memSink.get();
+    auto writer = std::make_unique<facebook::velox::parquet::Writer>(
+        std::move(memSink), writerOptions, rowType);
+    writer->write(
+        makeRowVector({"a"}, {columnData->slice(0, kFirstRowGroupRows)}));
+    writer->flush();
+    writer->write(makeRowVector(
+        {"a"}, {columnData->slice(kFirstRowGroupRows, kSecondRowGroupRows)}));
+    writer->close();
+    writers_.push_back(std::move(writer));
     auto [reader, rowReader] = readerBuilder(*sink, rowType).build();
     ASSERT_EQ(reader->fileMetaData().numRowGroups(), 2);
     ASSERT_EQ(reader->fileMetaData().rowGroup(0).numRows(), kFirstRowGroupRows);
