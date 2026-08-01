@@ -404,7 +404,12 @@ void PageReader::prepareDataPageV2(const PageHeader& pageHeader, int64_t row) {
         *pageHeader.uncompressed_page_size() - levelsSize);
   }
   if (row == kRepDefOnly) {
-    skipBytes(bytes, inputStream_.get(), bufferStart_, bufferEnd_);
+    // The page's compressed bytes (levels + values) were already consumed
+    // above via readBytes(), so no further skip is needed here. An extra
+    // skipBytes(bytes, ...) call used to double-consume the stream/buffer,
+    // making PageReader believe the chunk was exhausted one page early and
+    // fail with a spurious "Empty buffer returned when refilling" error
+    // when reading the next page's header.
     return;
   }
 
