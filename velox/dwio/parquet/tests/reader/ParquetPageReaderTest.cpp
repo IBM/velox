@@ -591,3 +591,68 @@ TEST_F(ParquetPageReaderTest, refillSpansMultipleStreamChunks) {
   EXPECT_EQ(*second.type(), thrift::PageType::DATA_PAGE);
   EXPECT_EQ(*second.data_page_header()->num_values(), 11);
 }
+
+// Regression test for a bug in prepareDataPageV2() where the row ==
+// kRepDefOnly branch called skipBytes() a second time on data already
+// consumed by readBytes() a few lines above. When a column chunk holds
+// multiple DATA_PAGE_V2 pages and the first page's compressed_page_size
+// exceeds the bytes remaining for the rest of the chunk, that extra skip
+// drains the underlying stream before the real end of the chunk, making
+// the next readPageHeader() fail as if the stream had been exhausted
+// early.
+TEST_F(ParquetPageReaderTest, repDefOnlySkipDoesNotDoubleConsumeDataPageV2) {
+  constexpr int32_t kFirstDefineLength = 4;
+  constexpr int32_t kFirstPageSize = 40;
+  constexpr int32_t kFirstNumValues = 5;
+  auto firstHeader = createDataPageV2Header(
+      /*uncompressedSize=*/kFirstPageSize,
+      /*compressedSize=*/kFirstPageSize,
+      kFirstNumValues,
+      kFirstDefineLength,
+      /*repetitionLevelsByteLength=*/0);
+  std::string firstHeaderBytes = serializePageHeader(firstHeader);
+  std::string firstPageData(kFirstPageSize, '\0');
+
+  constexpr int32_t kSecondDefineLength = 2;
+  constexpr int32_t kSecondPageSize = 8;
+  constexpr int32_t kSecondNumValues = 3;
+  auto secondHeader = createDataPageV2Header(
+      /*uncompressedSize=*/kSecondPageSize,
+      /*compressedSize=*/kSecondPageSize,
+      kSecondNumValues,
+      kSecondDefineLength,
+      /*repetitionLevelsByteLength=*/0);
+  std::string secondHeaderBytes = serializePageHeader(secondHeader);
+  std::string secondPageData(kSecondPageSize, '\0');
+
+  // The whole point of the test is that the first page's compressed size
+  // is larger than everything left in the chunk after it (the second
+  // page's header + data). This is what made the old, buggy extra
+  // skipBytes() call run past the end of the underlying stream instead of
+  // just re-consuming already-buffered bytes.
+  ASSERT_GT(
+      kFirstPageSize, secondHeaderBytes.size() + secondPageData.size());
+
+  std::string fullData = firstHeaderBytes + firstPageData +
+      secondHeaderBytes + secondPageData;
+  auto inputStream = std::make_unique<SeekableArrayInputStream>(
+      fullData.data(), fullData.size());
+
+  dwio::common::ColumnReaderStatistics stats;
+  auto pageReader = std::make_unique<PageReader>(
+      std::move(inputStream),
+      *leafPool_,
+      common::CompressionKind::CompressionKind_NONE,
+      fullData.size(),
+      stats,
+      nullptr,
+      /*maxRepeat=*/0,
+      /*maxDefine=*/1);
+
+  // decodeRepDefs() drives preloadRepDefs(), which walks every page in the
+  // chunk with row == kRepDefOnly. Before the fix, this threw ("Empty
+  // buffer returned when refilling" style errors) once it tried to read
+  // the second page's header, because the first page's redundant
+  // skipBytes() call had already consumed those bytes (and then some).
+  EXPECT_NO_THROW(pageReader->decodeRepDefs(kFirstNumValues + kSecondNumValues));
+}
