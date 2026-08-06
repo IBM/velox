@@ -1340,7 +1340,7 @@ class BigintValuesUsingBitmask final : public Filter {
 /// IN-list filter for integral types backed by a bloom filter, which allows
 /// false positives. May also hold an exact filter, such as x <> 0, that values
 /// must pass in addition to the bloom filter.
-class BigintValuesUsingBloomFilter final : public Filter {
+class BigintValuesUsingBloomFilter : public Filter {
  public:
   static int64_t numBlocks(int64_t capacity) {
     return SplitBlockBloomFilter::numBlocks(capacity, 0.01);
@@ -1351,7 +1351,7 @@ class BigintValuesUsingBloomFilter final : public Filter {
         blocks_(numBlocks(capacity)),
         filter_(blocks_) {}
 
-  bool testInt64(int64_t value) const final {
+  bool testInt64(int64_t value) const override {
     return filter_.mayContain(hash(value)) &&
         (!exact_ || exact_->testInt64(value));
   }
@@ -1368,7 +1368,7 @@ class BigintValuesUsingBloomFilter final : public Filter {
     return genericTestValues(x, [this](int16_t x) { return testInt64(x); });
   }
 
-  bool testInt64Range(int64_t min, int64_t max, bool hasNull) const final {
+  bool testInt64Range(int64_t min, int64_t max, bool hasNull) const override {
     return !exact_ || exact_->testInt64Range(min, max, hasNull);
   }
 
