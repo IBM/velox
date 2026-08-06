@@ -316,15 +316,22 @@ void registerCudf() {
   cudaFree(nullptr); // Initialize CUDA context at startup
 
   const std::string mrMode = CudfConfig::getInstance().memoryResource;
-  auto mr = cudf_velox::createMemoryResource(
+  auto base = cudf_velox::createMemoryResource(
       mrMode, CudfConfig::getInstance().memoryPercent);
-  cudf::set_current_device_resource(mr);
-  mr_ = std::move(mr);
+  // Wrap the device resource in a statistics adaptor so we can report the live
+  // (currently-allocated) GPU bytes. The RMM pool retains VRAM between queries,
+  // so cudaMemGetInfo alone cannot tell free-for-reuse pool from active work.
+  statsMr_.emplace(std::move(base));
+  // statistics_resource_adaptor is a cuda::mr::shared_resource: this copy shares
+  // the same counter state, so allocations via mr_/output_mr_ are counted too.
+  mr_ = statsMr_.value();
+  cudf::set_current_device_resource(mr_.value());
 
   const auto& outputMrMode = CudfConfig::getInstance().outputMemoryResource;
   if (!outputMrMode.empty() && outputMrMode != mrMode) {
-    output_mr_ = cudf_velox::createMemoryResource(
-        outputMrMode, CudfConfig::getInstance().memoryPercent);
+    outputStatsMr_.emplace(cudf_velox::createMemoryResource(
+        outputMrMode, CudfConfig::getInstance().memoryPercent));
+    output_mr_ = outputStatsMr_.value();
   } else {
     output_mr_ = mr_;
   }
