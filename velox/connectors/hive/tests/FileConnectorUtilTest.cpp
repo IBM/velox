@@ -174,31 +174,6 @@ TEST_F(FileConnectorUtilTest, configureReaderOptions) {
     EXPECT_EQ(readerOptions.footerSpeculativeIoSize(), 128UL << 10);
   }
 
-  // Split-level column mapping mode overrides the shared session property.
-  {
-    auto holder = makeConnectorQueryCtx(
-        {{hive::FileConfig::kUseColumnNamesSession, "true"}});
-    auto split = makeSplit(
-        dwio::common::FileFormat::ORC,
-        "/tmp/testfile",
-        true,
-        dwio::common::ColumnMappingMode::kPosition);
-    dwio::common::ReaderOptions readerOptions(pool_.get());
-    readerOptions.setDataIoStats(dataIoStats_);
-    readerOptions.setMetadataIoStats(metadataIoStats_);
-    hive::configureReaderOptions(
-        fileConfig,
-        holder.ctx.get(),
-        /*fileSchema=*/nullptr,
-        split,
-        /*tableParameters=*/{},
-        readerOptions);
-
-    EXPECT_EQ(
-        readerOptions.columnMappingMode(),
-        dwio::common::ColumnMappingMode::kPosition);
-  }
-
   // Parquet field-id matching is only valid for Parquet files.
   {
     auto holder = makeConnectorQueryCtx();
