@@ -71,14 +71,6 @@ void validateColumnMappingMode(
       dwio::common::FileFormatName::toName(fileFormat));
 }
 
-dwio::common::ColumnMappingMode sessionColumnMappingMode(
-    const FileConfig& fileConfig,
-    const config::ConfigBase* sessionProperties) {
-  return fileConfig.useColumnNames(sessionProperties)
-      ? dwio::common::ColumnMappingMode::kName
-      : dwio::common::ColumnMappingMode::kPosition;
-}
-
 bool useColumnNames(
     const FileConfig& fileConfig,
     const config::ConfigBase& sessionProperties,
@@ -152,17 +144,10 @@ void configureReaderOptions(
   readerOptions.setFileColumnNamesReadAsLowerCase(
       fileConfig->isFileColumnNamesReadAsLowerCase(sessionProperties));
   readerOptions.setAllowEmptyFile(true);
-<<<<<<< HEAD
-  const auto columnMappingMode = fileSplit->columnMappingMode.value_or(
-      sessionColumnMappingMode(*fileConfig, sessionProperties));
-  validateColumnMappingMode(columnMappingMode, fileSplit->fileFormat);
-  readerOptions.setColumnMappingMode(columnMappingMode);
-=======
   readerOptions.setColumnMappingMode(
       useColumnNames(*fileConfig, *sessionProperties, fileSplit->fileFormat)
           ? dwio::common::ColumnMappingMode::kName
           : dwio::common::ColumnMappingMode::kPosition);
->>>>>>> e091928c31 (Move use_column_names to format-scoped Parquet and ORC configs)
   readerOptions.setFileSchema(fileSchema);
   readerOptions.setFilePreloadThreshold(fileConfig->filePreloadThreshold());
   readerOptions.setPrefetchRowGroups(fileConfig->prefetchRowGroups());

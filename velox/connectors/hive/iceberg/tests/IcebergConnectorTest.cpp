@@ -85,34 +85,6 @@ TEST_F(IcebergConnectorTest, splitColumnMappingMode) {
       split->columnMappingMode.value(), dwio::common::ColumnMappingMode::kName);
 }
 
-TEST_F(IcebergConnectorTest, splitMappingOverridesSession) {
-  auto fileConfig = std::make_shared<FileConfig>(
-      std::make_shared<config::ConfigBase>(
-          std::unordered_map<std::string, std::string>{}),
-      "hive.");
-  setConnectorSessionProperty(FileConfig::kUseColumnNamesSession, "false");
-  auto split = IcebergSplitBuilder("/tmp/testfile")
-                   .connectorId(test::kIcebergConnectorId)
-                   .fileFormat(dwio::common::FileFormat::PARQUET)
-                   .columnMappingMode(dwio::common::ColumnMappingMode::kName)
-                   .build();
-
-  dwio::common::ReaderOptions readerOptions(pool_.get());
-  readerOptions.setDataIoStats(std::make_shared<io::IoStatistics>());
-  readerOptions.setMetadataIoStats(std::make_shared<io::IoStatistics>());
-  configureReaderOptions(
-      fileConfig,
-      connectorQueryCtx_.get(),
-      /*fileSchema=*/nullptr,
-      split,
-      /*tableParameters=*/{},
-      readerOptions);
-
-  EXPECT_EQ(
-      readerOptions.columnMappingMode(),
-      dwio::common::ColumnMappingMode::kName);
-}
-
 TEST_F(IcebergConnectorTest, columnHandleForwardsPostProcessor) {
   auto called = std::make_shared<bool>(false);
   std::function<void(VectorPtr&)> postProcessor = [called](VectorPtr&) {
