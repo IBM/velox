@@ -454,6 +454,16 @@ class QueryConfig {
       false,
       "Flush PartitionedOutput rows eagerly without buffering.")
 
+  /// If true, use OptimizedHashPartitionFunction in place of
+  /// HashPartitionFunction.
+  VELOX_QUERY_CONFIG(
+      kOptimizedHashPartitionFunctionEnabled,
+      optimizedHashPartitionFunctionEnabled,
+      "optimized_hash_partition_function_enabled",
+      bool,
+      false,
+      "Use OptimizedHashPartitionFunction instead of HashPartitionFunction.")
+
   /// The maximum number of bytes to buffer in PartitionedOutput operator to
   /// avoid creating tiny SerializedPages.
   VELOX_QUERY_CONFIG(
@@ -1512,6 +1522,14 @@ class QueryConfig {
       "With admission-controlled dispatch this cap actually bounds process-wide "
       "in-flight rows per tier; the adaptive limiter shrinks from here toward "
       "rpc.ratelimiter.min_limit under overload.")
+
+  VELOX_QUERY_CONFIG(
+      kOptimizedPartitionedOutputEnabled,
+      optimizedPartitionedOutputEnabled,
+      "optimized_repartitioning",
+      bool,
+      false,
+      "Enable OptimizedPartitionedOutput operator.");
 
   // --- Hand-written accessors for properties that need custom logic ---
 

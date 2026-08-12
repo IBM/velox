@@ -15,11 +15,18 @@
  */
 #pragma once
 
-#include <velox/exec/HashBitRange.h>
-#include <velox/exec/VectorHasher.h>
 #include "velox/core/PlanNode.h"
+#include "velox/exec/HashBitRange.h"
+#include "velox/exec/VectorHasher.h"
 
 namespace facebook::velox::exec {
+
+class HashPartitionFunctionBase : public core::PartitionFunction {
+ public:
+  ~HashPartitionFunctionBase() override = default;
+
+  virtual int numPartitions() const = 0;
+};
 
 /// Calculates partition number for each row of the specified vector using a
 /// hash function. The constructor with hashBitRange parameter requires both
@@ -27,7 +34,9 @@ namespace facebook::velox::exec {
 /// numPartitions allows the keyChannels argument to be empty. If keyChannels is
 /// empty, then the resulting partition number of partition() will always be
 /// zero.
-class HashPartitionFunction : public core::PartitionFunction {
+/// Extends PartitionFunction with access to the configured number of
+/// partitions.
+class HashPartitionFunction : public HashPartitionFunctionBase {
  public:
   HashPartitionFunction(
       bool localExchange,
@@ -48,7 +57,7 @@ class HashPartitionFunction : public core::PartitionFunction {
       const RowVector& input,
       std::vector<uint32_t>& partitions) override;
 
-  int numPartitions() const {
+  int numPartitions() const override {
     return numPartitions_;
   }
 
@@ -85,7 +94,8 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
 
   std::unique_ptr<core::PartitionFunction> create(
       int numPartitions,
-      bool localExchange) const override;
+      bool localExchange,
+      bool useOptimizedPartitionFunction = false) const override;
 
   std::string toString() const override;
 
@@ -100,4 +110,22 @@ class HashPartitionFunctionSpec : public core::PartitionFunctionSpec {
   const std::vector<column_index_t> keyChannels_;
   const std::vector<VectorPtr> constValues_;
 };
+
+/// Creates either HashPartitionFunction or OptimizedHashPartitionFunction
+/// based on 'useOptimizedPartitionFunction'.
+std::unique_ptr<HashPartitionFunctionBase> createHashPartitionFunction(
+    bool localExchange,
+    int numPartitions,
+    const RowTypePtr& inputType,
+    const std::vector<column_index_t>& keyChannels,
+    const std::vector<VectorPtr>& constValues = {},
+    bool useOptimizedPartitionFunction = false);
+
+std::unique_ptr<HashPartitionFunctionBase> createHashPartitionFunction(
+    const HashBitRange& hashBitRange,
+    const RowTypePtr& inputType,
+    const std::vector<column_index_t>& keyChannels,
+    const std::vector<VectorPtr>& constValues = {},
+    bool useOptimizedPartitionFunction = false);
+
 } // namespace facebook::velox::exec

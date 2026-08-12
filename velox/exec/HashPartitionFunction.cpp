@@ -13,8 +13,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <velox/exec/HashPartitionFunction.h>
-#include <velox/exec/VectorHasher.h>
+#include "velox/exec/HashPartitionFunction.h"
+
+#include "velox/exec/OptimizedHashPartitionFunction.h"
+#include "velox/exec/VectorHasher.h"
 
 #include "velox/common/base/XxHashInline.h"
 
@@ -122,9 +124,15 @@ std::optional<uint32_t> HashPartitionFunction::partition(
 
 std::unique_ptr<core::PartitionFunction> HashPartitionFunctionSpec::create(
     int numPartitions,
-    bool localExchange) const {
-  return std::make_unique<exec::HashPartitionFunction>(
-      localExchange, numPartitions, inputType_, keyChannels_, constValues_);
+    bool localExchange,
+    bool useOptimizedPartitionFunction) const {
+  return createHashPartitionFunction(
+      localExchange,
+      numPartitions,
+      inputType_,
+      keyChannels_,
+      constValues_,
+      useOptimizedPartitionFunction);
 }
 
 std::string HashPartitionFunctionSpec::toString() const {
@@ -178,5 +186,34 @@ core::PartitionFunctionSpecPtr HashPartitionFunctionSpec::deserialize(
   }
   return std::make_shared<HashPartitionFunctionSpec>(
       ISerializable::deserialize<RowType>(obj["inputType"]), keys, constValues);
+}
+
+std::unique_ptr<HashPartitionFunctionBase> createHashPartitionFunction(
+    bool localExchange,
+    int numPartitions,
+    const RowTypePtr& inputType,
+    const std::vector<column_index_t>& keyChannels,
+    const std::vector<VectorPtr>& constValues,
+    bool useOptimizedPartitionFunction) {
+  if (useOptimizedPartitionFunction) {
+    return std::make_unique<OptimizedHashPartitionFunction>(
+        localExchange, numPartitions, inputType, keyChannels, constValues);
+  }
+  return std::make_unique<HashPartitionFunction>(
+      localExchange, numPartitions, inputType, keyChannels, constValues);
+}
+
+std::unique_ptr<HashPartitionFunctionBase> createHashPartitionFunction(
+    const HashBitRange& hashBitRange,
+    const RowTypePtr& inputType,
+    const std::vector<column_index_t>& keyChannels,
+    const std::vector<VectorPtr>& constValues,
+    bool useOptimizedPartitionFunction) {
+  if (useOptimizedPartitionFunction) {
+    return std::make_unique<OptimizedHashPartitionFunction>(
+        hashBitRange, inputType, keyChannels, constValues);
+  }
+  return std::make_unique<HashPartitionFunction>(
+      hashBitRange, inputType, keyChannels, constValues);
 }
 } // namespace facebook::velox::exec

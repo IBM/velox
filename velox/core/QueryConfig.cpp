@@ -90,6 +90,7 @@ const std::vector<config::ConfigProperty>& QueryConfig::registeredProperties() {
 
     // Partitioned output.
     VELOX_REGISTER_QUERY_CONFIG(kPartitionedOutputEagerFlush);
+    VELOX_REGISTER_QUERY_CONFIG(kOptimizedHashPartitionFunctionEnabled);
     VELOX_REGISTER_QUERY_CONFIG(kMaxPartitionedOutputBufferSize);
     VELOX_REGISTER_QUERY_CONFIG(kMaxOutputBufferSize);
 

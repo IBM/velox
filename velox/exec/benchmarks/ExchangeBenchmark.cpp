@@ -17,7 +17,6 @@
 #include <folly/init/Init.h>
 
 #include "velox/core/QueryConfig.h"
-#include "velox/dwio/common/tests/utils/BatchMaker.h"
 #include "velox/exec/Exchange.h"
 #include "velox/exec/PlanNodeStats.h"
 #include "velox/exec/tests/utils/AssertQueryBuilder.h"
@@ -29,18 +28,15 @@
 #include "velox/serializers/PrestoSerializer.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
-DEFINE_int32(width, 16, "Number of parties in shuffle");
 DEFINE_int32(task_width, 4, "Number of threads in each task in shuffle");
 
-DEFINE_int32(num_local_tasks, 8, "Number of concurrent local shuffles");
-DEFINE_int32(num_local_repeat, 8, "Number of repeats of local exchange query");
-DEFINE_int32(flat_batch_mb, 1, "MB in a 10k row flat batch.");
-DEFINE_int64(
-    local_exchange_buffer_mb,
-    32,
-    "task-wide buffer in local exchange");
 DEFINE_int64(exchange_buffer_mb, 32, "task-wide buffer in remote exchange");
-DEFINE_int32(dict_pct, 0, "Percentage of columns wrapped in dictionary");
+DEFINE_int32(
+    dict_pct,
+    0,
+    "Percentage of vectors per column wrapped in dictionary encoding. "
+    "Applied independently to each column across all generated row vectors "
+    "and recursively to nested children.");
 // Add the following definitions to allow Clion runs
 DEFINE_bool(gtest_color, false, "");
 DEFINE_string(gtest_filter, "*", "");
@@ -50,8 +46,8 @@ DEFINE_string(gtest_filter, "*", "");
 /// that 1. shuffles a constant input in each of n workers, sending
 /// each partition to n consumers in the next stage. The consumers
 /// count the rows and send the count to a final single task stage
-/// that returns the sum of the counts. The sum is expected to be n *
-/// number of rows in constant input.
+/// that returns the sum of the counts. The sum is expected to be
+/// n * number of rows in constant input.
 
 using namespace facebook::velox;
 using namespace facebook::velox::exec;
@@ -59,70 +55,446 @@ using namespace facebook::velox::test;
 
 namespace {
 
-struct LocalPartitionWaitStats {
-  int64_t totalProducerWaitMs = 0;
-  int64_t totalConsumerWaitMs = 0;
-  std::vector<RuntimeMetric> consumerWaitMs;
-  std::vector<RuntimeMetric> producerWaitMs;
-  std::vector<int64_t> wallMs;
-};
-
-void sortByMax(std::vector<RuntimeMetric>& metrics) {
-  std::sort(
-      metrics.begin(),
-      metrics.end(),
-      [](const RuntimeMetric& left, const RuntimeMetric& right) {
-        return left.max > right.max;
-      });
+bool shouldWrapVector(
+    int32_t vectorIndex,
+    int32_t numVectors,
+    int32_t dictPct) {
+  VELOX_CHECK_GE(dictPct, 0);
+  VELOX_CHECK_LE(dictPct, 100);
+  return dictPct > 0 && (vectorIndex * 100) / numVectors < dictPct;
 }
 
-void sortByAndPrintMax(
-    const char* title,
-    int64_t total,
-    std::vector<RuntimeMetric>& metrics) {
-  sortByMax(metrics);
-  VELOX_CHECK(!metrics.empty());
-  std::cout << title << "\n Total " << succinctNanos(total)
-            << "\n Max: " << metrics.front().toString()
-            << "\n Median: " << metrics[metrics.size() / 2].toString()
-            << "\n Min: " << metrics.back().toString() << std::endl;
+void wrapDictionaryRecursive(VectorPtr& vector) {
+  if (!vector) {
+    return;
+  }
+
+  switch (vector->encoding()) {
+    case VectorEncoding::Simple::ROW: {
+      auto row = vector->as<RowVector>();
+      for (auto i = 0; i < row->childrenSize(); ++i) {
+        wrapDictionaryRecursive(row->childAt(i));
+      }
+      break;
+    }
+    case VectorEncoding::Simple::ARRAY: {
+      auto array = vector->as<ArrayVector>();
+      auto elements = array->elements();
+      wrapDictionaryRecursive(elements);
+      array->setElements(std::move(elements));
+      break;
+    }
+    case VectorEncoding::Simple::MAP: {
+      auto map = vector->as<MapVector>();
+      auto keys = map->mapKeys();
+      auto values = map->mapValues();
+      wrapDictionaryRecursive(keys);
+      wrapDictionaryRecursive(values);
+      map->setKeysAndValues(std::move(keys), std::move(values));
+      break;
+    }
+    default:
+      break;
+  }
+
+  auto indices = facebook::velox::test::makeIndices(
+      vector->size(), [](auto row) { return row; }, vector->pool());
+  vector =
+      BaseVector::wrapInDictionary(nullptr, indices, vector->size(), vector);
+}
+
+struct ExchangeRunStats {
+  int64_t wallUs = 0;
+  PlanNodeStats partitionedOutputStats;
+  PlanNodeStats exchangeStats;
+};
+
+enum class ExchangeMode {
+  kNormal,
+  kOptimized,
+};
+
+/// Column element type dimension for simple-schema exchange benchmarks.
+enum class SimpleColType {
+  kBoolean,
+  kTinyint,
+  kInteger,
+  kBigint,
+  kHugeint,
+  kLongDecimal,
+  kDouble,
+  kVarchar,
+};
+
+TypePtr simpleColTypeToType(SimpleColType colType) {
+  switch (colType) {
+    case SimpleColType::kBoolean:
+      return BOOLEAN();
+    case SimpleColType::kTinyint:
+      return TINYINT();
+    case SimpleColType::kInteger:
+      return INTEGER();
+    case SimpleColType::kBigint:
+      return BIGINT();
+    case SimpleColType::kHugeint:
+      return HUGEINT();
+    case SimpleColType::kLongDecimal:
+      return DECIMAL(20, 3);
+    case SimpleColType::kDouble:
+      return DOUBLE();
+    case SimpleColType::kVarchar:
+      return VARCHAR();
+  }
+  VELOX_UNREACHABLE();
+}
+
+std::string simpleColTypeName(SimpleColType colType) {
+  switch (colType) {
+    case SimpleColType::kBoolean:
+      return "Boolean";
+    case SimpleColType::kTinyint:
+      return "Tinyint";
+    case SimpleColType::kInteger:
+      return "Integer";
+    case SimpleColType::kBigint:
+      return "Bigint";
+    case SimpleColType::kHugeint:
+      return "Hugeint";
+    case SimpleColType::kLongDecimal:
+      return "LongDecimal";
+    case SimpleColType::kDouble:
+      return "Double";
+    case SimpleColType::kVarchar:
+      return "Varchar";
+  }
+  VELOX_UNREACHABLE();
+}
+
+enum class ExchangeInputKind {
+  kDeep10K,
+  kDeep50,
+  kStruct1K,
+};
+
+struct ExchangeInputSpec {
+  std::string name;
+  RowTypePtr type;
+  int32_t numVectors;
+  int32_t rowsPerVector;
+};
+
+struct ExchangeBenchmarkResult {
+  std::string datasetName;
+  ExchangeMode mode;
+  ExchangeRunStats stats;
+};
+
+std::vector<ExchangeBenchmarkResult> benchmarkResults;
+
+std::string modeName(ExchangeMode mode) {
+  switch (mode) {
+    case ExchangeMode::kNormal:
+      return "normal";
+    case ExchangeMode::kOptimized:
+      return "optimized";
+  }
+
+  VELOX_UNREACHABLE();
+}
+
+/// Creates a simple row type with `numCols` columns all of type `colType`.
+RowTypePtr makeSimpleType(const TypePtr& colType, int32_t numCols) {
+  std::vector<std::string> names;
+  std::vector<TypePtr> types;
+  names.reserve(numCols);
+  types.reserve(numCols);
+  for (int32_t i = 0; i < numCols; ++i) {
+    names.push_back(fmt::format("c{}", i));
+    types.push_back(colType);
+  }
+  return ROW(std::move(names), std::move(types));
+}
+
+RowTypePtr makeStructType() {
+  return ROW(
+      {{"c0", BIGINT()},
+       {"r1",
+        ROW(
+            {{"k2", BIGINT()},
+             {"r2",
+              ROW(
+                  {{"i1", BIGINT()},
+                   {"i2", BIGINT()},
+                   {"r3",
+                    ROW(
+                        {{"s3", VARCHAR()},
+                         {"i5", INTEGER()},
+                         {"d5", DOUBLE()},
+                         {"b5", BOOLEAN()},
+                         {"a5", ARRAY(TINYINT())}})}})}})}});
+}
+
+RowTypePtr makeDeepType() {
+  return ROW(
+      {{"c0", BIGINT()},
+       {"long_array_val", ARRAY(ARRAY(BIGINT()))},
+       {"array_val", ARRAY(VARCHAR())},
+       {"struct_val", ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
+       {"map_val",
+        MAP(VARCHAR(),
+            MAP(BIGINT(),
+                ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))}});
+}
+
+ExchangeInputSpec makeInputSpec(ExchangeInputKind kind) {
+  switch (kind) {
+    case ExchangeInputKind::kDeep10K:
+      return {"Deep10K", makeDeepType(), 10, 10000};
+    case ExchangeInputKind::kDeep50:
+      return {"Deep50", makeDeepType(), 2000, 50};
+    case ExchangeInputKind::kStruct1K:
+      return {"Struct1K", makeStructType(), 100, 1000};
+  }
+
+  VELOX_UNREACHABLE();
+}
+
+ExchangeInputSpec makeInputSpec(SimpleColType colType, int32_t numCols) {
+  return {
+      fmt::format("10K_{}_col{}", simpleColTypeName(colType), numCols),
+      makeSimpleType(simpleColTypeToType(colType), numCols),
+      10,
+      10'000};
+}
+
+std::string formatStat(const ExchangeRunStats* stats, auto formatter) {
+  if (stats == nullptr) {
+    return "N/A";
+  }
+  return formatter(*stats);
+}
+
+void printAllExchangeStats() {
+  struct PairedStats {
+    const ExchangeRunStats* normal = nullptr;
+    const ExchangeRunStats* optimized = nullptr;
+  };
+
+  std::vector<std::string> datasetOrder;
+  std::unordered_map<std::string, PairedStats> groupedStats;
+  for (const auto& result : benchmarkResults) {
+    auto [it, inserted] =
+        groupedStats.try_emplace(result.datasetName, PairedStats{});
+    if (inserted) {
+      datasetOrder.push_back(result.datasetName);
+    }
+    if (result.mode == ExchangeMode::kNormal) {
+      it->second.normal = &result.stats;
+    } else {
+      it->second.optimized = &result.stats;
+    }
+  }
+
+  for (const auto& datasetName : datasetOrder) {
+    const auto statsIt = groupedStats.find(datasetName);
+    VELOX_CHECK(statsIt != groupedStats.end());
+    const auto& paired = statsIt->second;
+    std::cout << "--------------------" << datasetName << "--------------------"
+              << std::endl;
+    std::cout << "Wall Time (ms) | normal: "
+              << formatStat(
+                     paired.normal,
+                     [](const ExchangeRunStats& stats) {
+                       return succinctMicros(stats.wallUs);
+                     })
+              << " | optimized: "
+              << formatStat(
+                     paired.optimized,
+                     [](const ExchangeRunStats& stats) {
+                       return succinctMicros(stats.wallUs);
+                     })
+              << std::endl;
+    std::cout << "Normal" << std::endl
+              << " - PartitionedOutput: "
+              << formatStat(
+                     paired.normal,
+                     [](const ExchangeRunStats& stats) {
+                       return stats.partitionedOutputStats.toString();
+                     })
+              << std::endl
+              << " - Exchange: "
+              << formatStat(
+                     paired.normal,
+                     [](const ExchangeRunStats& stats) {
+                       return stats.exchangeStats.toString();
+                     })
+              << std::endl;
+    std::cout << "Optimized" << std::endl
+              << " - PartitionedOutput: "
+              << formatStat(
+                     paired.optimized,
+                     [](const ExchangeRunStats& stats) {
+                       return stats.partitionedOutputStats.toString();
+                     })
+              << std::endl
+              << " - Exchange: "
+              << formatStat(
+                     paired.optimized,
+                     [](const ExchangeRunStats& stats) {
+                       return stats.exchangeStats.toString();
+                     })
+              << std::endl;
+  }
+}
+
+template <typename Fn>
+ExchangeRunStats runBenchmarkIterations(unsigned int iters, Fn&& runOnce) {
+  ExchangeRunStats stats;
+  while (iters--) {
+    stats = runOnce();
+  }
+  return stats;
 }
 
 class ExchangeBenchmark : public VectorTestBase {
  public:
+  /// Creates a single flat column of `type` with `numRows` rows.
+  /// Approximately `nullPct` percent of rows are set to null, distributed
+  /// uniformly (row % 100 < nullPct). Non-null values are sequential integers
+  /// cast to the native type. VARCHAR values alternate between inline and
+  /// non-inline strings, and `vectorIndex` helps constant columns cover both
+  /// cases.
+  VectorPtr makeColumn(
+      const TypePtr& type,
+      int32_t numRows,
+      int32_t nullPct,
+      int32_t vectorIndex = 0) {
+    std::function<bool(vector_size_t)> isNull;
+    if (nullPct == 100) {
+      isNull = [](auto) { return true; };
+    } else if (nullPct > 0) {
+      isNull = [nullPct](vector_size_t row) { return (row % 100) < nullPct; };
+    }
+
+    switch (type->kind()) {
+      case TypeKind::BOOLEAN:
+        return makeFlatVector<bool>(
+            numRows, [](auto row) { return row % 2 == 0; }, isNull);
+      case TypeKind::TINYINT:
+        return makeFlatVector<int8_t>(
+            numRows, [](auto row) { return static_cast<int8_t>(row); }, isNull);
+      case TypeKind::SMALLINT:
+        return makeFlatVector<int16_t>(
+            numRows,
+            [](auto row) { return static_cast<int16_t>(row); },
+            isNull);
+      case TypeKind::INTEGER:
+        return makeFlatVector<int32_t>(
+            numRows, [](auto row) { return row; }, isNull);
+      case TypeKind::BIGINT:
+        // Handles plain BIGINT and short-decimal columns (DECIMAL(p,s), p≤18).
+        return makeFlatVector<int64_t>(
+            numRows,
+            [](auto row) { return static_cast<int64_t>(row); },
+            isNull,
+            type);
+      case TypeKind::REAL:
+        return makeFlatVector<float>(
+            numRows, [](auto row) { return static_cast<float>(row); }, isNull);
+      case TypeKind::DOUBLE:
+        return makeFlatVector<double>(
+            numRows, [](auto row) { return static_cast<double>(row); }, isNull);
+      case TypeKind::HUGEINT:
+        // Handles long-decimal columns (DECIMAL(p,s), p>18).
+        return makeFlatVector<int128_t>(
+            numRows,
+            [](auto row) { return static_cast<int128_t>(row); },
+            isNull,
+            type);
+      case TypeKind::VARCHAR:
+        return makeFlatVector<std::string>(
+            numRows,
+            [vectorIndex](auto row) {
+              return std::string(
+                  row % 2 == 0 ? StringView::kInlineSize - 2
+                               : StringView::kInlineSize + 8,
+                  static_cast<char>('a' + ((row + vectorIndex) % 26)));
+            },
+            isNull,
+            type);
+      default:
+        VELOX_NYI(
+            "makeColumn does not support complex type {} yet",
+            type->toString());
+    }
+  }
+
+  VectorPtr makeConstantColumn(
+      const TypePtr& type,
+      int32_t numRows,
+      int32_t nullPct,
+      int32_t vectorIndex) {
+    const auto baseNullPct =
+        nullPct > 0 && (vectorIndex % 100) < nullPct ? 100 : 0;
+    return BaseVector::wrapInConstant(
+        numRows, 0, makeColumn(type, 1, baseNullPct, vectorIndex));
+  }
+
+  /// Generates input batches for the exchange benchmark.
+  ///
+  /// `dictPct` is the percentage of vectors for each column that should be
+  /// wrapped in dictionary encoding across the full set of generated batches.
+  /// `constantPct` works similarly, but creates ConstantVector columns.
+  /// Constant vectors take precedence over dictionary wrapping.
+  /// For example, with `numVectors = 10` and `dictPct = 30`, each top-level
+  /// column will have 3 dictionary-encoded vectors and 7 simple vectors,
+  /// unless those vectors are selected for constant encoding. Nested children
+  /// of complex columns use the same rule recursively.
+  ///
+  /// `nullPct` controls what fraction of values in each column are null:
+  /// 0 = no nulls, 50 = half the rows null, 100 = all rows null.
   std::vector<RowVectorPtr> makeRows(
-      RowTypePtr type,
+      const RowTypePtr& type,
       int32_t numVectors,
       int32_t rowsPerVector,
-      int32_t dictPct = 0) {
+      int32_t dictPct = 0,
+      int32_t constantPct = 0,
+      int32_t nullPct = 0) {
     std::vector<RowVectorPtr> vectors;
-    BufferPtr indices;
+    vectors.reserve(numVectors);
     for (int32_t i = 0; i < numVectors; ++i) {
-      auto vector = std::dynamic_pointer_cast<RowVector>(
-          BatchMaker::createBatch(type, rowsPerVector, *pool_));
-
-      auto width = vector->childrenSize();
-      for (auto child = 0; child < width; ++child) {
-        if (100 * child / width > dictPct) {
-          if (!indices) {
-            indices = makeIndices(vector->size(), [&](auto i) { return i; });
-          }
-          vector->childAt(child) = BaseVector::wrapInDictionary(
-              nullptr, indices, vector->size(), vector->childAt(child));
+      const auto useConstant = shouldWrapVector(i, numVectors, constantPct);
+      std::vector<VectorPtr> children;
+      children.reserve(type->size());
+      for (int32_t col = 0; col < type->size(); ++col) {
+        if (useConstant) {
+          children.push_back(makeConstantColumn(
+              type->childAt(col), rowsPerVector, nullPct, i));
+        } else {
+          children.push_back(
+              makeColumn(type->childAt(col), rowsPerVector, nullPct, i));
         }
       }
-      vectors.push_back(vector);
+      auto vector = makeRowVector(type->names(), children);
+      if (!useConstant && shouldWrapVector(i, numVectors, dictPct)) {
+        for (auto child = 0; child < vector->childrenSize(); ++child) {
+          wrapDictionaryRecursive(vector->childAt(child));
+        }
+      }
+      vectors.push_back(std::move(vector));
     }
     return vectors;
   }
 
-  void run(
-      std::vector<RowVectorPtr>& vectors,
-      int32_t width,
+  ExchangeRunStats run(
+      const std::vector<RowVectorPtr>& vectors,
+      int32_t numDestinations,
       int32_t taskWidth,
-      int64_t& wallUs,
-      PlanNodeStats& partitionedOutputStats,
-      PlanNodeStats& exchangeStats) {
+      ExchangeMode mode) {
+    VELOX_CHECK(!vectors.empty());
+    VELOX_CHECK_GT(numDestinations, 0);
+    VELOX_CHECK_GT(taskWidth, 0);
+
     core::PlanNodePtr plan;
     core::PlanNodeId exchangeId;
     core::PlanNodeId leafPartitionedOutputId;
@@ -136,20 +508,21 @@ class ExchangeBenchmark : public VectorTestBase {
 
     const auto startUs = getCurrentTimeMicro();
     BENCHMARK_SUSPEND {
-      assert(!vectors.empty());
-      configSettings_[core::QueryConfig::kMaxPartitionedOutputBufferSize] =
-          fmt::format("{}", FLAGS_exchange_buffer_mb << 20);
+      configureQuerySettings(mode);
       const auto iteration = ++iteration_;
 
       // leafPlan: PartitionedOutput/kPartitioned(1) <-- Values(0)
       std::vector<std::string> leafTaskIds;
-      auto leafPlan = exec::test::PlanBuilder()
-                          .values(vectors, true)
-                          .partitionedOutput({"c0"}, width)
-                          .capturePlanNodeId(leafPartitionedOutputId)
-                          .planNode();
+      auto leafPlanBuilder = exec::test::PlanBuilder().values(vectors, true);
+      if (numDestinations == 1) {
+        leafPlanBuilder.partitionedOutput({}, 1);
+      } else {
+        leafPlanBuilder.partitionedOutput({"c0"}, numDestinations);
+      }
+      auto leafPlan =
+          leafPlanBuilder.capturePlanNodeId(leafPartitionedOutputId).planNode();
 
-      for (int32_t counter = 0; counter < width; ++counter) {
+      for (int32_t counter = 0; counter < numDestinations; ++counter) {
         auto leafTaskId = makeTaskId(iteration, "leaf", counter);
         leafTaskIds.push_back(leafTaskId);
         auto leafTask = makeTask(leafTaskId, leafPlan, counter);
@@ -159,7 +532,6 @@ class ExchangeBenchmark : public VectorTestBase {
 
       // finalAggPlan: PartitionedOutput/kPartitioned(2) <-- Agg/kSingle(1) <--
       // Exchange(0)
-      std::vector<std::string> finalAggTaskIds;
       core::PlanNodePtr finalAggPlan =
           exec::test::PlanBuilder()
               .exchange(leafPlan->outputType(), "Presto")
@@ -169,7 +541,7 @@ class ExchangeBenchmark : public VectorTestBase {
               .capturePlanNodeId(finalAggPartitionedOutputId)
               .planNode();
 
-      for (int i = 0; i < width; i++) {
+      for (int i = 0; i < numDestinations; i++) {
         auto taskId = makeTaskId(iteration, "final-agg", i);
         finalAggSplits.push_back(
             exec::Split(std::make_shared<exec::RemoteConnectorSplit>(taskId)));
@@ -180,7 +552,8 @@ class ExchangeBenchmark : public VectorTestBase {
       }
 
       expected = makeRowVector({makeFlatVector<int64_t>(1, [&](auto /*row*/) {
-        return vectors.size() * vectors[0]->size() * width * taskWidth;
+        return vectors.size() * vectors[0]->size() * numDestinations *
+            taskWidth;
       })});
 
       // plan: Agg/kSingle(1) <-- Exchange (0)
@@ -194,138 +567,45 @@ class ExchangeBenchmark : public VectorTestBase {
         .splits(finalAggSplits)
         .assertResults(expected);
 
+    ExchangeRunStats stats;
     BENCHMARK_SUSPEND {
-      wallUs = getCurrentTimeMicro() - startUs;
-      std::vector<int64_t> taskWallMs;
+      stats.wallUs = getCurrentTimeMicro() - startUs;
 
       for (const auto& task : leafTasks) {
         const auto& taskStats = task->taskStats();
-        taskWallMs.push_back(
-            taskStats.executionEndTimeMs - taskStats.executionStartTimeMs);
         const auto& planStats = toPlanStats(taskStats);
         auto& taskPartitionedOutputStats =
             planStats.at(leafPartitionedOutputId);
-        partitionedOutputStats += taskPartitionedOutputStats;
+        stats.partitionedOutputStats += taskPartitionedOutputStats;
       }
 
       for (const auto& task : finalAggTasks) {
         const auto& taskStats = task->taskStats();
-        taskWallMs.push_back(
-            taskStats.executionEndTimeMs - taskStats.executionStartTimeMs);
         const auto& planStats = toPlanStats(taskStats);
 
         auto& taskPartitionedOutputStats =
             planStats.at(finalAggPartitionedOutputId);
-        partitionedOutputStats += taskPartitionedOutputStats;
+        stats.partitionedOutputStats += taskPartitionedOutputStats;
 
         auto& taskExchangeStats = planStats.at(exchangeId);
-        exchangeStats += taskExchangeStats;
+        stats.exchangeStats += taskExchangeStats;
       }
     };
-  }
 
-  void runLocal(
-      std::vector<RowVectorPtr>& vectors,
-      int32_t taskWidth,
-      int32_t numTasks,
-      int64_t& localPartitionWallUs,
-      PlanNodeStats& partitionedOutputStats,
-      LocalPartitionWaitStats& localPartitionWaitStats) {
-    assert(!vectors.empty());
-
-    core::PlanNodePtr plan;
-    core::PlanNodeId localPartitionId1;
-    core::PlanNodeId localPartitionId2;
-    std::vector<std::shared_ptr<Task>> tasks;
-    std::vector<std::thread> threads;
-
-    RowVectorPtr expected;
-
-    BENCHMARK_SUSPEND {
-      std::vector<std::string> aggregates = {"count(1)"};
-      auto& rowType = vectors[0]->type()->as<TypeKind::ROW>();
-      for (auto i = 1; i < rowType.size(); ++i) {
-        aggregates.push_back(fmt::format("checksum({})", rowType.nameOf(i)));
-      }
-
-      // plan: Agg/kSingle(4) <-- LocalPartition/Gather(3) <-- Agg/kGather(2)
-      // <-- LocalPartition/kRepartition(1) <-- Values(0)
-      plan = exec::test::PlanBuilder()
-                 .values(vectors, true)
-                 .localPartition({"c0"})
-                 .capturePlanNodeId(localPartitionId1)
-                 .singleAggregation({}, aggregates)
-                 .localPartition(std::vector<std::string>{})
-                 .capturePlanNodeId(localPartitionId2)
-                 .singleAggregation({}, {"sum(a0)"})
-                 .planNode();
-
-      threads.reserve(numTasks);
-      expected = makeRowVector({makeFlatVector<int64_t>(1, [&](auto /*row*/) {
-        return vectors.size() * vectors[0]->size() * taskWidth;
-      })});
-    };
-
-    auto startMicros = getCurrentTimeMicro();
-    std::mutex mutex;
-    for (int32_t i = 0; i < numTasks; ++i) {
-      threads.push_back(std::thread([&]() {
-        for (auto repeat = 0; repeat < FLAGS_num_local_repeat; ++repeat) {
-          auto task =
-              exec::test::AssertQueryBuilder(plan)
-                  .config(
-                      core::QueryConfig::kMaxLocalExchangeBufferSize,
-                      fmt::format("{}", FLAGS_local_exchange_buffer_mb << 20))
-                  .maxDrivers(taskWidth)
-                  .assertResults(expected);
-          {
-            std::lock_guard<std::mutex> l(mutex);
-            tasks.push_back(task);
-          }
-        }
-      }));
-    }
-    for (auto& thread : threads) {
-      thread.join();
-    }
-
-    BENCHMARK_SUSPEND {
-      localPartitionWallUs = getCurrentTimeMicro() - startMicros;
-
-      std::vector<core::PlanNodeId> localPartitionNodeIds{
-          localPartitionId1, localPartitionId2};
-
-      localPartitionWaitStats.totalProducerWaitMs = 0;
-      localPartitionWaitStats.totalConsumerWaitMs = 0;
-      for (const auto& task : tasks) {
-        auto taskStats = task->taskStats();
-        localPartitionWaitStats.wallMs.push_back(
-            taskStats.executionEndTimeMs - taskStats.executionStartTimeMs);
-        auto planStats = toPlanStats(taskStats);
-
-        for (const auto& nodeId : localPartitionNodeIds) {
-          auto& taskLocalPartition1Stats = planStats.at(nodeId);
-          partitionedOutputStats += taskLocalPartition1Stats;
-
-          auto& taskLocalPartition1RuntimeStats =
-              taskLocalPartition1Stats.customStats;
-          localPartitionWaitStats.producerWaitMs.push_back(
-              taskLocalPartition1RuntimeStats
-                  ["blockedWaitForProducerWallNanos"]);
-          localPartitionWaitStats.consumerWaitMs.push_back(
-              taskLocalPartition1RuntimeStats
-                  ["blockedWaitForConsumerWallNanos"]);
-          localPartitionWaitStats.totalProducerWaitMs +=
-              localPartitionWaitStats.producerWaitMs.back().sum;
-          localPartitionWaitStats.totalConsumerWaitMs +=
-              localPartitionWaitStats.consumerWaitMs.back().sum;
-        }
-      }
-    };
+    return stats;
   }
 
  private:
   static constexpr int64_t kMaxMemory = 6UL << 30; // 6GB
+
+  void configureQuerySettings(ExchangeMode mode) {
+    configSettings_[core::QueryConfig::kMaxPartitionedOutputBufferSize] =
+        fmt::format("{}", FLAGS_exchange_buffer_mb << 20);
+    configSettings_[core::QueryConfig::kOptimizedPartitionedOutputEnabled] =
+        mode == ExchangeMode::kOptimized ? "true" : "false";
+    configSettings_[core::QueryConfig::kOptimizedHashPartitionFunctionEnabled] =
+        mode == ExchangeMode::kOptimized ? "true" : "false";
+  }
 
   static std::string
   makeTaskId(int32_t iteration, const std::string& prefix, int num) {
@@ -373,223 +653,415 @@ int32_t ExchangeBenchmark::iteration_;
 
 std::unique_ptr<ExchangeBenchmark> bm;
 
-void runBenchmarks() {
-  std::vector<std::string> flatNames = {"c0"};
-  std::vector<TypePtr> flatTypes = {BIGINT()};
-  std::vector<TypePtr> typeSelection = {
-      BOOLEAN(),
-      TINYINT(),
-      DECIMAL(20, 3),
-      INTEGER(),
-      BIGINT(),
-      REAL(),
-      DECIMAL(10, 2),
-      DOUBLE(),
-      VARCHAR()};
-
-  int64_t flatSize = 0;
-  // Add enough columns of different types to make a 10K row batch be
-  // flat_batch_mb in flat size.
-  while (flatSize * 10000 < static_cast<int64_t>(FLAGS_flat_batch_mb) << 20) {
-    flatNames.push_back(fmt::format("c{}", flatNames.size()));
-    assert(!flatNames.empty());
-    flatTypes.push_back(typeSelection[flatTypes.size() % typeSelection.size()]);
-    if (flatTypes.back()->isFixedWidth()) {
-      flatSize += flatTypes.back()->cppSizeInBytes();
-    } else {
-      flatSize += 20;
-    }
-  }
-  auto flatType = ROW(std::move(flatNames), std::move(flatTypes));
-
-  auto structType = ROW(
-      {{"c0", BIGINT()},
-       {"r1",
-        ROW(
-            {{"k2", BIGINT()},
-             {"r2",
-              ROW(
-                  {{"i1", BIGINT()},
-                   {"i2", BIGINT()},
-                   {"r3}, ROW({{s3", VARCHAR()},
-                   {"i5", INTEGER()},
-                   {"d5", DOUBLE()},
-                   {"b5", BOOLEAN()},
-                   {"a5", ARRAY(TINYINT())}})}})}});
-
-  auto deepType = ROW(
-      {{"c0", BIGINT()},
-       {"long_array_val", ARRAY(ARRAY(BIGINT()))},
-       {"array_val", ARRAY(VARCHAR())},
-       {"struct_val", ROW({{"s_int", INTEGER()}, {"s_array", ARRAY(REAL())}})},
-       {"map_val",
-        MAP(VARCHAR(),
-            MAP(BIGINT(),
-                ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))}});
-
-  std::vector<RowVectorPtr> flat10k(
-      bm->makeRows(flatType, 10, 10000, FLAGS_dict_pct));
-  std::vector<RowVectorPtr> deep10k(
-      bm->makeRows(deepType, 10, 10000, FLAGS_dict_pct));
-  std::vector<RowVectorPtr> flat50(
-      bm->makeRows(flatType, 2000, 50, FLAGS_dict_pct));
-  std::vector<RowVectorPtr> deep50(
-      bm->makeRows(deepType, 2000, 50, FLAGS_dict_pct));
-  std::vector<RowVectorPtr> struct1k(
-      bm->makeRows(structType, 100, 1000, FLAGS_dict_pct));
-
-  int64_t flat10KWallUs;
-  PlanNodeStats partitionedOutputStatsFlat10K;
-  PlanNodeStats exchangeStatsFlat10K;
-  folly::addBenchmark(__FILE__, "exchangeFlat10k", [&]() {
-    bm->run(
-        flat10k,
-        FLAGS_width,
-        FLAGS_task_width,
-        flat10KWallUs,
-        partitionedOutputStatsFlat10K,
-        exchangeStatsFlat10K);
-    return 1;
+void benchmarkExchange(
+    unsigned int iters,
+    const ExchangeInputSpec& input,
+    int32_t numDestinations,
+    ExchangeMode mode,
+    int32_t dictPct,
+    int32_t constantPct,
+    int32_t nullPct) {
+  auto vectors = bm->makeRows(
+      input.type,
+      input.numVectors,
+      input.rowsPerVector,
+      dictPct,
+      constantPct,
+      nullPct);
+  auto stats = runBenchmarkIterations(iters, [&]() {
+    return bm->run(vectors, numDestinations, FLAGS_task_width, mode);
   });
-
-  int64_t flat50KWallUs;
-  PlanNodeStats partitionedOutputStatsFlat50;
-  PlanNodeStats exchangeStatsFlat50;
-  folly::addBenchmark(__FILE__, "exchangeFlat50", [&]() {
-    bm->run(
-        flat50,
-        FLAGS_width,
-        FLAGS_task_width,
-        flat50KWallUs,
-        partitionedOutputStatsFlat50,
-        exchangeStatsFlat50);
-    return 1;
-  });
-
-  int64_t deep10KWallUs;
-  PlanNodeStats partitionedOutputStatsDeep10K;
-  PlanNodeStats exchangeStatsDeep10K;
-  folly::addBenchmark(__FILE__, "exchangeDeep10k", [&]() {
-    bm->run(
-        deep10k,
-        FLAGS_width,
-        FLAGS_task_width,
-        deep10KWallUs,
-        partitionedOutputStatsDeep10K,
-        exchangeStatsDeep10K);
-    return 1;
-  });
-
-  int64_t deep50KWallUs;
-  PlanNodeStats partitionedOutputStatsDeep50;
-  PlanNodeStats exchangeStatsDeep50;
-  folly::addBenchmark(__FILE__, "exchangeDeep50", [&]() {
-    bm->run(
-        deep50,
-        FLAGS_width,
-        FLAGS_task_width,
-        deep50KWallUs,
-        partitionedOutputStatsDeep50,
-        exchangeStatsDeep50);
-    return 1;
-  });
-
-  int64_t stuct1KWallUs;
-  PlanNodeStats partitionedOutputStatsStruct1K;
-  PlanNodeStats exchangeStatsStruct1K;
-  folly::addBenchmark(__FILE__, "exchangeStruct1K", [&]() {
-    bm->run(
-        struct1k,
-        FLAGS_width,
-        FLAGS_task_width,
-        stuct1KWallUs,
-        partitionedOutputStatsStruct1K,
-        exchangeStatsStruct1K);
-    return 1;
-  });
-
-  int64_t localPartitionWallUs;
-  PlanNodeStats localPartitionStatsFlat10K;
-  LocalPartitionWaitStats localPartitionWaitStats;
-  folly::addBenchmark(__FILE__, "localFlat10k", [&]() {
-    bm->runLocal(
-        flat10k,
-        FLAGS_width,
-        FLAGS_num_local_tasks,
-        localPartitionWallUs,
-        localPartitionStatsFlat10K,
-        localPartitionWaitStats);
-    return 1;
-  });
-
-  folly::runBenchmarks();
-
-  std::cout
-      << "----------------------------------Flat10K----------------------------------"
-      << std::endl;
-  std::cout << "Wall Time (ms): " << succinctMicros(flat10KWallUs) << std::endl;
-  std::cout << "PartitionOutput: " << partitionedOutputStatsFlat10K.toString()
-            << std::endl;
-  std::cout << "Exchange: " << exchangeStatsFlat10K.toString() << std::endl;
-
-  std::cout
-      << "----------------------------------Flat50K----------------------------------"
-      << std::endl;
-  std::cout << "Wall Time (ms): " << succinctMicros(flat50KWallUs) << std::endl;
-  std::cout << "PartitionOutput: " << partitionedOutputStatsFlat50.toString()
-            << std::endl;
-  std::cout << "Exchange: " << exchangeStatsFlat10K.toString() << std::endl;
-
-  std::cout
-      << "----------------------------------Deep10K----------------------------------"
-      << std::endl;
-  std::cout << "Wall Time (ms): " << succinctMicros(deep10KWallUs) << std::endl;
-  std::cout << "PartitionOutput: " << partitionedOutputStatsDeep10K.toString()
-            << std::endl;
-  std::cout << "Exchange: " << exchangeStatsDeep10K.toString() << std::endl;
-
-  std::cout
-      << "----------------------------------Deep50K----------------------------------"
-      << std::endl;
-  std::cout << "Wall Time (ms): " << succinctMicros(deep50KWallUs) << std::endl;
-  std::cout << "PartitionOutput: " << partitionedOutputStatsDeep50.toString()
-            << std::endl;
-  std::cout << "Exchange: " << exchangeStatsDeep50.toString() << std::endl;
-
-  std::cout
-      << "----------------------------------Struct1K---------------------------------"
-      << std::endl;
-  std::cout << "Wall Time (ms): " << succinctMicros(stuct1KWallUs) << std::endl;
-  std::cout << "PartitionOutput: " << partitionedOutputStatsStruct1K.toString()
-            << std::endl;
-  std::cout << "Exchange: " << exchangeStatsStruct1K.toString() << std::endl;
-
-  std::cout
-      << "--------------------------------LocalFlat10K-------------------------------"
-      << std::endl;
-  std::cout << "Wall Time (ms): " << "\n Total: "
-            << succinctMicros(localPartitionWallUs)
-            << "\n Max: " << localPartitionWaitStats.wallMs.back()
-            << "\n Median: "
-            << localPartitionWaitStats
-                   .wallMs[localPartitionWaitStats.wallMs.size() / 2]
-            << "\n Min: " << localPartitionWaitStats.wallMs.front()
-            << std::endl;
-  std::cout << "LocalPartition: " << localPartitionStatsFlat10K.toString()
-            << std::endl;
-  sortByAndPrintMax(
-      "Producer Wait Time (ms)",
-      localPartitionWaitStats.totalProducerWaitMs,
-      localPartitionWaitStats.producerWaitMs);
-  sortByAndPrintMax(
-      "Consumer Wait Time (ms)",
-      localPartitionWaitStats.totalConsumerWaitMs,
-      localPartitionWaitStats.consumerWaitMs);
-  std::sort(
-      localPartitionWaitStats.wallMs.begin(),
-      localPartitionWaitStats.wallMs.end());
-  assert(!localPartitionWaitStats.wallMs.empty());
+  benchmarkResults.push_back(
+      {fmt::format(
+           "{}_p{}_d{}_c{}_n{}",
+           input.name,
+           numDestinations,
+           dictPct,
+           constantPct,
+           nullPct),
+       mode,
+       std::move(stats)});
 }
+
+#define EXCHANGE_BENCHMARK_NAMED_PARAM(name, param_name, ...) \
+  BENCHMARK_IMPL(                                             \
+      FB_CONCATENATE(name, FB_CONCATENATE(_, param_name)),    \
+      FOLLY_PP_STRINGIZE(param_name),                         \
+      iters,                                                  \
+      unsigned,                                               \
+      iters) {                                                \
+    name(iters, ##__VA_ARGS__);                               \
+  }
+
+// Same as EXCHANGE_BENCHMARK_NAMED_PARAM but the "%" prefix on the
+// stringized name marks this benchmark as relative — folly reports its
+// time/iter as a percentage of the preceding non-relative baseline.
+#define EXCHANGE_BENCHMARK_NAMED_PARAM_RELATIVE(name, param_name, ...) \
+  BENCHMARK_IMPL(                                                      \
+      FB_CONCATENATE(name, FB_CONCATENATE(_, param_name)),             \
+      "%" FOLLY_PP_STRINGIZE(param_name),                              \
+      iters,                                                           \
+      unsigned,                                                        \
+      iters) {                                                         \
+    name(iters, ##__VA_ARGS__);                                        \
+  }
+
+// ── Benchmarks: input spec × p (numDestinations) × dictPct × constantPct ×
+// nullPct × mode ─
+
+#define EXCHANGE_BENCHMARK_INPUT_IMPL(                                                                   \
+    _register,                                                                                           \
+    _case_name,                                                                                          \
+    _input_expr,                                                                                         \
+    _num_destinations,                                                                                   \
+    _mode_name,                                                                                          \
+    _dict_pct,                                                                                           \
+    _constant_pct,                                                                                       \
+    _null_pct,                                                                                           \
+    _mode)                                                                                               \
+  _register(                                                                                             \
+      benchmarkExchange,                                                                                 \
+      _case_name##_p##_num_destinations##_d##_dict_pct##_c##_constant_pct##_n##_null_pct##_##_mode_name, \
+      _input_expr,                                                                                       \
+      _num_destinations,                                                                                 \
+      ExchangeMode::_mode,                                                                               \
+      _dict_pct,                                                                                         \
+      _constant_pct,                                                                                     \
+      _null_pct)
+
+#define EXCHANGE_BENCHMARK_INPUT(     \
+    _case_name,                       \
+    _input_expr,                      \
+    _num_destinations,                \
+    _mode_name,                       \
+    _dict_pct,                        \
+    _constant_pct,                    \
+    _null_pct,                        \
+    _mode)                            \
+  EXCHANGE_BENCHMARK_INPUT_IMPL(      \
+      EXCHANGE_BENCHMARK_NAMED_PARAM, \
+      _case_name,                     \
+      _input_expr,                    \
+      _num_destinations,              \
+      _mode_name,                     \
+      _dict_pct,                      \
+      _constant_pct,                  \
+      _null_pct,                      \
+      _mode)
+
+#define EXCHANGE_BENCHMARK_RELATIVE_INPUT(     \
+    _case_name,                                \
+    _input_expr,                               \
+    _num_destinations,                         \
+    _mode_name,                                \
+    _dict_pct,                                 \
+    _constant_pct,                             \
+    _null_pct,                                 \
+    _mode)                                     \
+  EXCHANGE_BENCHMARK_INPUT_IMPL(               \
+      EXCHANGE_BENCHMARK_NAMED_PARAM_RELATIVE, \
+      _case_name,                              \
+      _input_expr,                             \
+      _num_destinations,                       \
+      _mode_name,                              \
+      _dict_pct,                               \
+      _constant_pct,                           \
+      _null_pct,                               \
+      _mode)
+
+// `normal` is the baseline (regular BENCHMARK); `optimized` is reported
+// relative to it via the "%" prefix folly recognizes, so the "relative"
+// column in the output shows optimized's speedup over normal.
+#define EXCHANGE_BENCHMARK_MODES(    \
+    _case_name,                      \
+    _input_expr,                     \
+    _num_destinations,               \
+    _dict_pct,                       \
+    _constant_pct,                   \
+    _null_pct)                       \
+  EXCHANGE_BENCHMARK_INPUT(          \
+      _case_name,                    \
+      _input_expr,                   \
+      _num_destinations,             \
+      normal,                        \
+      _dict_pct,                     \
+      _constant_pct,                 \
+      _null_pct,                     \
+      kNormal);                      \
+  EXCHANGE_BENCHMARK_RELATIVE_INPUT( \
+      _case_name,                    \
+      _input_expr,                   \
+      _num_destinations,             \
+      optimized,                     \
+      _dict_pct,                     \
+      _constant_pct,                 \
+      _null_pct,                     \
+      kOptimized)
+
+#define EXCHANGE_BENCHMARK_DESTINATIONS(                                  \
+    _case_name, _input_expr, _dict_pct, _constant_pct, _null_pct)         \
+  EXCHANGE_BENCHMARK_MODES(                                               \
+      _case_name, _input_expr, 1, _dict_pct, _constant_pct, _null_pct);   \
+  EXCHANGE_BENCHMARK_MODES(                                               \
+      _case_name, _input_expr, 4, _dict_pct, _constant_pct, _null_pct);   \
+  EXCHANGE_BENCHMARK_MODES(                                               \
+      _case_name, _input_expr, 16, _dict_pct, _constant_pct, _null_pct);  \
+  EXCHANGE_BENCHMARK_MODES(                                               \
+      _case_name, _input_expr, 100, _dict_pct, _constant_pct, _null_pct); \
+  EXCHANGE_BENCHMARK_MODES(                                               \
+      _case_name, _input_expr, 1000, _dict_pct, _constant_pct, _null_pct)
+
+#define EXCHANGE_BENCHMARK_CASE(_case_name, _input_expr)               \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 0, 0, 0);   \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 0, 0, 50);  \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 0, 0, 100); \
+  BENCHMARK_DRAW_LINE();
+
+#define EXCHANGE_BENCHMARK_CONSTANT_CASE(_case_name, _input_expr)        \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 0, 100, 0);   \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 0, 100, 100); \
+  BENCHMARK_DRAW_LINE();
+
+#define EXCHANGE_BENCHMARK_DICTIONARY_CASE(_case_name, _input_expr)      \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 100, 0, 0);   \
+  EXCHANGE_BENCHMARK_DESTINATIONS(_case_name, _input_expr, 100, 0, 100); \
+  BENCHMARK_DRAW_LINE();
+
+EXCHANGE_BENCHMARK_CASE(
+    10K_Boolean_col1,
+    makeInputSpec(SimpleColType::kBoolean, 1));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Boolean_col4,
+    makeInputSpec(SimpleColType::kBoolean, 4));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Boolean_col16,
+    makeInputSpec(SimpleColType::kBoolean, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Boolean_col1,
+    makeInputSpec(SimpleColType::kBoolean, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Boolean_col4,
+    makeInputSpec(SimpleColType::kBoolean, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Boolean_col16,
+    makeInputSpec(SimpleColType::kBoolean, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Boolean_col1,
+    makeInputSpec(SimpleColType::kBoolean, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Boolean_col4,
+    makeInputSpec(SimpleColType::kBoolean, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Boolean_col16,
+    makeInputSpec(SimpleColType::kBoolean, 16));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Tinyint_col1,
+    makeInputSpec(SimpleColType::kTinyint, 1));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Tinyint_col4,
+    makeInputSpec(SimpleColType::kTinyint, 4));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Tinyint_col16,
+    makeInputSpec(SimpleColType::kTinyint, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Tinyint_col1,
+    makeInputSpec(SimpleColType::kTinyint, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Tinyint_col4,
+    makeInputSpec(SimpleColType::kTinyint, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Tinyint_col16,
+    makeInputSpec(SimpleColType::kTinyint, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Tinyint_col1,
+    makeInputSpec(SimpleColType::kTinyint, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Tinyint_col4,
+    makeInputSpec(SimpleColType::kTinyint, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Tinyint_col16,
+    makeInputSpec(SimpleColType::kTinyint, 16));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Integer_col1,
+    makeInputSpec(SimpleColType::kInteger, 1));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Integer_col4,
+    makeInputSpec(SimpleColType::kInteger, 4));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Integer_col16,
+    makeInputSpec(SimpleColType::kInteger, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Integer_col1,
+    makeInputSpec(SimpleColType::kInteger, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Integer_col4,
+    makeInputSpec(SimpleColType::kInteger, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Integer_col16,
+    makeInputSpec(SimpleColType::kInteger, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Integer_col1,
+    makeInputSpec(SimpleColType::kInteger, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Integer_col4,
+    makeInputSpec(SimpleColType::kInteger, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Integer_col16,
+    makeInputSpec(SimpleColType::kInteger, 16));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Bigint_col1,
+    makeInputSpec(SimpleColType::kBigint, 1));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Bigint_col4,
+    makeInputSpec(SimpleColType::kBigint, 4));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Bigint_col16,
+    makeInputSpec(SimpleColType::kBigint, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Bigint_col1,
+    makeInputSpec(SimpleColType::kBigint, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Bigint_col4,
+    makeInputSpec(SimpleColType::kBigint, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Bigint_col16,
+    makeInputSpec(SimpleColType::kBigint, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Bigint_col1,
+    makeInputSpec(SimpleColType::kBigint, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Bigint_col4,
+    makeInputSpec(SimpleColType::kBigint, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Bigint_col16,
+    makeInputSpec(SimpleColType::kBigint, 16));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Hugeint_col1,
+    makeInputSpec(SimpleColType::kHugeint, 1));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Hugeint_col4,
+    makeInputSpec(SimpleColType::kHugeint, 4));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Hugeint_col16,
+    makeInputSpec(SimpleColType::kHugeint, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Hugeint_col1,
+    makeInputSpec(SimpleColType::kHugeint, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Hugeint_col4,
+    makeInputSpec(SimpleColType::kHugeint, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Hugeint_col16,
+    makeInputSpec(SimpleColType::kHugeint, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Hugeint_col1,
+    makeInputSpec(SimpleColType::kHugeint, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Hugeint_col4,
+    makeInputSpec(SimpleColType::kHugeint, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Hugeint_col16,
+    makeInputSpec(SimpleColType::kHugeint, 16));
+EXCHANGE_BENCHMARK_CASE(
+    10K_LongDecimal_col1,
+    makeInputSpec(SimpleColType::kLongDecimal, 1));
+EXCHANGE_BENCHMARK_CASE(
+    10K_LongDecimal_col4,
+    makeInputSpec(SimpleColType::kLongDecimal, 4));
+EXCHANGE_BENCHMARK_CASE(
+    10K_LongDecimal_col16,
+    makeInputSpec(SimpleColType::kLongDecimal, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_LongDecimal_col1,
+    makeInputSpec(SimpleColType::kLongDecimal, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_LongDecimal_col4,
+    makeInputSpec(SimpleColType::kLongDecimal, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_LongDecimal_col16,
+    makeInputSpec(SimpleColType::kLongDecimal, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_LongDecimal_col1,
+    makeInputSpec(SimpleColType::kLongDecimal, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_LongDecimal_col4,
+    makeInputSpec(SimpleColType::kLongDecimal, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_LongDecimal_col16,
+    makeInputSpec(SimpleColType::kLongDecimal, 16));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Double_col1,
+    makeInputSpec(SimpleColType::kDouble, 1));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Double_col4,
+    makeInputSpec(SimpleColType::kDouble, 4));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Double_col16,
+    makeInputSpec(SimpleColType::kDouble, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Double_col1,
+    makeInputSpec(SimpleColType::kDouble, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Double_col4,
+    makeInputSpec(SimpleColType::kDouble, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Double_col16,
+    makeInputSpec(SimpleColType::kDouble, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Double_col1,
+    makeInputSpec(SimpleColType::kDouble, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Double_col4,
+    makeInputSpec(SimpleColType::kDouble, 4));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Double_col16,
+    makeInputSpec(SimpleColType::kDouble, 16));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Varchar_col1,
+    makeInputSpec(SimpleColType::kVarchar, 1));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Varchar_col4,
+    makeInputSpec(SimpleColType::kVarchar, 4));
+EXCHANGE_BENCHMARK_CASE(
+    10K_Varchar_col16,
+    makeInputSpec(SimpleColType::kVarchar, 16));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Varchar_col1,
+    makeInputSpec(SimpleColType::kVarchar, 1));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Varchar_col4,
+    makeInputSpec(SimpleColType::kVarchar, 4));
+EXCHANGE_BENCHMARK_CONSTANT_CASE(
+    10K_Varchar_col16,
+    makeInputSpec(SimpleColType::kVarchar, 16));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Varchar_col1,
+    makeInputSpec(SimpleColType::kVarchar, 1));
+EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+    10K_Varchar_col4,
+    makeInputSpec(SimpleColType::kVarchar, 4));
+
+// Temporarily disable this benchmark because of large memory usage.
+// EXCHANGE_BENCHMARK_DICTIONARY_CASE(
+//     10K_Varchar_col16,
+//     makeInputSpec(SimpleColType::kVarchar, 16));
+
+// The complex type benchmarks are temporarily disabled.
+// EXCHANGE_BENCHMARK_CASE(Deep10K, makeInputSpec(ExchangeInputKind::kDeep10K));
+// EXCHANGE_BENCHMARK_CASE(Deep50, makeInputSpec(ExchangeInputKind::kDeep50));
+// EXCHANGE_BENCHMARK_CASE(Struct1K,
+// makeInputSpec(ExchangeInputKind::kStruct1K));
+
+#undef EXCHANGE_BENCHMARK_CASE
+#undef EXCHANGE_BENCHMARK_DICTIONARY_CASE
+#undef EXCHANGE_BENCHMARK_CONSTANT_CASE
+#undef EXCHANGE_BENCHMARK_DESTINATIONS
+#undef EXCHANGE_BENCHMARK_MODES
+#undef EXCHANGE_BENCHMARK_RELATIVE_INPUT
+#undef EXCHANGE_BENCHMARK_INPUT
+#undef EXCHANGE_BENCHMARK_INPUT_IMPL
+#undef EXCHANGE_BENCHMARK_NAMED_PARAM_RELATIVE
+#undef EXCHANGE_BENCHMARK_NAMED_PARAM
 
 } // namespace
 
@@ -605,7 +1077,11 @@ int main(int argc, char** argv) {
   exec::ExchangeSource::registerFactory(exec::test::createLocalExchangeSource);
 
   bm = std::make_unique<ExchangeBenchmark>();
-  runBenchmarks();
+  folly::runBenchmarks();
+  std::fflush(stdout);
+  std::fflush(stderr);
+  std::cout << std::endl << "Exchange detailed stats:" << std::endl;
+  printAllExchangeStats();
   bm.reset();
 
   return 0;
