@@ -15,12 +15,12 @@ This document describes the manual steps to fix a failed cherry-pick reported in
 ```bash
 # Setup gluten_rebase remote (rename if name conflicts with a different URL)
 if git remote | grep -q '^gluten_rebase$'; then
-  if [ "$(git remote get-url gluten_rebase)" != "git@github.com:IBM/velox.git" ]; then
+  if [ "$(git remote get-url gluten_rebase)" != "https://github.com/IBM/velox.git" ]; then
     git remote rename gluten_rebase "gluten_rebase_$(date +%Y%m%d)"
-    git remote add gluten_rebase git@github.com:IBM/velox.git
+    git remote add gluten_rebase https://github.com/IBM/velox.git
   fi
 else
-  git remote add gluten_rebase git@github.com:IBM/velox.git
+  git remote add gluten_rebase https://github.com/IBM/velox.git
 fi
 
 git fetch gluten_rebase
