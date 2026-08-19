@@ -31,6 +31,7 @@
 #include "velox/common/EnumDefine.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/Expr.h"
+#include "velox/expression/ExprSetV2.h"
 #include "velox/expression/ExprCompiler.h"
 #include "velox/expression/FieldReference.h"
 #include "velox/expression/LambdaExpr.h"
@@ -278,8 +279,14 @@ void Expr::computeMetadata() {
   // (3) Compute propagatesNulls_.
   // propagatesNulls_ is true iff a null in any of the columns this
   // depends on makes the Expr null.
-  if (isSpecialForm() && !is<ConstantExpr>() && !is<FieldReference>() &&
-      !is<CastExpr>()) {
+  // Special-form kinds whose propagatesNulls is derived from the
+  // default-null logic below rather than from a per-form override.
+  // Checking by SpecialFormKind tag (rather than dynamic_cast) keeps
+  // Expr.cpp decoupled from concrete V2 subclasses such as CastExprV2.
+  if (isSpecialForm() &&
+      specialFormKind() != SpecialFormKind::kConstant &&
+      specialFormKind() != SpecialFormKind::kFieldAccess &&
+      specialFormKind() != SpecialFormKind::kCast) {
     as<SpecialForm>()->computePropagatesNulls();
   } else {
     if (vectorFunction_ && !vectorFunctionMetadata_.defaultNullBehavior) {
@@ -2433,6 +2440,10 @@ std::unique_ptr<ExprSet> makeExprSetFromFlag(
   if (execCtx->queryCtx()->queryConfig().exprEvalSimplified() ||
       FLAGS_force_eval_simplified) {
     return std::make_unique<ExprSetSimplified>(std::move(source), execCtx);
+  }
+  if (execCtx->queryCtx()->queryConfig().exprEvalV2()) {
+    return std::make_unique<ExprSetV2>(
+        source, execCtx, /*enableConstantFolding=*/true, lazyDereference);
   }
   return std::make_unique<ExprSet>(
       std::move(source), execCtx, true, lazyDereference);

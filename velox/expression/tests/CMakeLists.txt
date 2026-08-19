@@ -28,6 +28,8 @@ add_executable(
   ExprStatsTest.cpp
   ExprTest.cpp
   ExprToSubfieldFilterTest.cpp
+  ExprV2AdapterTest.cpp
+  ExprV2ParityTest.cpp
   EvalCtxTest.cpp
   EvalErrorsTest.cpp
   EvalSimplifiedTest.cpp
@@ -39,6 +41,7 @@ add_executable(
   MapWriterTest.cpp
   NullIfExprTest.cpp
   PeeledEncodingTest.cpp
+  PrestoCastHooksV2Test.cpp
   ReverseSignatureBinderTest.cpp
   RowViewTest.cpp
   RowWriterTest.cpp
