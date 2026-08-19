@@ -26,10 +26,13 @@ namespace facebook::velox::exec {
 /// sequence is the same as specified in BufferManager::getData call. The
 /// caller is expected to advance sequence by the number of entries in groups
 /// and call BufferManager::acknowledge.
+/// 'pageNumRows' has one entry per entry in 'pages', holding the number of rows
+/// in the corresponding page, or 0 for the end marker.
 using DataAvailableCallback = std::function<void(
     std::vector<std::unique_ptr<folly::IOBuf>> pages,
     int64_t sequence,
-    std::vector<int64_t> remainingBytes)>;
+    std::vector<int64_t> remainingBytes,
+    std::vector<int64_t> pageNumRows)>;
 
 /// Callback provided to indicate if the consumer of a destination buffer is
 /// currently active or not. It is used by arbitrary output buffer to optimize
@@ -46,10 +49,11 @@ struct DataAvailable {
   int64_t sequence{0};
   std::vector<std::unique_ptr<folly::IOBuf>> data;
   std::vector<int64_t> remainingBytes;
+  std::vector<int64_t> pageNumRows;
 
   void notify() {
     if (callback) {
-      callback(std::move(data), sequence, remainingBytes);
+      callback(std::move(data), sequence, remainingBytes, pageNumRows);
     }
   }
 };
@@ -121,6 +125,10 @@ class DestinationBuffer {
     /// Whether the result is returned immediately without invoking the `notify'
     /// callback.
     bool immediate{false};
+
+    /// The number of rows in each page in 'data', 0 for the end marker. Always
+    /// has the same size as 'data'.
+    std::vector<int64_t> pageNumRows;
   };
 
   /// Returns a shallow copy (folly::IOBuf::clone) of the data starting at

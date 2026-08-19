@@ -2338,7 +2338,8 @@ TEST_P(MultiFragmentTest, taskTerminateWithPendingOutputBuffers) {
         sequence,
         [&](std::vector<std::unique_ptr<folly::IOBuf>> iobufs,
             int64_t inSequence,
-            std::vector<int64_t> /*remainingBytes*/) {
+            std::vector<int64_t> /*remainingBytes*/,
+            std::vector<int64_t> /*pageNumRows*/) {
           for (auto& iobuf : iobufs) {
             if (iobuf != nullptr) {
               ++inSequence;
@@ -2592,7 +2593,10 @@ class DataFetcher {
         destination_,
         maxBytes_,
         sequence,
-        [&](auto pages, auto sequence, auto /*remainingBytes*/) mutable {
+        [&](auto pages,
+            auto sequence,
+            auto /*remainingBytes*/,
+            std::vector<int64_t> /*pageNumRows*/) mutable {
           const auto nextSequence = sequence + pages.size();
           const bool atEnd = processData(std::move(pages), sequence);
           bufferManager_->acknowledge(taskId_, destination_, nextSequence);

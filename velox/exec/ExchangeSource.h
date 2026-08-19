@@ -68,12 +68,17 @@ class ExchangeSource : public std::enable_shared_from_this<ExchangeSource> {
     /// according to the memory restriction.
     const std::vector<int64_t> remainingBytes;
 
+    /// The total number of rows in the pages fetched by this response, if the
+    /// source reports it.
+    std::optional<int64_t> numRows;
+
     std::string toString() const {
       return fmt::format(
-          "bytes {}, atEnd {}, remainingBytes {}",
+          "bytes {}, atEnd {}, remainingBytes {}, numRows {}",
           succinctBytes(bytes),
           atEnd ? "true" : "false",
-          remainingBytes.empty() ? "NULL" : folly::join(",", remainingBytes));
+          remainingBytes.empty() ? "NULL" : folly::join(",", remainingBytes),
+          numRows);
     }
   };
 

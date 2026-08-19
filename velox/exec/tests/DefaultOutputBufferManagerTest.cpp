@@ -187,7 +187,8 @@ class DefaultOutputBufferManagerTest : public testing::Test {
          &receivedData](
             std::vector<std::unique_ptr<folly::IOBuf>> pages,
             int64_t inSequence,
-            std::vector<int64_t> /*remainingBytes*/) {
+            std::vector<int64_t> /*remainingBytes*/,
+            std::vector<int64_t> /*pageNumRows*/) {
           ASSERT_FALSE(receivedData) << "for destination " << destination;
           ASSERT_EQ(pages.size(), expectedGroups)
               << "for destination " << destination;
@@ -240,7 +241,8 @@ class DefaultOutputBufferManagerTest : public testing::Test {
     return [destination, sequence, &receivedEndMarker](
                std::vector<std::unique_ptr<folly::IOBuf>> pages,
                int64_t inSequence,
-               std::vector<int64_t> remainingBytes) {
+               std::vector<int64_t> remainingBytes,
+               std::vector<int64_t> /*pageNumRows*/) {
       EXPECT_FALSE(receivedEndMarker) << "for destination " << destination;
       EXPECT_EQ(pages.size(), 1) << "for destination " << destination;
       EXPECT_TRUE(pages[0] == nullptr) << "for destination " << destination;
@@ -291,7 +293,8 @@ class DefaultOutputBufferManagerTest : public testing::Test {
     return [destination, sequence, expectedGroups, &receivedData](
                std::vector<std::unique_ptr<folly::IOBuf>> pages,
                int64_t inSequence,
-               std::vector<int64_t> /*remainingBytes*/) {
+               std::vector<int64_t> /*remainingBytes*/,
+               std::vector<int64_t> /*pageNumRows*/) {
       EXPECT_FALSE(receivedData) << "for destination " << destination;
       EXPECT_EQ(pages.size(), expectedGroups)
           << "for destination " << destination;
@@ -343,7 +346,8 @@ class DefaultOutputBufferManagerTest : public testing::Test {
           nextSequence,
           [&](std::vector<std::unique_ptr<folly::IOBuf>> pages,
               int64_t inSequence,
-              std::vector<int64_t> /*remainingBytes*/) {
+              std::vector<int64_t> /*remainingBytes*/,
+              std::vector<int64_t> /*pageNumRows*/) {
             ASSERT_EQ(inSequence, nextSequence);
             for (int i = 0; i < pages.size(); ++i) {
               if (pages[i] != nullptr) {
@@ -378,7 +382,8 @@ class DefaultOutputBufferManagerTest : public testing::Test {
           [&promise](
               std::vector<std::unique_ptr<folly::IOBuf>> pages,
               int64_t inSequence,
-              std::vector<int64_t> remainingBytes) {
+              std::vector<int64_t> remainingBytes,
+              std::vector<int64_t> /*pageNumRows*/) {
             promise.setValue(
                 Response{
                     std::move(pages), inSequence, std::move(remainingBytes)});
@@ -597,7 +602,8 @@ TEST_P(
         0,
         [&](std::vector<std::unique_ptr<folly::IOBuf>> buffers,
             int64_t sequence,
-            std::vector<int64_t> remainingBytes) {
+            std::vector<int64_t> remainingBytes,
+            std::vector<int64_t> /*pageNumRows*/) {
           ASSERT_EQ(buffers.size(), 1);
           ASSERT_TRUE(buffers[0].get() == nullptr);
           ASSERT_EQ(sequence, 0);
@@ -635,7 +641,8 @@ TEST_P(
         0,
         [&](std::vector<std::unique_ptr<folly::IOBuf>> /*unused*/,
             int64_t /*unused*/,
-            std::vector<int64_t> /*remainingBytes*/) { notified = true; },
+            std::vector<int64_t> /*remainingBytes*/,
+            std::vector<int64_t> /*pageNumRows*/) { notified = true; },
         []() { return true; });
     ASSERT_TRUE(buffers.immediate);
     ASSERT_TRUE(buffers.remainingBytes.empty());
@@ -658,7 +665,8 @@ TEST_P(
         1,
         [&](std::vector<std::unique_ptr<folly::IOBuf>> buffers,
             int64_t sequence,
-            std::vector<int64_t> remainingBytes) {
+            std::vector<int64_t> remainingBytes,
+            std::vector<int64_t> /*pageNumRows*/) {
           ASSERT_EQ(sequence, 1);
           ASSERT_EQ(buffers.size(), 9);
           ASSERT_TRUE(remainingBytes.empty());
@@ -682,7 +690,8 @@ TEST_P(
 
   auto noNotify = [](std::vector<std::unique_ptr<folly::IOBuf>> /*buffers*/,
                      int64_t /*sequence*/,
-                     std::vector<int64_t> /*remainingBytes*/) { FAIL(); };
+                     std::vector<int64_t> /*remainingBytes*/,
+                     std::vector<int64_t> /*pageNumRows*/) { FAIL(); };
 
   {
     ArbitraryBuffer buffer;
@@ -741,7 +750,8 @@ TEST_P(
         sequence,
         [&](std::vector<std::unique_ptr<folly::IOBuf>> buffers,
             int64_t sequence2,
-            std::vector<int64_t> remainingBytes) {
+            std::vector<int64_t> remainingBytes,
+            std::vector<int64_t> /*pageNumRows*/) {
           ASSERT_EQ(buffers.size(), 1);
           ASSERT_TRUE(buffers[0]);
           ASSERT_EQ(sequence2, sequence);
@@ -1050,7 +1060,8 @@ TEST_P(
         [&, destination](
             std::vector<std::unique_ptr<folly::IOBuf>> pages,
             int64_t sequence,
-            std::vector<int64_t> /*remainingBytes*/) {
+            std::vector<int64_t> /*remainingBytes*/,
+            std::vector<int64_t> /*pageNumRows*/) {
           notifyCb(destination, std::move(pages), sequence);
         },
         [&, destination]() { return actives[destination].load(); }));
@@ -1089,7 +1100,8 @@ TEST_P(
       /*sequence=*/sequences[0],
       [&](std::vector<std::unique_ptr<folly::IOBuf>> pages,
           int64_t sequence,
-          std::vector<int64_t> /*remainingBytes*/) {
+          std::vector<int64_t> /*remainingBytes*/,
+          std::vector<int64_t> /*pageNumRows*/) {
         notifyCb(0, std::move(pages), sequence);
       }));
   ASSERT_EQ(sequences[0], 2);
@@ -1112,7 +1124,8 @@ TEST_P(
       /*sequence=*/sequences[1],
       [&](std::vector<std::unique_ptr<folly::IOBuf>> pages,
           int64_t sequence,
-          std::vector<int64_t> /*remainingBytes*/) {
+          std::vector<int64_t> /*remainingBytes*/,
+          std::vector<int64_t> /*pageNumRows*/) {
         notifyCb(1, std::move(pages), sequence);
       },
       [&]() { return actives[1].load(); }));
@@ -1509,7 +1522,8 @@ TEST_P(
       1,
       [](std::vector<std::unique_ptr<folly::IOBuf>> /*pages*/,
          int64_t /*sequence*/,
-         std::vector<int64_t> /*remainingBytes*/) { VELOX_UNREACHABLE(); }));
+         std::vector<int64_t> /*remainingBytes*/,
+         std::vector<int64_t> /*pageNumRows*/) { VELOX_UNREACHABLE(); }));
 
   // Missing tasks should be ignored in this call.
   ASSERT_FALSE(bufferManager_->updateNumDrivers("test.0.2", 1));

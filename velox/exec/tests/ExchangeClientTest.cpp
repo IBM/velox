@@ -15,6 +15,7 @@
  */
 #include "velox/exec/ExchangeClient.h"
 #include <folly/ScopeGuard.h>
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <atomic>
 #include <thread>
@@ -230,6 +231,48 @@ TEST_P(ExchangeClientTest, stats) {
   ASSERT_GE(totalBytes, stats.at("peakBytes").sum);
   ASSERT_EQ(data.size(), stats.at("numReceivedPages").sum);
   ASSERT_EQ(totalBytes / data.size(), stats.at("averageReceivedPageBytes").sum);
+
+  task->requestCancel();
+  bufferManager_->removeTask(taskId);
+
+  client->close();
+}
+
+TEST_P(ExchangeClientTest, pageRowCounts) {
+  auto data = {
+      makeRowVector({makeFlatVector<int32_t>({1, 2, 3})}),
+      makeRowVector({makeFlatVector<int32_t>({1, 2, 3, 4, 5})}),
+      makeRowVector({makeFlatVector<int32_t>({1, 2})}),
+  };
+
+  auto taskId = "local://t1";
+  auto task = makeTask(taskId);
+
+  bufferManager_->initializeTask(
+      task, core::PartitionedOutputNode::Kind::kPartitioned, 100, 16);
+
+  auto client = std::make_shared<ExchangeClient>(
+      "t",
+      17,
+      ExchangeClient::kDefaultMaxQueuedBytes,
+      1,
+      kDefaultMinExchangeOutputBatchBytes,
+      pool(),
+      executor());
+  client->addRemoteTaskId(taskId);
+
+  for (auto vector : data) {
+    enqueue(taskId, 17, vector);
+  }
+
+  // A page reports the rows it holds itself, even when several pages arrive in
+  // the same fetch. The Exchange operator sizes its output vector from these
+  // counts, so an aggregate would over-reserve.
+  std::vector<int64_t> numRows;
+  for (const auto& page : fetchPages(1, *client, 3)) {
+    numRows.push_back(page->numRows().value());
+  }
+  EXPECT_THAT(numRows, testing::ElementsAre(3, 5, 2));
 
   task->requestCancel();
   bufferManager_->removeTask(taskId);

@@ -16,6 +16,7 @@
 #include "velox/exec/tests/utils/LocalExchangeSource.h"
 #include <folly/executors/IOThreadPoolExecutor.h>
 #include <atomic>
+#include <numeric>
 #include "velox/common/testutil/TestValue.h"
 #include "velox/exec/DefaultOutputBufferManager.h"
 #include "velox/exec/Operator.h"
@@ -65,7 +66,8 @@ class LocalExchangeSource : public exec::ExchangeSource {
     auto resultCallback = [self, requestedSequence, buffers, this](
                               std::vector<std::unique_ptr<folly::IOBuf>> data,
                               int64_t sequence,
-                              std::vector<int64_t> remainingBytes) {
+                              std::vector<int64_t> remainingBytes,
+                              std::vector<int64_t> pageNumRows) {
       {
         std::lock_guard<std::mutex> l(mutex_);
         // This function is called either for a result or timeout. Only the
@@ -85,15 +87,19 @@ class LocalExchangeSource : public exec::ExchangeSource {
         int64_t nExtra = requestedSequence - sequence;
         VELOX_CHECK(nExtra < data.size());
         data.erase(data.cbegin(), data.cbegin() + nExtra);
+        pageNumRows.erase(pageNumRows.cbegin(), pageNumRows.cbegin() + nExtra);
         sequence = requestedSequence;
       }
       if (data.empty()) {
         sequence = requestedSequence;
       }
+
+      VELOX_CHECK_EQ(pageNumRows.size(), data.size());
       std::vector<std::unique_ptr<SerializedPageBase>> pages;
       bool atEnd = false;
       int64_t totalBytes = 0;
-      for (auto& inputPage : data) {
+      for (auto i = 0; i < data.size(); ++i) {
+        auto& inputPage = data[i];
         if (!inputPage) {
           atEnd = true;
           // Keep looping, there could be extra end markers.
@@ -102,7 +108,8 @@ class LocalExchangeSource : public exec::ExchangeSource {
         totalBytes += inputPage->length();
         inputPage->unshare();
         pages.push_back(
-            std::make_unique<PrestoSerializedPage>(std::move(inputPage)));
+            std::make_unique<PrestoSerializedPage>(
+                std::move(inputPage), nullptr, pageNumRows[i]));
         inputPage = nullptr;
       }
       numPages_ += pages.size();
@@ -149,7 +156,10 @@ class LocalExchangeSource : public exec::ExchangeSource {
       }
 
       if (!requestPromise.isFulfilled()) {
-        requestPromise.setValue(Response{totalBytes, atEnd_, remainingBytes});
+        const int64_t totalNumRows =
+            std::accumulate(pageNumRows.begin(), pageNumRows.end(), 0L);
+        requestPromise.setValue(
+            Response{totalBytes, atEnd_, remainingBytes, totalNumRows});
       }
     };
 
@@ -252,7 +262,8 @@ class LocalExchangeSource : public exec::ExchangeSource {
   using ResultCallback = std::function<void(
       std::vector<std::unique_ptr<folly::IOBuf>> data,
       int64_t sequence,
-      std::vector<int64_t> remainingBytes)>;
+      std::vector<int64_t> remainingBytes,
+      std::vector<int64_t> pageNumRows)>;
 
   // Registers 'callback' to fire after 'maxWait' for this source. Returns false
   // if the source has already been closed, in which case the caller must not
@@ -288,7 +299,7 @@ class LocalExchangeSource : public exec::ExchangeSource {
           }
           if (callback) {
             // Outside of mutex.
-            callback({}, 0, {});
+            callback({}, 0, {}, {});
             continue;
           }
           std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -311,7 +322,7 @@ class LocalExchangeSource : public exec::ExchangeSource {
       promise = std::move(promise_);
     }
     if (promise.valid() && !promise.isFulfilled()) {
-      promise.setValue(Response{0, false, {}});
+      promise.setValue(Response{0, false, {}, 0});
       return true;
     }
 

@@ -134,7 +134,10 @@ DestinationBuffer::Data DestinationBuffer::getData(
         arbitraryBuffer->getAvailablePageSizes(remainingBytes);
       }
       if (!remainingBytes.empty()) {
-        return {{}, std::move(remainingBytes), true};
+        return {
+            .remainingBytes = std::move(remainingBytes),
+            .immediate = true,
+        };
       }
     }
     notify_ = std::move(notify);
@@ -149,6 +152,7 @@ DestinationBuffer::Data DestinationBuffer::getData(
   }
 
   std::vector<std::unique_ptr<folly::IOBuf>> data;
+  std::vector<int64_t> pageNumRows;
   uint64_t resultBytes = 0;
   auto i = sequence - sequence_;
   if (maxBytes > 0) {
@@ -157,9 +161,12 @@ DestinationBuffer::Data DestinationBuffer::getData(
       if (data_[i] == nullptr) {
         VELOX_CHECK_EQ(i, data_.size() - 1, "null marker found in the middle");
         data.push_back(nullptr);
+        pageNumRows.push_back(0);
         break;
       }
       data.push_back(data_[i]->getIOBuf());
+      // Every enqueued page carries its row count, see recordEnqueue().
+      pageNumRows.push_back(data_[i]->numRows().value());
       resultBytes += data_[i]->size();
       if (resultBytes >= maxBytes) {
         ++i;
@@ -183,8 +190,15 @@ DestinationBuffer::Data DestinationBuffer::getData(
   }
   if (data.empty() && remainingBytes.empty() && atEnd) {
     data.push_back(nullptr);
+    pageNumRows.push_back(0);
   }
-  return {std::move(data), std::move(remainingBytes), true};
+  VELOX_CHECK_EQ(pageNumRows.size(), data.size());
+  return {
+      .data = std::move(data),
+      .remainingBytes = std::move(remainingBytes),
+      .immediate = true,
+      .pageNumRows = std::move(pageNumRows),
+  };
 }
 
 void DestinationBuffer::enqueue(std::shared_ptr<SerializedPageBase> data) {
@@ -210,6 +224,7 @@ DataAvailable DestinationBuffer::getAndClearNotify() {
   auto data = getData(notifyMaxBytes_, notifySequence_, nullptr, nullptr);
   result.data = std::move(data.data);
   result.remainingBytes = std::move(data.remainingBytes);
+  result.pageNumRows = std::move(data.pageNumRows);
   clearNotify();
   return result;
 }
@@ -739,6 +754,7 @@ void OutputBuffer::getData(
           maxBytes, sequence, notify, activeCheck, arbitraryBuffer_.get());
     } else {
       data.data.emplace_back(nullptr);
+      data.pageNumRows.push_back(0);
       data.immediate = true;
       VLOG(1) << "getData received after deleteResults for destination "
               << destination << " and sequence " << sequence;
@@ -746,7 +762,11 @@ void OutputBuffer::getData(
   }
   releaseAfterAcknowledge(freed, promises);
   if (data.immediate) {
-    notify(std::move(data.data), sequence, std::move(data.remainingBytes));
+    notify(
+        std::move(data.data),
+        sequence,
+        std::move(data.remainingBytes),
+        std::move(data.pageNumRows));
   }
 }
 

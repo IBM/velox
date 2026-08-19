@@ -95,6 +95,8 @@ class Exchange : public SourceOperator {
 
   RowVectorPtr getOutputFromRowPages(VectorSerde* serde);
 
+  void prepareResultVector(vector_size_t numRows);
+
   const uint64_t preferredOutputBatchBytes_;
 
   const std::string serdeKind_;

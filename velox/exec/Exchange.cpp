@@ -214,6 +214,23 @@ RowVectorPtr Exchange::getOutputFromColumnarPages(VectorSerde* serde) {
   VELOX_CHECK(
       inputStream_ == nullptr || columnarPageIdx_ < currentPages_.size());
 
+  // Pre-resize 'result_' to avoid repeated allocation during deserialization.
+  // The target row count serves as the upper bound when a page does not
+  // provide a valid row count, or when resuming from a partially consumed page.
+  vector_size_t numRowsToReserve{0};
+  for (auto i = columnarPageIdx_; i < currentPages_.size(); ++i) {
+    const auto pageRows = currentPages_[i]->numRows();
+    if (!pageRows.has_value() || pageRows.value() < 0 ||
+        pageRows.value() + numRowsToReserve > numRows) {
+      numRowsToReserve = numRows;
+      break;
+    }
+
+    numRowsToReserve += pageRows.value();
+  }
+
+  prepareResultVector(numRowsToReserve);
+
   // Iterate through pages
   while (columnarPageIdx_ < currentPages_.size()) {
     auto& page = currentPages_[columnarPageIdx_];
@@ -389,6 +406,23 @@ void Exchange::recordExchangeClientStats() {
 
 VectorSerde* Exchange::getSerde() {
   return getNamedVectorSerde(serdeKind_);
+}
+
+void Exchange::prepareResultVector(vector_size_t numRows) {
+  bool reusable = result_ != nullptr && result_.use_count() == 1;
+  if (reusable) {
+    for (const auto& child : result_->children()) {
+      if (child && !BaseVector::recursivelyReusable(child)) {
+        reusable = false;
+        break;
+      }
+    }
+  }
+  if (!reusable) {
+    result_ = BaseVector::create<RowVector>(outputType_, numRows, pool());
+    return;
+  }
+  result_->resize(numRows);
 }
 
 } // namespace facebook::velox::exec

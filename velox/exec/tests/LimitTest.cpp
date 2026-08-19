@@ -137,7 +137,8 @@ TEST_F(LimitTest, partialLimitEagerFlush) {
              std::make_shared<folly::Promise<int>>(std::move(numPagesPromise))](
             std::vector<std::unique_ptr<folly::IOBuf>> pages,
             int64_t /*sequence*/,
-            std::vector<int64_t> /*remainingBytes*/) {
+            std::vector<int64_t> /*remainingBytes*/,
+            std::vector<int64_t> /*pageNumRows*/) {
           numPagesPromise->setValue(pages.size());
         }));
     ASSERT_GE(std::move(numPagesFuture).get(std::chrono::seconds(1)), 10);
