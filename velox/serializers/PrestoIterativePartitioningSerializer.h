@@ -123,6 +123,26 @@ class PrestoIterativePartitioningSerializer {
   vector_size_t rowsBuffered() const;
 
  private:
+  // State threaded through the recursive column flush.
+  struct SerializerContext {
+    // Number of rows to write per partition at this nesting level. For a
+    // top-level column this is the page's row count. For a column nested under
+    // a ROW it is the number of rows whose ancestor ROW levels are all
+    // non-null.
+    std::vector<vector_size_t> rowCounts;
+
+    // Liveness mask per appended batch: a set bit means every ancestor ROW
+    // level is non-null for that row, so the row is written. A null entry
+    // means every row of the batch is live, which is always the case for
+    // top-level columns.
+    std::vector<BufferPtr> parentNulls;
+
+    // Number of live rows per partition, per appended batch. Empty for a batch
+    // whose 'parentNulls' entry is null, in which case every row of the
+    // partition's range is live.
+    std::vector<std::vector<vector_size_t>> parentLiveCounts;
+  };
+
   void validateOutputInputMapping(const RowVectorPtr&) const;
 
   column_index_t outputToInputChannel(column_index_t outputColumn) const {
@@ -152,31 +172,48 @@ class PrestoIterativePartitioningSerializer {
       const std::vector<PartitionedVectorPtr>& partitionedVectors,
       const RowType& rowSchema,
       const std::vector<uint32_t>& nonEmptyPartitions,
-      const std::vector<IOBufOutputStream*>& outputStreams) const;
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const SerializerContext& context) const;
 
   void flushColumn(
       const ColumnBufferState& columnState,
       const std::vector<PartitionedVectorPtr>& partitionedVectors,
       const TypePtr& colType,
       const std::vector<uint32_t>& nonEmptyPartitions,
-      const std::vector<IOBufOutputStream*>& outputStreams) const;
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const SerializerContext& context) const;
 
   void flushSimpleColumn(
       const std::vector<PartitionedVectorPtr>& partitionedVectors,
       const TypePtr& colType,
       const std::vector<uint32_t>& nonEmptyPartitions,
-      const std::vector<IOBufOutputStream*>& outputStreams) const;
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const SerializerContext& context) const;
+
+  /// Serializes a nested ROW column block. Writes the "ROW" encoding header,
+  /// numFields, all child columns recursively, and the Presto ROW block footer
+  /// (numRows, offsets, hasNulls flag, optional null bitmap).
+  void flushRowColumn(
+      const ColumnBufferState& columnState,
+      const std::vector<PartitionedVectorPtr>& partitionedVectors,
+      const TypePtr& colType,
+      const std::vector<uint32_t>& nonEmptyPartitions,
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const SerializerContext& context) const;
 
   void flushVariableWidthColumn(
       const ColumnBufferState& columnState,
       const std::vector<PartitionedVectorPtr>& partitionedVectors,
       const TypePtr& colType,
       const std::vector<uint32_t>& nonEmptyPartitions,
-      const std::vector<IOBufOutputStream*>& outputStreams) const;
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const SerializerContext& context) const;
 
   void flushSingleSimpleVector(
       const PartitionedVectorPtr& partitionedVector,
-      const std::vector<IOBufOutputStream*>& outputStreams) const;
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const uint64_t* parentNulls,
+      const std::vector<vector_size_t>* parentLiveCounts) const;
 
   void flushSingleVariableWidthVector(
       const PartitionedVectorPtr& partitionedVector,
@@ -185,7 +222,8 @@ class PrestoIterativePartitioningSerializer {
   template <TypeKind kind>
   void flushSingleFlatVector(
       const PartitionedVectorPtr& partitionedVector,
-      const std::vector<IOBufOutputStream*>& outputStreams) const;
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const uint64_t* parentNulls) const;
 
   void flushSingleVariableWidthFlatVector(
       const PartitionedVectorPtr& partitionedVector,
@@ -198,7 +236,8 @@ class PrestoIterativePartitioningSerializer {
   template <TypeKind kind>
   void flushSingleConstantVector(
       const PartitionedVectorPtr& partitionedVector,
-      const std::vector<IOBufOutputStream*>& outputStreams) const;
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const std::vector<vector_size_t>* parentLiveCounts) const;
 
   void flushHeader(
       std::string_view name,
@@ -207,29 +246,47 @@ class PrestoIterativePartitioningSerializer {
 
   void flushRowCounts(
       const std::vector<uint32_t>& nonEmptyPartitions,
-      const std::vector<IOBufOutputStream*>& outputStreams) const;
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const SerializerContext& context) const;
 
   void flushNulls(
       const std::vector<PartitionedVectorPtr>& partitionedVectors,
       const std::vector<uint32_t>& nonEmptyPartitions,
-      const std::vector<IOBufOutputStream*>& outputStreams) const;
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const SerializerContext& context) const;
 
-  static void flushSimpleVectorNulls(
-      const PartitionedVectorPtr& partitionedVector,
+  // Writes the null section of one block to each partition's stream: the
+  // hasNulls flag byte followed, for partitions that have nulls, by the null
+  // bitmap. 'validBits[p]' holds the compacted validity bits of the
+  // partition's 'rowCounts[p]' written rows in Velox format (LSB first, a set
+  // bit means not null); it is converted to the Presto wire format (MSB first,
+  // a set bit means null) in place and must own one addressable byte past the
+  // last row's bit. Only partitions with 'nullCounts[p]' greater than zero are
+  // required to have a non-null 'validBits' entry.
+  void flushNullSection(
       const std::vector<uint32_t>& nonEmptyPartitions,
-      std::vector<std::vector<uint8_t>>& bitmaps,
-      std::vector<vector_size_t>& destBitOffsets);
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const std::vector<vector_size_t>& rowCounts,
+      const std::vector<vector_size_t>& nullCounts,
+      const std::vector<uint64_t*>& validBits) const;
 
-  static void flushConstantVectorNulls(
-      const PartitionedVectorPtr& partitionedVector,
+  // Writes the per-row offsets of one ROW block to each partition's stream.
+  // Presto stores one offset per row plus a trailing total; for a ROW block an
+  // offset is the running count of non-null rows, so the offsets are
+  // sequential for a partition without nulls and a prefix sum over
+  // 'validBits[p]' otherwise. See flushNullSection() for 'validBits'.
+  void flushRowOffsets(
       const std::vector<uint32_t>& nonEmptyPartitions,
-      std::vector<std::vector<uint8_t>>& bitmaps,
-      std::vector<vector_size_t>& destBitOffsets);
+      const std::vector<IOBufOutputStream*>& outputStreams,
+      const std::vector<vector_size_t>& rowCounts,
+      const std::vector<vector_size_t>& nullCounts,
+      const std::vector<uint64_t*>& validBits) const;
 
   template <typename T>
   void flushFlatValues(
       const T* partitionedValues,
       const uint64_t* rawNulls,
+      const uint64_t* parentNulls,
       const vector_size_t* partitionOffsets,
       const std::vector<IOBufOutputStream*>& outputStreams) const;
 

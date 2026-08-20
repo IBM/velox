@@ -19,6 +19,7 @@
 #include <optional>
 
 #include "velox/common/base/BitUtil.h"
+#include "velox/common/base/Nulls.h"
 #include "velox/common/base/SimdUtil.h"
 #include "velox/type/Type.h"
 #include "velox/vector/ComplexVector.h"
@@ -135,6 +136,18 @@ simpleColumnBytes(const TypePtr& colType, int64_t numRows, int64_t numNulls) {
       1 + // nullFlag
       (numNulls > 0 ? bits::nbytes(numRows) : 0) + // null bitmap
       (numRows - numNulls) * fixedTypeWidth(colType->kind()); // values
+}
+
+/// Returns the exact bytes for the framing of one ROW column block in one
+/// partition: the encoding header, numFields, and the block footer. The child
+/// column bytes are accounted separately by the child states.
+int64_t rowColumnFramingBytes(int64_t numRows, int64_t numNulls) {
+  return 4 + static_cast<int64_t>(kRow.size()) + // header
+      4 + // numFields
+      4 + // rowCount
+      4 * (numRows + 1) + // offsets
+      1 + // nullFlag
+      (numNulls > 0 ? bits::nbytes(numRows) : 0); // null bitmap
 }
 
 int64_t variableWidthColumnBytes(
@@ -320,6 +333,30 @@ int64_t maxBitmapBytes(int64_t totalRows, int64_t numPartitionsWithNulls) {
   return numPartitionsWithNulls + (totalRows - numPartitionsWithNulls) / 8;
 }
 
+// Reports a ROW column whose vector is not ROW-encoded. A struct-typed column
+// can also arrive CONSTANT-encoded, which the ROW block writer does not handle
+// yet.
+[[noreturn]] void unsupportedRowEncoding(VectorEncoding::Simple encoding) {
+  VELOX_NYI(
+      "Unsupported encoding for a ROW column in "
+      "PrestoIterativePartitioningSerializer: {}",
+      encoding);
+}
+
+// Returns 'partitionedVector' as a PartitionedRowVector. Only a ROW-encoded
+// vector yields one: PartitionedVector::create() builds a
+// PartitionedConstantVector for a CONSTANT-encoded struct, so the encoding must
+// be checked before the cast.
+const PartitionedRowVector& asPartitionedRowVector(
+    const PartitionedVectorPtr& partitionedVector) {
+  const auto* rowVector =
+      dynamic_cast<const PartitionedRowVector*>(partitionedVector.get());
+  if (rowVector == nullptr) {
+    unsupportedRowEncoding(partitionedVector->baseVector()->encoding());
+  }
+  return *rowVector;
+}
+
 } // namespace
 
 /// Base class for column nodes in the serializer's per-partition accounting.
@@ -479,6 +516,70 @@ class VariableWidthBufferState : public ColumnBufferState {
   std::vector<std::vector<int32_t>> offsetsPerPartition_;
 };
 
+/// Buffer state for one ROW column.
+///
+/// Tracks this level's own rows and nulls and aggregates the sizes of the
+/// child column states. Child row counts are upper bounds: a child state
+/// counts every partitioned row, while serialization writes only the rows
+/// whose ancestors are all non-null. The resulting byte counts are therefore
+/// upper bounds too, which is what the output stream presizing needs.
+class RowBufferState : public ColumnBufferState {
+ public:
+  RowBufferState(
+      TypePtr type,
+      uint32_t numPartitions,
+      std::vector<std::unique_ptr<ColumnBufferState>> children)
+      : ColumnBufferState(std::move(type), numPartitions),
+        children_(std::move(children)) {}
+
+  void append(const PartitionedVectorPtr& partitionedVector) override {
+    const auto& rowVector = asPartitionedRowVector(partitionedVector);
+    for (column_index_t column = 0; column < children_.size(); ++column) {
+      children_[column]->append(rowVector.childAt(column));
+    }
+
+    for (auto p = 0; p < numPartitions_; ++p) {
+      const auto numRows = partitionedVector->numRowsAt(p);
+      if (numRows == 0) {
+        continue;
+      }
+
+      const auto numNulls = partitionedVector->numNullsAt(p);
+      auto& rows = rowsPerPartition_[p];
+      auto& nulls = nullsPerPartition_[p];
+
+      if (rows == 0) {
+        ++numNonEmptyPartitions_;
+      }
+      if (nulls == 0 && numNulls > 0) {
+        ++numPartitionsWithNulls_;
+      }
+      rows += numRows;
+      nulls += numNulls;
+
+      int64_t bytes = rowColumnFramingBytes(rows, nulls);
+      for (const auto& child : children_) {
+        bytes += child->bytesPerPartition()[p];
+      }
+      bytesPerPartition_[p] = bytes;
+    }
+  }
+
+  void clear() override {
+    ColumnBufferState::clear();
+    for (auto& child : children_) {
+      child->clear();
+    }
+  }
+
+  const std::vector<std::unique_ptr<ColumnBufferState>>& children() const {
+    return children_;
+  }
+
+ private:
+  std::vector<std::unique_ptr<ColumnBufferState>> children_;
+};
+
 std::unique_ptr<ColumnBufferState> ColumnBufferState::create(
     const TypePtr& type,
     uint32_t numPartitions) {
@@ -495,8 +596,18 @@ std::unique_ptr<ColumnBufferState> ColumnBufferState::create(
     case TypeKind::VARCHAR:
     case TypeKind::VARBINARY:
       return std::make_unique<VariableWidthBufferState>(type, numPartitions);
+    case TypeKind::ROW: {
+      const auto& rowType = type->asRow();
+      std::vector<std::unique_ptr<ColumnBufferState>> children;
+      children.reserve(rowType.size());
+      for (auto column = 0; column < rowType.size(); ++column) {
+        children.push_back(
+            ColumnBufferState::create(rowType.childAt(column), numPartitions));
+      }
+      return std::make_unique<RowBufferState>(
+          type, numPartitions, std::move(children));
+    }
     case TypeKind::TIMESTAMP:
-    case TypeKind::ROW:
     case TypeKind::ARRAY:
     case TypeKind::MAP:
       VELOX_NYI(
@@ -530,9 +641,7 @@ class BufferState {
   void append(
       const PartitionedVectorPtr& partitionedVector,
       const std::vector<column_index_t>& outputToInputChannels) {
-    auto rowVector =
-        std::dynamic_pointer_cast<PartitionedRowVector>(partitionedVector);
-    VELOX_CHECK_NOT_NULL(rowVector);
+    const auto& rowVector = asPartitionedRowVector(partitionedVector);
 
     rowsBuffered_ += partitionedVector->baseVector()->size();
 
@@ -540,7 +649,7 @@ class BufferState {
       const auto inputColumn = outputToInputChannels.empty()
           ? column
           : outputToInputChannels[column];
-      children_[column]->append(rowVector->childAt(inputColumn));
+      children_[column]->append(rowVector.childAt(inputColumn));
     }
 
     for (auto p = 0; p < numPartitions_; ++p) {
@@ -721,61 +830,88 @@ int64_t PrestoIterativePartitioningSerializer::estimateBytesAfterAppend(
     return nullBitmapBytes - nullBitmapBytesBuffered;
   };
 
-  // Cache per input column. If multiple output columns map to the same input
-  // column, reuse the already computed incremental bytes.
-  std::vector<std::optional<int64_t>> estimatedIncrementalBytes(
-      input->childrenSize());
-  for (column_index_t column = 0; column < numColumns_; ++column) {
-    const auto inputColumn = outputToInputChannel(column);
-    if (estimatedIncrementalBytes[inputColumn].has_value()) {
-      estimatedBytes += *estimatedIncrementalBytes[inputColumn];
-      continue;
-    }
-
-    const auto& columnType = outputType_->childAt(column);
-    const auto* columnState = bufferState_->children()[column].get();
-    const auto inputNulls = countNulls(*input->childAt(inputColumn));
+  // Returns an upper bound on the bytes one column grows by when 'vector' is
+  // appended. ROW columns recurse into their children. A nested child is
+  // charged for every row, including rows its ancestors mark null and which
+  // are therefore not written, so the result stays an upper bound.
+  const auto estimateColumnGrowth = [&](auto&& self,
+                                        const TypePtr& columnType,
+                                        const ColumnBufferState* columnState,
+                                        const VectorPtr& vector) -> int64_t {
+    const auto columnNulls = countNulls(*vector);
 
     if (columnType->isUnknown()) {
       VELOX_UNSUPPORTED(
           "Unsupported type kind for "
           "PrestoIterativePartitioningSerializer::estimateBytesAfterAppend: {}",
           columnType->kind());
-    } else if (columnType->isFixedWidth()) {
-      estimatedIncrementalBytes[inputColumn] = numNewPartitions *
-              simpleColumnBytes(columnType, 0, 0) + // header growth
-          estimateNullBitmapGrowth(columnState,
-                                   inputNulls) + // null bitmap growth
-          static_cast<int64_t>(numRows - inputNulls.value_or(0)) *
-              fixedTypeWidth(columnType->kind()); // value bytes growth
-      estimatedBytes += *estimatedIncrementalBytes[inputColumn];
-    } else {
-      switch (columnType->kind()) {
-        case TypeKind::VARCHAR:
-        case TypeKind::VARBINARY: {
-          estimatedIncrementalBytes[inputColumn] = numNewPartitions *
-                  variableWidthColumnBytes(0, 0, 0) + // header growth
-              estimateNullBitmapGrowth(columnState,
-                                       inputNulls) + // null bitmap growth
-              static_cast<int64_t>(numRows) * sizeof(int32_t) + // offsets
-              variableWidthDataBytes(*input->childAt(inputColumn)); // values
-          estimatedBytes += *estimatedIncrementalBytes[inputColumn];
-          break;
-        }
-        case TypeKind::ROW:
-        case TypeKind::ARRAY:
-        case TypeKind::MAP:
-          VELOX_NYI(
-              "Unsupported type kind for "
-              "PrestoIterativePartitioningSerializer::estimateBytesAfterAppend: {}",
-              columnType->kind());
-        default:
-          VELOX_UNSUPPORTED(
-              "Unsupported type kind for "
-              "PrestoIterativePartitioningSerializer::estimateBytesAfterAppend: {}",
-              columnType->kind());
-      }
     }
+
+    if (columnType->isFixedWidth()) {
+      return numNewPartitions * simpleColumnBytes(columnType, 0, 0) +
+          estimateNullBitmapGrowth(columnState, columnNulls) +
+          static_cast<int64_t>(numRows - columnNulls.value_or(0)) *
+          fixedTypeWidth(columnType->kind());
+    }
+
+    switch (columnType->kind()) {
+      case TypeKind::VARCHAR:
+      case TypeKind::VARBINARY:
+        return numNewPartitions * variableWidthColumnBytes(0, 0, 0) +
+            estimateNullBitmapGrowth(columnState, columnNulls) +
+            static_cast<int64_t>(numRows) * sizeof(int32_t) + // offsets
+            variableWidthDataBytes(*vector); // values
+      case TypeKind::ROW: {
+        const auto* rowState = dynamic_cast<const RowBufferState*>(columnState);
+        VELOX_CHECK_NOT_NULL(rowState);
+        if (vector->encoding() != VectorEncoding::Simple::ROW) {
+          unsupportedRowEncoding(vector->encoding());
+        }
+        const auto* rowVector = vector->as<RowVector>();
+
+        const auto& rowType = columnType->asRow();
+        // The ROW block itself contributes the encoding header, numFields and
+        // the footer's row count, offsets and null section.
+        int64_t bytes = numNewPartitions * rowColumnFramingBytes(0, 0) +
+            estimateNullBitmapGrowth(columnState, columnNulls) +
+            static_cast<int64_t>(numRows) * sizeof(int32_t); // offsets
+        for (auto child = 0; child < rowType.size(); ++child) {
+          bytes += self(
+              self,
+              rowType.childAt(child),
+              rowState->children()[child].get(),
+              rowVector->childAt(child));
+        }
+        return bytes;
+      }
+      case TypeKind::ARRAY:
+      case TypeKind::MAP:
+        VELOX_NYI(
+            "Unsupported type kind for "
+            "PrestoIterativePartitioningSerializer::estimateBytesAfterAppend: {}",
+            columnType->kind());
+      default:
+        VELOX_UNSUPPORTED(
+            "Unsupported type kind for "
+            "PrestoIterativePartitioningSerializer::estimateBytesAfterAppend: {}",
+            columnType->kind());
+    }
+  };
+
+  // Cache per input column. If multiple output columns map to the same input
+  // column, reuse the already computed incremental bytes.
+  std::vector<std::optional<int64_t>> estimatedIncrementalBytes(
+      input->childrenSize());
+  for (column_index_t column = 0; column < numColumns_; ++column) {
+    const auto inputColumn = outputToInputChannel(column);
+    if (!estimatedIncrementalBytes[inputColumn].has_value()) {
+      estimatedIncrementalBytes[inputColumn] = estimateColumnGrowth(
+          estimateColumnGrowth,
+          outputType_->childAt(column),
+          bufferState_->children()[column].get(),
+          input->childAt(inputColumn));
+    }
+    estimatedBytes += *estimatedIncrementalBytes[inputColumn];
   }
   return estimatedBytes;
 }
@@ -890,9 +1026,18 @@ PrestoIterativePartitioningSerializer::flushUncompressed() {
     flushStart(*outputStreams[p], p, codecMask);
   }
 
-  // 4. Flush column data.
+  // 4. Flush column data. Top-level columns have no parent nulls; row counts
+  // come from the accumulated page state.
+  SerializerContext context;
+  context.rowCounts = bufferState_->rowsPerPartition();
+  context.parentNulls.resize(partitionedRowVectors_.size());
+  context.parentLiveCounts.resize(partitionedRowVectors_.size());
   flushRowChildren(
-      partitionedRowVectors_, rowSchema, nonEmptyPartitions, rawOutputStreams);
+      partitionedRowVectors_,
+      rowSchema,
+      nonEmptyPartitions,
+      rawOutputStreams,
+      context);
 
   // 5. Finalize the page by seeking back to fill in sizes and CRC, and get the
   // IOBuf and numOfRows from each stream.
@@ -951,16 +1096,14 @@ void PrestoIterativePartitioningSerializer::flushRowChildren(
     const std::vector<PartitionedVectorPtr>& partitionedVectors,
     const RowType& rowSchema,
     const std::vector<uint32_t>& nonEmptyPartitions,
-    const std::vector<IOBufOutputStream*>& outputStreams) const {
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const SerializerContext& context) const {
   for (uint32_t col = 0; col < rowSchema.size(); ++col) {
     std::vector<PartitionedVectorPtr> column;
     column.reserve(partitionedVectors.size());
     for (const auto& partitionedVector : partitionedVectors) {
-      const auto& partitionedRowVector =
-          std::dynamic_pointer_cast<PartitionedRowVector>(partitionedVector);
-      VELOX_DCHECK_NOT_NULL(partitionedRowVector.get());
-      column.push_back(
-          partitionedRowVector->childAt(outputToInputChannel(col)));
+      column.push_back(asPartitionedRowVector(partitionedVector)
+                           .childAt(outputToInputChannel(col)));
     }
 
     const auto& columnState = *bufferState_->children()[col];
@@ -969,7 +1112,8 @@ void PrestoIterativePartitioningSerializer::flushRowChildren(
         column,
         rowSchema.childAt(col),
         nonEmptyPartitions,
-        outputStreams);
+        outputStreams,
+        context);
   }
 }
 
@@ -1012,7 +1156,8 @@ void PrestoIterativePartitioningSerializer::flushColumn(
     const std::vector<PartitionedVectorPtr>& partitionedVectors,
     const TypePtr& colType,
     const std::vector<uint32_t>& nonEmptyPartitions,
-    const std::vector<IOBufOutputStream*>& outputStreams) const {
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const SerializerContext& context) const {
   VELOX_CHECK_GT(partitionedVectors.size(), 0);
 
   auto typeKind = partitionedVectors[0]->baseVector()->typeKind();
@@ -1026,7 +1171,21 @@ void PrestoIterativePartitioningSerializer::flushColumn(
     case TypeKind::DOUBLE:
     case TypeKind::HUGEINT:
       flushSimpleColumn(
-          partitionedVectors, colType, nonEmptyPartitions, outputStreams);
+          partitionedVectors,
+          colType,
+          nonEmptyPartitions,
+          outputStreams,
+          context);
+      break;
+
+    case TypeKind::ROW:
+      flushRowColumn(
+          columnState,
+          partitionedVectors,
+          colType,
+          nonEmptyPartitions,
+          outputStreams,
+          context);
       break;
     case TypeKind::VARCHAR:
     case TypeKind::VARBINARY:
@@ -1035,11 +1194,11 @@ void PrestoIterativePartitioningSerializer::flushColumn(
           partitionedVectors,
           colType,
           nonEmptyPartitions,
-          outputStreams);
+          outputStreams,
+          context);
       break;
 
     case TypeKind::TIMESTAMP:
-    case TypeKind::ROW:
     case TypeKind::ARRAY:
     case TypeKind::MAP:
       VELOX_NYI(
@@ -1053,18 +1212,285 @@ void PrestoIterativePartitioningSerializer::flushColumn(
   }
 }
 
+namespace {
+
+// Appends the low 'count' bits of 'value' (count <= 64) to 'target' starting
+// at bit 'bitOffset'. 'target' must be zero-initialized over the written range
+// and own one extra addressable word past the last written bit.
+inline void appendLowBits(
+    uint64_t* target,
+    uint64_t bitOffset,
+    uint64_t value,
+    uint32_t count) {
+  const uint64_t word = bitOffset >> 6;
+  const uint32_t shift = static_cast<uint32_t>(bitOffset & 63);
+  target[word] |= value << shift;
+  if (shift + count > 64) {
+    target[word + 1] |= value >> (64 - shift);
+  }
+}
+
+// Gathers the bits of 'source' at the positions in [begin, end) where 'mask'
+// is set (every position when 'mask' is nullptr) and appends them, preserving
+// order, to 'target' starting at bit 'targetBitOffset'. A nullptr 'source' is
+// treated as all bits set (every selected row is not null). Returns the number
+// of bits appended. The general case processes one 64-bit word at a time using
+// bits::extractBits (parallel bit extract), so there is no per-row branching.
+// 'target' must be zeroed over the written range with one extra addressable
+// word past the last written bit.
+int32_t compactBits(
+    const uint64_t* source,
+    const uint64_t* mask,
+    int32_t begin,
+    int32_t end,
+    uint64_t* target,
+    uint64_t targetBitOffset) {
+  const int32_t numBits = end - begin;
+
+  // Nothing is dropped, so the source bits move over unchanged.
+  if (mask == nullptr) {
+    if (source == nullptr) {
+      bits::fillBits(
+          target,
+          static_cast<int32_t>(targetBitOffset),
+          static_cast<int32_t>(targetBitOffset) + numBits,
+          bits::kNotNull);
+    } else {
+      bits::copyBits(source, begin, target, targetBitOffset, numBits);
+    }
+    return numBits;
+  }
+
+  // Every selected row is not null, so only the number of selected rows
+  // matters.
+  if (source == nullptr) {
+    const int32_t numSelected = bits::countBits(mask, begin, end);
+    bits::fillBits(
+        target,
+        static_cast<int32_t>(targetBitOffset),
+        static_cast<int32_t>(targetBitOffset) + numSelected,
+        bits::kNotNull);
+    return numSelected;
+  }
+
+  uint64_t outBit = targetBitOffset;
+  bits::forEachWord(begin, end, [&](int32_t index, uint64_t wordMask) {
+    const uint64_t selected = mask[index] & wordMask;
+    if (selected == 0) {
+      return;
+    }
+    const uint64_t packed =
+        bits::extractBits<uint64_t>(source[index], selected);
+    const uint32_t count = __builtin_popcountll(selected);
+    appendLowBits(target, outBit, packed, count);
+    outBit += count;
+  });
+  return static_cast<int32_t>(outBit - targetBitOffset);
+}
+
+// Returns the raw liveness mask of batch 'index', or nullptr when there is no
+// mask, which means every row of the batch is live. An absent buffer is the
+// canonical "no nulls at or above this level" marker, so callers do not need a
+// separate flag.
+const uint64_t* rawNullsAt(const std::vector<BufferPtr>& nulls, size_t index) {
+  return nulls[index] ? nulls[index]->as<uint64_t>() : nullptr;
+}
+
+// Returns the live row counts per partition of batch 'index', or nullptr when
+// every row of the batch is live and the partition's full row range must be
+// used instead.
+const std::vector<vector_size_t>* liveCountsAt(
+    const std::vector<std::vector<vector_size_t>>& liveCounts,
+    size_t index) {
+  return liveCounts[index].empty() ? nullptr : &liveCounts[index];
+}
+
+} // namespace
+
 void PrestoIterativePartitioningSerializer::flushSimpleColumn(
     const std::vector<PartitionedVectorPtr>& partitionedVectors,
     const TypePtr& colType,
     const std::vector<uint32_t>& nonEmptyPartitions,
-    const std::vector<IOBufOutputStream*>& outputStreams) const {
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const SerializerContext& context) const {
   flushHeader(typeToEncodingName(colType), nonEmptyPartitions, outputStreams);
-  flushRowCounts(nonEmptyPartitions, outputStreams);
-  flushNulls(partitionedVectors, nonEmptyPartitions, outputStreams);
+  flushRowCounts(nonEmptyPartitions, outputStreams, context);
+  flushNulls(partitionedVectors, nonEmptyPartitions, outputStreams, context);
 
   for (size_t i = 0; i < partitionedVectors.size(); i++) {
-    flushSingleSimpleVector(partitionedVectors[i], outputStreams);
+    flushSingleSimpleVector(
+        partitionedVectors[i],
+        outputStreams,
+        rawNullsAt(context.parentNulls, i),
+        liveCountsAt(context.parentLiveCounts, i));
   }
+}
+
+void PrestoIterativePartitioningSerializer::flushRowColumn(
+    const ColumnBufferState& columnState,
+    const std::vector<PartitionedVectorPtr>& partitionedVectors,
+    const TypePtr& colType,
+    const std::vector<uint32_t>& nonEmptyPartitions,
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const SerializerContext& context) const {
+  const auto& rowState = dynamic_cast<const RowBufferState&>(columnState);
+  const auto& rowSchema = colType->asRow();
+  const int32_t numFields = static_cast<int32_t>(rowSchema.size());
+  const size_t numVectors = partitionedVectors.size();
+
+  // Number of parent-live rows that are null at this ROW level, per partition.
+  std::vector<vector_size_t> nullCounts(numPartitions_, 0);
+
+  SerializerContext childContext;
+  childContext.rowCounts.assign(numPartitions_, 0);
+  childContext.parentNulls.resize(numVectors);
+  childContext.parentLiveCounts.resize(numVectors);
+
+  // Step 1 + 2. For every batch, combine the incoming parentNulls with this
+  // level's own nulls into the mask of rows that are live for the children
+  // (parent-live and not null here), then count live and null rows per
+  // partition with bits::countBits.
+  for (size_t vectorIndex = 0; vectorIndex < numVectors; ++vectorIndex) {
+    const auto& partitionedVector = partitionedVectors[vectorIndex];
+    auto baseVector = partitionedVector->baseVector();
+    const vector_size_t numRows = baseVector->size();
+    const auto* partitionOffsets = partitionedVector->rawPartitionOffsets();
+    const auto* parentNulls = rawNullsAt(context.parentNulls, vectorIndex);
+
+    // A materialized but all-not-null bitmap drops no row, so it must not be
+    // treated as "has nulls": propagating a mask that keeps every row would
+    // push the children onto their row-at-a-time paths and would trip the
+    // variable-width restriction below for no reason.
+    const bool hasOwnNulls = baseVector->rawNulls() != nullptr &&
+        BaseVector::countNulls(baseVector->nulls(), numRows) > 0;
+
+    // The children see the rows that survive this level: parentNulls AND this
+    // level's own nulls. Only the case where both drop rows needs a buffer of
+    // its own; otherwise the surviving side's buffer is shared read-only. The
+    // input vector's nulls are never modified — callers may still be holding
+    // it. When nothing is dropped at or above this level the mask stays empty
+    // (nullptr) and children treat every row as live.
+    BufferPtr nulls;
+    if (!hasOwnNulls) {
+      nulls = context.parentNulls[vectorIndex];
+    } else if (parentNulls == nullptr) {
+      nulls = baseVector->nulls();
+    } else {
+      nulls = AlignedBuffer::allocate<uint64_t>(
+          bits::nwords(numRows), pool_, /*value=*/0);
+      bits::andBits(
+          nulls->asMutable<uint64_t>(),
+          baseVector->rawNulls(),
+          parentNulls,
+          0,
+          numRows);
+    }
+    const auto* childLive = nulls ? nulls->as<uint64_t>() : nullptr;
+    childContext.parentNulls[vectorIndex] = nulls;
+
+    // The children only need explicit live counts when this batch drops rows.
+    auto& liveCounts = childContext.parentLiveCounts[vectorIndex];
+    if (childLive != nullptr) {
+      liveCounts.assign(numPartitions_, 0);
+    }
+
+    for (uint32_t p : nonEmptyPartitions) {
+      const vector_size_t begin = p == 0 ? 0 : partitionOffsets[p - 1];
+      const vector_size_t end = partitionOffsets[p];
+      if (end == begin) {
+        continue;
+      }
+
+      const vector_size_t parentLive = parentNulls != nullptr
+          ? bits::countBits(parentNulls, begin, end)
+          : end - begin;
+      const vector_size_t live = childLive != nullptr
+          ? bits::countBits(childLive, begin, end)
+          : end - begin;
+      if (!liveCounts.empty()) {
+        liveCounts[p] = live;
+      }
+      childContext.rowCounts[p] += live;
+      nullCounts[p] += parentLive - live;
+    }
+  }
+
+  // Header: "ROW" encoding name + numFields.
+  flushHeader(kRow, nonEmptyPartitions, outputStreams);
+  for (uint32_t p : nonEmptyPartitions) {
+    writeInt32(outputStreams[p], numFields);
+  }
+
+  // Recurse into each child column with the propagated parent-null context.
+  for (uint32_t col = 0; col < static_cast<uint32_t>(numFields); ++col) {
+    std::vector<PartitionedVectorPtr> childVectors;
+    childVectors.reserve(numVectors);
+    for (const auto& partitionedVector : partitionedVectors) {
+      childVectors.push_back(
+          asPartitionedRowVector(partitionedVector).childAt(col));
+    }
+    flushColumn(
+        *rowState.children()[col],
+        childVectors,
+        rowSchema.childAt(col),
+        nonEmptyPartitions,
+        outputStreams,
+        childContext);
+  }
+
+  // Step 3. Footer. The number of rows at this level equals the number of
+  // parent-live rows, which the parent recorded in context.rowCounts. Only
+  // partitions that have nulls at this level need a compacted bitmap; the
+  // rest use sequential offsets and no null section.
+  std::vector<BufferPtr> nullsByPartition(numPartitions_);
+  std::vector<uint64_t*> rawNullsByPartition(numPartitions_, nullptr);
+  std::vector<uint64_t> nullsPartitionOffsets(numPartitions_, 0);
+  for (uint32_t p : nonEmptyPartitions) {
+    if (nullCounts[p] > 0) {
+      const auto numWords = bits::nwords(context.rowCounts[p]) + 1;
+      nullsByPartition[p] =
+          AlignedBuffer::allocate<uint64_t>(numWords, pool_, 0);
+      rawNullsByPartition[p] = nullsByPartition[p]->asMutable<uint64_t>();
+    }
+  }
+
+  // Compact this level's live bits into each partition's bitmap, in batch
+  // order, keeping only the positions where the parent is live.
+  for (size_t vectorIndex = 0; vectorIndex < numVectors; ++vectorIndex) {
+    const auto* partitionOffsets =
+        partitionedVectors[vectorIndex]->rawPartitionOffsets();
+    const auto* parentNulls = rawNullsAt(context.parentNulls, vectorIndex);
+    const auto* childLive = rawNullsAt(childContext.parentNulls, vectorIndex);
+
+    for (uint32_t p : nonEmptyPartitions) {
+      const vector_size_t begin = p == 0 ? 0 : partitionOffsets[p - 1];
+      const vector_size_t end = partitionOffsets[p];
+      if (rawNullsByPartition[p] == nullptr || end == begin) {
+        continue;
+      }
+      nullsPartitionOffsets[p] += compactBits(
+          childLive,
+          parentNulls,
+          begin,
+          end,
+          rawNullsByPartition[p],
+          nullsPartitionOffsets[p]);
+    }
+  }
+
+  flushRowCounts(nonEmptyPartitions, outputStreams, context);
+  flushRowOffsets(
+      nonEmptyPartitions,
+      outputStreams,
+      context.rowCounts,
+      nullCounts,
+      rawNullsByPartition);
+  flushNullSection(
+      nonEmptyPartitions,
+      outputStreams,
+      context.rowCounts,
+      nullCounts,
+      rawNullsByPartition);
 }
 
 void PrestoIterativePartitioningSerializer::flushVariableWidthColumn(
@@ -1072,11 +1498,27 @@ void PrestoIterativePartitioningSerializer::flushVariableWidthColumn(
     const std::vector<PartitionedVectorPtr>& partitionedVectors,
     const TypePtr& colType,
     const std::vector<uint32_t>& nonEmptyPartitions,
-    const std::vector<IOBufOutputStream*>& outputStreams) const {
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const SerializerContext& context) const {
+  // The buffered offsets and values cover every partitioned row, so a
+  // variable-width column can only be serialized when no ancestor ROW drops
+  // rows. A parent mask is only present when rows are actually dropped, which
+  // this path does not handle yet.
+  const bool dropsRows = std::any_of(
+      context.parentNulls.begin(),
+      context.parentNulls.end(),
+      [](const BufferPtr& nulls) { return nulls != nullptr; });
+  if (dropsRows) {
+    VELOX_NYI(
+        "Variable-width columns nested under a ROW with nulls are not supported "
+        "by PrestoIterativePartitioningSerializer yet: {}",
+        colType->toString());
+  }
+
   flushHeader(typeToEncodingName(colType), nonEmptyPartitions, outputStreams);
-  flushRowCounts(nonEmptyPartitions, outputStreams);
+  flushRowCounts(nonEmptyPartitions, outputStreams, context);
   flushOffsets(columnState, nonEmptyPartitions, outputStreams);
-  flushNulls(partitionedVectors, nonEmptyPartitions, outputStreams);
+  flushNulls(partitionedVectors, nonEmptyPartitions, outputStreams, context);
 
   const auto* variableWidthState =
       dynamic_cast<const VariableWidthBufferState*>(&columnState);
@@ -1095,17 +1537,22 @@ void PrestoIterativePartitioningSerializer::flushVariableWidthColumn(
 template <TypeKind kind>
 void PrestoIterativePartitioningSerializer::flushSingleFlatVector(
     const PartitionedVectorPtr& partitionedVector,
-    const std::vector<IOBufOutputStream*>& outputStreams) const {
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const uint64_t* parentNulls) const {
   using T = typename TypeTraits<kind>::NativeType;
   auto* flatVector = partitionedVector->as<PartitionedFlatVector<T>>();
   VELOX_DCHECK_NOT_NULL(flatVector);
 
   const auto* rawValues =
       flatVector->baseVector()->template as<FlatVector<T>>()->rawValues();
+  // rawNulls() may be nullptr when the column has no nulls. Do not use
+  // mutableRawNulls() here: it would materialize an all-not-null buffer and
+  // mask the "no nulls" fast path.
   const auto* rawNulls = flatVector->baseVector()->rawNulls();
   const auto* partitionOffsets = flatVector->rawPartitionOffsets();
 
-  flushFlatValues<T>(rawValues, rawNulls, partitionOffsets, outputStreams);
+  flushFlatValues<T>(
+      rawValues, rawNulls, parentNulls, partitionOffsets, outputStreams);
 }
 
 // BOOLEAN columns use kByteArray encoding: FlatVector<bool> stores bits
@@ -1115,7 +1562,8 @@ template <>
 void PrestoIterativePartitioningSerializer::flushSingleFlatVector<
     TypeKind::BOOLEAN>(
     const PartitionedVectorPtr& partitionedVector,
-    const std::vector<IOBufOutputStream*>& outputStreams) const {
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const uint64_t* parentNulls) const {
   auto* flatVector = partitionedVector->as<PartitionedFlatVector<bool>>();
   VELOX_DCHECK_NOT_NULL(flatVector);
 
@@ -1129,17 +1577,18 @@ void PrestoIterativePartitioningSerializer::flushSingleFlatVector<
   for (uint32_t p = 0; p < numPartitions_; ++p) {
     const auto offset = partitionOffsets[p];
     const auto numValues = offset - lastOffset;
-    const auto numNulls = partitionedVector->numNullsAt(p);
     if (outputStreams[p] != nullptr && numValues > 0) {
-      if (numNulls == 0) {
+      if (!parentNulls && !rawNulls) {
         for (vector_size_t i = lastOffset; i < offset; ++i) {
           const int8_t val = bits::isBitSet(rawBoolValues, i) ? 1 : 0;
           outputStreams[p]->write(reinterpret_cast<const char*>(&val), 1);
         }
       } else {
-        VELOX_DCHECK_NOT_NULL(rawNulls);
         for (vector_size_t i = lastOffset; i < offset; ++i) {
-          if (!bits::isBitNull(rawNulls, i)) {
+          const bool parentLive =
+              !parentNulls || bits::isBitSet(parentNulls, i);
+          const bool rowIsNull = rawNulls && bits::isBitNull(rawNulls, i);
+          if (parentLive && !rowIsNull) {
             const int8_t val = bits::isBitSet(rawBoolValues, i) ? 1 : 0;
             outputStreams[p]->write(reinterpret_cast<const char*>(&val), 1);
           }
@@ -1153,7 +1602,8 @@ void PrestoIterativePartitioningSerializer::flushSingleFlatVector<
 template <TypeKind kind>
 void PrestoIterativePartitioningSerializer::flushSingleConstantVector(
     const PartitionedVectorPtr& partitionedVector,
-    const std::vector<IOBufOutputStream*>& outputStreams) const {
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const std::vector<vector_size_t>* parentLiveCounts) const {
   if constexpr (
       kind == TypeKind::VARCHAR || kind == TypeKind::VARBINARY ||
       kind == TypeKind::TIMESTAMP) {
@@ -1180,10 +1630,14 @@ void PrestoIterativePartitioningSerializer::flushSingleConstantVector(
       std::max<vector_size_t>(1, kChunkBytes / sizeof(T));
   const char* chunkBytes = nullptr;
 
+  // Every value of a non-null constant is written, so only the number of rows
+  // to write per partition matters. 'parentLiveCounts' already excludes the
+  // rows dropped by a null ancestor ROW level.
   vector_size_t lastOffset = 0;
   for (uint32_t p = 0; p < numPartitions_; ++p) {
     const auto offset = partitionOffsets[p];
-    auto numRows = offset - lastOffset;
+    auto numRows = parentLiveCounts != nullptr ? (*parentLiveCounts)[p]
+                                               : offset - lastOffset;
     if (numRows > 0) {
       VELOX_DCHECK_NOT_NULL(outputStreams[p]);
 
@@ -1194,9 +1648,10 @@ void PrestoIterativePartitioningSerializer::flushSingleConstantVector(
       }
 
       while (numRows > 0) {
-        auto n = std::min<vector_size_t>(numRowsPerChunk, numRows);
-        outputStreams[p]->write(chunkBytes, n * sizeof(T));
-        numRows -= n;
+        const auto numChunkRows =
+            std::min<vector_size_t>(numRowsPerChunk, numRows);
+        outputStreams[p]->write(chunkBytes, numChunkRows * sizeof(T));
+        numRows -= numChunkRows;
       }
     }
     lastOffset = offset;
@@ -1205,21 +1660,28 @@ void PrestoIterativePartitioningSerializer::flushSingleConstantVector(
 
 void PrestoIterativePartitioningSerializer::flushSingleSimpleVector(
     const PartitionedVectorPtr& partitionedVector,
-    const std::vector<IOBufOutputStream*>& outputStreams) const {
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const uint64_t* parentNulls,
+    const std::vector<vector_size_t>* parentLiveCounts) const {
   auto encoding = partitionedVector->baseVector()->encoding();
   auto typeKind = partitionedVector->baseVector()->typeKind();
 
   switch (encoding) {
     case VectorEncoding::Simple::FLAT:
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
-          flushSingleFlatVector, typeKind, partitionedVector, outputStreams);
+          flushSingleFlatVector,
+          typeKind,
+          partitionedVector,
+          outputStreams,
+          parentNulls);
       break;
     case VectorEncoding::Simple::CONSTANT:
       VELOX_DYNAMIC_SCALAR_TYPE_DISPATCH(
           flushSingleConstantVector,
           typeKind,
           partitionedVector,
-          outputStreams);
+          outputStreams,
+          parentLiveCounts);
       break;
     case VectorEncoding::Simple::BIASED:
     case VectorEncoding::Simple::DICTIONARY:
@@ -1356,58 +1818,50 @@ void PrestoIterativePartitioningSerializer::flushHeader(
 
 void PrestoIterativePartitioningSerializer::flushRowCounts(
     const std::vector<uint32_t>& nonEmptyPartitions,
-    const std::vector<IOBufOutputStream*>& outputStreams) const {
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const SerializerContext& context) const {
   for (uint32_t p : nonEmptyPartitions) {
-    writeInt32(
-        outputStreams[p],
-        static_cast<int32_t>(bufferState_->rowsPerPartition()[p]));
+    writeInt32(outputStreams[p], static_cast<int32_t>(context.rowCounts[p]));
   }
 }
 
 void PrestoIterativePartitioningSerializer::flushNulls(
     const std::vector<PartitionedVectorPtr>& partitionedVectors,
     const std::vector<uint32_t>& nonEmptyPartitions,
-    const std::vector<IOBufOutputStream*>& outputStreams) const {
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const SerializerContext& context) const {
+  const size_t numVectors = partitionedVectors.size();
+
+  // Per-partition null bitmap accumulated across all batches, in Velox format
+  // (1 == not null). One extra word so the bit appender in compactBits can
+  // always touch the word past the last bit.
   std::vector<vector_size_t> nullCounts(numPartitions_, 0);
+  std::vector<BufferPtr> nulls(numPartitions_);
+  std::vector<uint64_t*> rawNulls(numPartitions_, nullptr);
+  std::vector<uint64_t> bitOffsets(numPartitions_, 0);
   for (uint32_t p : nonEmptyPartitions) {
-    for (const auto& pv : partitionedVectors) {
-      nullCounts[p] += pv->numNullsAt(p);
-    }
-    const char flagByte = nullCounts[p] > 0 ? 1 : 0;
-    outputStreams[p]->write(&flagByte, 1);
+    const auto numWords = bits::nwords(context.rowCounts[p]) + 1;
+    nulls[p] = AlignedBuffer::allocate<uint64_t>(numWords, pool_, 0);
+    rawNulls[p] = nulls[p]->asMutable<uint64_t>();
   }
 
-  const bool hasAnyNulls = std::any_of(
-      nonEmptyPartitions.begin(), nonEmptyPartitions.end(), [&](uint32_t p) {
-        return nullCounts[p] > 0;
-      });
-  if (!hasAnyNulls) {
-    return;
-  }
+  for (size_t vectorIndex = 0; vectorIndex < numVectors; ++vectorIndex) {
+    const auto& pv = partitionedVectors[vectorIndex];
+    const auto* partitionOffsets = pv->rawPartitionOffsets();
+    const auto* parentNulls = rawNullsAt(context.parentNulls, vectorIndex);
+    const auto encoding = pv->baseVector()->encoding();
 
-  // Build each partition's null bitmap in a temporary buffer, accumulating
-  // bits across all batches. Writing via write() correctly handles range
-  // boundaries in the output stream without requiring seekp().
-  // TODO: Avoid this extra memory allocation and copy
-  std::vector<std::vector<uint8_t>> bitmaps(numPartitions_);
-  for (uint32_t p : nonEmptyPartitions) {
-    if (nullCounts[p] > 0) {
-      bitmaps[p].assign(
-          bits::nbytes(bufferState_->rowsPerPartition()[p]),
-          bits::kNotNullByte);
-    }
-  }
-
-  std::vector<vector_size_t> destBitOffsets(numPartitions_, 0);
-  for (const auto& pv : partitionedVectors) {
-    auto encoding = pv->baseVector()->encoding();
+    // validBits == nullptr means every present row in this batch is not null;
+    // allNull means every present row is null. Otherwise validBits is a
+    // full-row-space bitmap where a set bit means not null.
+    const uint64_t* validBits{nullptr};
+    bool allNull{false};
     switch (encoding) {
       case VectorEncoding::Simple::FLAT:
-        flushSimpleVectorNulls(pv, nonEmptyPartitions, bitmaps, destBitOffsets);
+        validBits = pv->baseVector()->rawNulls();
         break;
       case VectorEncoding::Simple::CONSTANT:
-        flushConstantVectorNulls(
-            pv, nonEmptyPartitions, bitmaps, destBitOffsets);
+        allNull = pv->baseVector()->isNullAt(0);
         break;
       case VectorEncoding::Simple::BIASED:
       case VectorEncoding::Simple::DICTIONARY:
@@ -1420,72 +1874,98 @@ void PrestoIterativePartitioningSerializer::flushNulls(
             "Invalid vector encoding for PrestoIterativePartitioningSerializer: {}",
             encoding);
     }
+
+    for (uint32_t p : nonEmptyPartitions) {
+      const vector_size_t begin = p == 0 ? 0 : partitionOffsets[p - 1];
+      const vector_size_t end = partitionOffsets[p];
+      if (end == begin) {
+        continue;
+      }
+
+      const vector_size_t present = parentNulls != nullptr
+          ? bits::countBits(parentNulls, begin, end)
+          : end - begin;
+      if (allNull) {
+        // Leave the compacted bits at 0 (null) and advance the cursor.
+        nullCounts[p] += present;
+      } else if (validBits == nullptr) {
+        // No nulls in this batch: mark all present rows not null.
+        bits::fillBits(
+            rawNulls[p],
+            bitOffsets[p],
+            bitOffsets[p] + present,
+            bits::kNotNull);
+      } else {
+        compactBits(
+            validBits, parentNulls, begin, end, rawNulls[p], bitOffsets[p]);
+        const auto valid = bits::countBits(
+            rawNulls[p], bitOffsets[p], bitOffsets[p] + present);
+        nullCounts[p] += present - valid;
+      }
+      bitOffsets[p] += present;
+    }
+  }
+
+  flushNullSection(
+      nonEmptyPartitions,
+      outputStreams,
+      context.rowCounts,
+      nullCounts,
+      rawNulls);
+}
+
+void PrestoIterativePartitioningSerializer::flushNullSection(
+    const std::vector<uint32_t>& nonEmptyPartitions,
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const std::vector<vector_size_t>& rowCounts,
+    const std::vector<vector_size_t>& nullCounts,
+    const std::vector<uint64_t*>& validBits) const {
+  for (uint32_t p : nonEmptyPartitions) {
+    const char hasNulls = nullCounts[p] > 0 ? 1 : 0;
+    outputStreams[p]->write(&hasNulls, 1);
   }
 
   for (uint32_t p : nonEmptyPartitions) {
     if (nullCounts[p] == 0) {
       continue;
     }
-
-    // Convert Velox format (LSB-first, 1=not-null) to Presto wire format
-    // (MSB-first, 1=null) in-place.
-    const int32_t numBytes = bits::nbytes(bufferState_->rowsPerPartition()[p]);
+    // Convert Velox format (LSB-first, 1 == not null) to Presto wire format
+    // (MSB-first, 1 == null). Pad bits past the row count stay not-null.
+    const int32_t numRows = static_cast<int32_t>(rowCounts[p]);
+    const int32_t numBytes = bits::nbytes(numRows);
+    bits::fillBits(validBits[p], numRows, numBytes * 8, bits::kNotNull);
+    auto* bytes = reinterpret_cast<uint8_t*>(validBits[p]);
     for (int32_t i = 0; i < numBytes; ++i) {
-      bitmaps[p][i] = ~bitmaps[p][i];
-      bits::reverseBits(&bitmaps[p][i], 1);
+      bytes[i] = ~bytes[i];
+      bits::reverseBits(&bytes[i], 1);
     }
-
-    outputStreams[p]->write(
-        reinterpret_cast<const char*>(bitmaps[p].data()), numBytes);
+    outputStreams[p]->write(reinterpret_cast<const char*>(bytes), numBytes);
   }
 }
 
-void PrestoIterativePartitioningSerializer::flushSimpleVectorNulls(
-    const PartitionedVectorPtr& partitionedVector,
+void PrestoIterativePartitioningSerializer::flushRowOffsets(
     const std::vector<uint32_t>& nonEmptyPartitions,
-    std::vector<std::vector<uint8_t>>& bitmaps,
-    std::vector<vector_size_t>& destBitOffsets) {
-  const uint64_t* rawNulls = partitionedVector->baseVector()->rawNulls();
-  const auto* rawPartitionOffsets = partitionedVector->rawPartitionOffsets();
-  vector_size_t startBit = 0;
+    const std::vector<IOBufOutputStream*>& outputStreams,
+    const std::vector<vector_size_t>& rowCounts,
+    const std::vector<vector_size_t>& nullCounts,
+    const std::vector<uint64_t*>& validBits) const {
   for (uint32_t p : nonEmptyPartitions) {
-    vector_size_t numBits = rawPartitionOffsets[p] - startBit;
-    if (rawNulls && numBits > 0 && !bitmaps[p].empty()) {
-      bits::copyBits(
-          rawNulls,
-          startBit,
-          reinterpret_cast<uint64_t*>(bitmaps[p].data()),
-          destBitOffsets[p],
-          numBits);
-    }
-    if (!bitmaps[p].empty()) {
-      destBitOffsets[p] += numBits;
-    }
-    startBit = rawPartitionOffsets[p];
-  }
-}
+    const int32_t numRows = static_cast<int32_t>(rowCounts[p]);
 
-void PrestoIterativePartitioningSerializer::flushConstantVectorNulls(
-    const PartitionedVectorPtr& partitionedVector,
-    const std::vector<uint32_t>& nonEmptyPartitions,
-    std::vector<std::vector<uint8_t>>& bitmaps,
-    std::vector<vector_size_t>& destBitOffsets) {
-  const bool isNullConstant = partitionedVector->baseVector()->isNullAt(0);
-  const auto* rawPartitionOffsets = partitionedVector->rawPartitionOffsets();
-  vector_size_t startBit = 0;
-  for (uint32_t p : nonEmptyPartitions) {
-    vector_size_t numBits = rawPartitionOffsets[p] - startBit;
-    if (isNullConstant && numBits > 0 && !bitmaps[p].empty()) {
-      bits::fillBits(
-          reinterpret_cast<uint64_t*>(bitmaps[p].data()),
-          destBitOffsets[p],
-          destBitOffsets[p] + numBits,
-          bits::kNull);
+    if (nullCounts[p] == 0) {
+      for (int32_t i = 0; i <= numRows; ++i) {
+        writeInt32(outputStreams[p], i);
+      }
+      continue;
     }
-    if (!bitmaps[p].empty()) {
-      destBitOffsets[p] += numBits;
+
+    const uint64_t* valid = validBits[p];
+    int32_t offset = 0;
+    writeInt32(outputStreams[p], 0);
+    for (int32_t i = 0; i < numRows; ++i) {
+      offset += bits::isBitSet(valid, i);
+      writeInt32(outputStreams[p], offset);
     }
-    startBit = rawPartitionOffsets[p];
   }
 }
 
@@ -1493,6 +1973,7 @@ template <typename T>
 void PrestoIterativePartitioningSerializer::flushFlatValues(
     const T* partitionedValues,
     const uint64_t* rawNulls,
+    const uint64_t* parentNulls,
     const vector_size_t* partitionOffsets,
     const std::vector<IOBufOutputStream*>& outputStreams) const {
   const auto typeWidth = sizeof(T);
@@ -1500,16 +1981,24 @@ void PrestoIterativePartitioningSerializer::flushFlatValues(
   for (uint32_t p = 0; p < numPartitions_; ++p) {
     const auto offset = partitionOffsets[p];
     const auto numValues = offset - lastOffset;
-    if (outputStreams[p] != nullptr && numValues > 0) {
-      if (!rawNulls) {
+    if (numValues > 0) {
+      VELOX_CHECK_NOT_NULL(outputStreams[p]);
+
+      if (!parentNulls && !rawNulls) {
         outputStreams[p]->write(
             reinterpret_cast<const char*>(&partitionedValues[lastOffset]),
             numValues * typeWidth);
       } else {
-        // Presto writes only non-null values; null slots are omitted.
-        // TODO: Improve performance
+        // Presto writes only the rows that are live (the parent is not null)
+        // and not null themselves; null slots are omitted. parentNulls and
+        // rawNulls are indexed in the full row space [0, size), so iterate the
+        // partition's own range [lastOffset, offset).
+        // TODO: Improve performance.
         for (vector_size_t i = lastOffset; i < offset; ++i) {
-          if (!bits::isBitNull(rawNulls, i)) {
+          const bool parentLive =
+              !parentNulls || bits::isBitSet(parentNulls, i);
+          const bool rowIsNull = rawNulls && bits::isBitNull(rawNulls, i);
+          if (parentLive && !rowIsNull) {
             outputStreams[p]->write(
                 reinterpret_cast<const char*>(&partitionedValues[i]),
                 typeWidth);

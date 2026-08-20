@@ -516,6 +516,524 @@ TEST_P(
   EXPECT_FALSE(r1->childAt(0)->isNullAt(1));
 }
 
+// Nested RowVector.
+// Round-trips 1-, 2-, and 3-level nested ROW columns through append() +
+// flush() + deserialize(). Rows are routed across two partitions; the leaf
+// integer values must survive the round trip at every nesting level.
+class PrestoIterativePartitioningSerializerNestedRowTest
+    : public ::testing::TestWithParam<int>,
+      public PrestoIterativePartitioningSerializerTestBase {
+ public:
+  static void SetUpTestSuite() {
+    PrestoIterativePartitioningSerializerTestBase::SetUpTestSuite();
+  }
+
+ protected:
+  // Builds an n-level nested ROW type. Level 1 is ROW(int); each additional
+  // level wraps the previous type as the only child of a new ROW.
+  RowTypePtr makeNestedRowType(int level) {
+    RowTypePtr type = ROW({"a"}, {INTEGER()});
+    for (int i = 1; i < level; ++i) {
+      type = ROW({"r"}, {type});
+    }
+    return type;
+  }
+
+  // Builds an input RowVector with leaf values [0, numRows). Each level wraps
+  // the previous one as a single-field ROW; no nulls are introduced.
+  RowVectorPtr makeNestedInput(int level, int numRows) {
+    VectorPtr current =
+        makeFlatVector<int32_t>(numRows, [](auto row) { return row; });
+    for (int depth = 0; depth < level; ++depth) {
+      current = makeRowVector({depth == 0 ? "a" : "r"}, {current});
+    }
+    return std::dynamic_pointer_cast<RowVector>(current);
+  }
+
+  // Walks from the outer page down to the leaf, returning the leaf int32 value
+  // at j. Asserts that no row is null at any level.
+  int32_t leafValueAt(const RowVectorPtr& page, int j, int level) {
+    const RowVector* row = page.get();
+    for (int outer = level - 1; outer > 0; --outer) {
+      EXPECT_FALSE(row->isNullAt(j))
+          << "outer null at depth " << outer << " row " << j;
+      row = row->childAt(0)->as<RowVector>();
+    }
+    EXPECT_FALSE(row->isNullAt(j)) << "innermost null at row " << j;
+    return row->childAt(0)->as<FlatVector<int32_t>>()->valueAt(j);
+  }
+};
+
+TEST_P(PrestoIterativePartitioningSerializerNestedRowTest, roundTrip) {
+  const int level = GetParam();
+  constexpr int kNumRows = 24;
+
+  auto type = makeNestedRowType(level);
+  auto input = makeNestedInput(level, kNumRows);
+
+  std::vector<uint32_t> partitions(kNumRows);
+  for (int i = 0; i < kNumRows; ++i) {
+    partitions[i] = i % 2;
+  }
+
+  auto serializer = makeSerializer(type, 2);
+  serializer->append(input, partitions);
+  auto ioBufs = serializer->flush();
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  for (int parity = 0; parity < 2; ++parity) {
+    auto page = deserialize(*ioBufs.at(parity).first, type);
+    ASSERT_EQ(page->size(), kNumRows / 2) << "parity " << parity;
+
+    std::vector<int32_t> values;
+    values.reserve(page->size());
+    for (int j = 0; j < page->size(); ++j) {
+      values.push_back(leafValueAt(page, j, level));
+    }
+    std::sort(values.begin(), values.end());
+
+    std::vector<int32_t> expected;
+    for (int i = parity; i < kNumRows; i += 2) {
+      expected.push_back(i);
+    }
+    EXPECT_EQ(values, expected);
+  }
+}
+
+class PrestoIterativePartitioningSerializerNestedRowNullTest
+    : public ::testing::Test,
+      public PrestoIterativePartitioningSerializerTestBase {
+ public:
+  static void SetUpTestSuite() {
+    PrestoIterativePartitioningSerializerTestBase::SetUpTestSuite();
+  }
+};
+
+TEST_F(PrestoIterativePartitioningSerializerNestedRowNullTest, roundTrip) {
+  constexpr int kNumRows = 12;
+  auto type = ROW({"r"}, {ROW({"r"}, {ROW({"a"}, {INTEGER()})})});
+
+  auto leaf = makeFlatVector<int32_t>(kNumRows, [](auto row) { return row; });
+  leaf->setNull(1, true);
+  leaf->setNull(5, true);
+  leaf->setNull(10, true);
+
+  auto inner = makeRowVector(
+      {"a"}, {leaf}, [](auto row) { return row == 3 || row == 6 || row == 8; });
+  auto outer = makeRowVector({"r"}, {inner}, [](auto row) {
+    return row == 1 || row == 6 || row == 11;
+  });
+  auto input = makeRowVector({"r"}, {outer});
+
+  std::vector<uint32_t> partitions(kNumRows);
+  for (int i = 0; i < kNumRows; ++i) {
+    partitions[i] = i % 2;
+  }
+
+  auto serializer = makeSerializer(type, 2);
+  serializer->append(input, partitions);
+  auto ioBufs = serializer->flush();
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  for (int parity = 0; parity < 2; ++parity) {
+    auto page = deserialize(*ioBufs.at(parity).first, type);
+    ASSERT_EQ(page->size(), kNumRows / 2) << "parity " << parity;
+
+    auto* outerResult = page->childAt(0)->as<RowVector>();
+    auto* innerResult = outerResult->childAt(0)->as<RowVector>();
+    auto* leafResult = innerResult->childAt(0)->as<FlatVector<int32_t>>();
+
+    int numOuterNulls{0};
+    int numInnerNulls{0};
+    int numLeafNulls{0};
+    std::vector<int32_t> values;
+    for (int row = 0; row < page->size(); ++row) {
+      if (outerResult->isNullAt(row)) {
+        ++numOuterNulls;
+        continue;
+      }
+      if (innerResult->isNullAt(row)) {
+        ++numInnerNulls;
+        continue;
+      }
+      if (leafResult->isNullAt(row)) {
+        ++numLeafNulls;
+        continue;
+      }
+      values.push_back(leafResult->valueAt(row));
+    }
+    std::sort(values.begin(), values.end());
+
+    int expectedOuterNulls{0};
+    int expectedInnerNulls{0};
+    int expectedLeafNulls{0};
+    std::vector<int32_t> expectedValues;
+    for (int row = parity; row < kNumRows; row += 2) {
+      if (row == 1 || row == 6 || row == 11) {
+        ++expectedOuterNulls;
+        continue;
+      }
+      if (row == 3 || row == 8) {
+        ++expectedInnerNulls;
+        continue;
+      }
+      if (row == 5 || row == 10) {
+        ++expectedLeafNulls;
+        continue;
+      }
+      expectedValues.push_back(row);
+    }
+
+    EXPECT_EQ(numOuterNulls, expectedOuterNulls) << "parity " << parity;
+    EXPECT_EQ(numInnerNulls, expectedInnerNulls) << "parity " << parity;
+    EXPECT_EQ(numLeafNulls, expectedLeafNulls) << "parity " << parity;
+    EXPECT_EQ(values, expectedValues) << "parity " << parity;
+  }
+}
+
+// User example: page contains one column whose type is row(row(int)).
+// The OUTER ROW column has nulls every 2nd row, the LEAF has nulls every
+// 3rd row, and the inner ROW has no own nulls. Verifies:
+//   * the OUTER column block emits a 10-row block with nulls at rows
+//     0, 2, 4, 6, 8;
+//   * the leaf's wire payload contains exactly the 3 non-null values
+//     {1, 5, 7} that survive both ancestor filters;
+//   * after deserialize, the leaf is null at outer-non-null positions
+//     where the original leaf was null (rows 3 and 9).
+TEST_F(PrestoIterativePartitioningSerializerNestedRowNullTest, userExample) {
+  constexpr int kNumValues = 10;
+
+  // Page schema: ROW({"col"}, {OUTER}). OUTER = row(row(int)).
+  auto outerColType = ROW({"a"}, {ROW({"b"}, {INTEGER()})});
+  auto pageType = ROW({"col"}, {outerColType});
+
+  // Build leaf -> inner -> outer (with own nulls at rows 0,2,4,6,8) and
+  // wrap once more so OUTER becomes a column of the page rather than the
+  // page itself.
+  auto leaf = makeFlatVector<int32_t>(
+      kNumValues,
+      [](auto row) { return static_cast<int32_t>(row); },
+      nullEvery(3));
+  auto inner = makeRowVector({"b"}, {leaf});
+  auto outer = makeRowVector({"a"}, {inner}, nullEvery(2));
+  auto pageInput = makeRowVector({"col"}, {outer});
+
+  // Single partition keeps the wire format simple to reason about.
+  std::vector<uint32_t> partitions(kNumValues, 0);
+
+  auto serializer = makeSerializer(pageType, 1);
+  serializer->append(pageInput, partitions);
+  auto ioBufs = serializer->flush();
+  ASSERT_EQ(ioBufs.size(), 1);
+
+  auto page = deserialize(*ioBufs.at(0).first, pageType);
+  ASSERT_EQ(page->size(), kNumValues);
+
+  // OUTER column block: 5 nulls at rows 0, 2, 4, 6, 8.
+  auto* outerResult = page->childAt(0)->as<RowVector>();
+  ASSERT_NE(outerResult, nullptr);
+  for (int row = 0; row < kNumValues; ++row) {
+    if (row % 2 == 0) {
+      EXPECT_TRUE(outerResult->isNullAt(row)) << "row " << row;
+    } else {
+      EXPECT_FALSE(outerResult->isNullAt(row)) << "row " << row;
+    }
+  }
+
+  // INNER ROW had no own nulls. Drill down to the leaf.
+  auto* innerResult = outerResult->childAt(0)->as<RowVector>();
+  ASSERT_NE(innerResult, nullptr);
+  auto* leafResult = innerResult->childAt(0)->asFlatVector<int32_t>();
+  ASSERT_NE(leafResult, nullptr);
+
+  // Walk only outer-non-null rows. Leaf is null iff the original leaf was
+  // null at that row.
+  std::vector<int32_t> survivedValues;
+  int leafNullsAtOuterLive{0};
+  for (int row = 1; row < kNumValues; row += 2) {
+    if (leafResult->isNullAt(row)) {
+      ++leafNullsAtOuterLive;
+    } else {
+      survivedValues.push_back(leafResult->valueAt(row));
+    }
+  }
+  EXPECT_EQ(leafNullsAtOuterLive, 2); // rows 3 and 9
+  EXPECT_THAT(survivedValues, ::testing::ElementsAre(1, 5, 7));
+}
+
+TEST_F(
+    PrestoIterativePartitioningSerializerNestedRowNullTest,
+    parentNullsPropagateToNullFreeChildren) {
+  constexpr int kNumRows = 8;
+  auto type = ROW({"r"}, {ROW({"r"}, {ROW({"a"}, {INTEGER()})})});
+
+  auto leaf = makeFlatVector<int32_t>(kNumRows, [](auto row) { return row; });
+  auto inner = makeRowVector({"a"}, {leaf});
+  auto outer = makeRowVector({"r"}, {inner}, [](auto row) {
+    return row == 1 || row == 4 || row == 6;
+  });
+  auto input = makeRowVector({"r"}, {outer});
+
+  std::vector<uint32_t> partitions(kNumRows);
+  for (int i = 0; i < kNumRows; ++i) {
+    partitions[i] = i % 2;
+  }
+
+  auto serializer = makeSerializer(type, 2);
+  serializer->append(input, partitions);
+  auto ioBufs = serializer->flush();
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  for (int parity = 0; parity < 2; ++parity) {
+    auto page = deserialize(*ioBufs.at(parity).first, type);
+    ASSERT_EQ(page->size(), kNumRows / 2) << "parity " << parity;
+
+    auto* outerResult = page->childAt(0)->as<RowVector>();
+    auto* innerResult = outerResult->childAt(0)->as<RowVector>();
+    auto* leafResult = innerResult->childAt(0)->as<FlatVector<int32_t>>();
+
+    int numOuterNulls{0};
+    std::vector<int32_t> values;
+    for (int row = 0; row < page->size(); ++row) {
+      if (outerResult->isNullAt(row)) {
+        ++numOuterNulls;
+        continue;
+      }
+
+      EXPECT_FALSE(leafResult->isNullAt(row))
+          << "parity " << parity << " row " << row;
+      values.push_back(leafResult->valueAt(row));
+    }
+
+    std::vector<int32_t> expectedValues;
+    int expectedOuterNulls{0};
+    for (int row = parity; row < kNumRows; row += 2) {
+      if (row == 1 || row == 4 || row == 6) {
+        ++expectedOuterNulls;
+        continue;
+      }
+      expectedValues.push_back(row);
+    }
+
+    EXPECT_EQ(numOuterNulls, expectedOuterNulls) << "parity " << parity;
+    EXPECT_EQ(values, expectedValues) << "parity " << parity;
+  }
+}
+
+// Nulls at multiple nested ROW levels, spread over several appends and
+// partitions. Exercises the bulk AND / countBits / extractBits compaction
+// path in flushRowColumn: parent-null masks are combined down two ROW levels,
+// rows are counted per partition, and the per-level null bitmap is compacted
+// across batch boundaries before being flushed.
+TEST_F(
+    PrestoIterativePartitioningSerializerNestedRowNullTest,
+    multiLevelNullsMultiAppendMultiPartition) {
+  constexpr uint32_t kNumPartitions = 3;
+  auto type = ROW({"r"}, {ROW({"r"}, {ROW({"a"}, {INTEGER()})})});
+
+  // Two appends of different sizes. The outer ROW column is null on even
+  // global indices; the inner ROW is null on multiples of 3 (only observable
+  // where the outer ROW is non-null). The leaf carries the global index and
+  // has no nulls of its own.
+  struct Append {
+    int size;
+    int base;
+  };
+  const std::vector<Append> appends{{10, 0}, {7, 10}};
+
+  auto serializer = makeSerializer(type, kNumPartitions);
+
+  // Partitioning may reorder rows within a partition, so verify the per-row
+  // outcomes as an order-independent multiset. Each entry is
+  //   {0, 0}      -> outer ROW null,
+  //   {1, 0}      -> inner ROW null (outer not null),
+  //   {2, value}  -> leaf value present (no ancestor null).
+  std::vector<std::vector<std::pair<int, int32_t>>> expected(kNumPartitions);
+
+  for (const auto& a : appends) {
+    auto leaf =
+        makeFlatVector<int32_t>(a.size, [&](auto row) { return a.base + row; });
+    auto inner = makeRowVector(
+        {"a"}, {leaf}, [&](auto row) { return ((a.base + row) % 3) == 0; });
+    auto outer = makeRowVector(
+        {"r"}, {inner}, [&](auto row) { return ((a.base + row) % 2) == 0; });
+    auto input = makeRowVector({"r"}, {outer});
+
+    std::vector<uint32_t> partitions(a.size);
+    for (int row = 0; row < a.size; ++row) {
+      const int g = a.base + row;
+      const uint32_t p = g % kNumPartitions;
+      partitions[row] = p;
+      if ((g % 2) == 0) {
+        expected[p].emplace_back(0, 0);
+      } else if ((g % 3) == 0) {
+        expected[p].emplace_back(1, 0);
+      } else {
+        expected[p].emplace_back(2, g);
+      }
+    }
+    serializer->append(input, partitions);
+  }
+
+  auto ioBufs = serializer->flush();
+
+  for (uint32_t p = 0; p < kNumPartitions; ++p) {
+    ASSERT_EQ(ioBufs.count(p), 1) << "partition " << p;
+    auto page = deserialize(*ioBufs.at(p).first, type);
+    ASSERT_EQ(page->size(), static_cast<int32_t>(expected[p].size()))
+        << "partition " << p;
+
+    auto* outerResult = page->childAt(0)->as<RowVector>();
+    auto* innerResult = outerResult->childAt(0)->as<RowVector>();
+    auto* leafResult = innerResult->childAt(0)->as<FlatVector<int32_t>>();
+
+    std::vector<std::pair<int, int32_t>> actual;
+    actual.reserve(page->size());
+    for (int row = 0; row < page->size(); ++row) {
+      if (outerResult->isNullAt(row)) {
+        actual.emplace_back(0, 0);
+      } else if (innerResult->isNullAt(row)) {
+        actual.emplace_back(1, 0);
+      } else {
+        ASSERT_FALSE(leafResult->isNullAt(row))
+            << "partition " << p << " row " << row;
+        actual.emplace_back(2, leafResult->valueAt(row));
+      }
+    }
+
+    std::sort(actual.begin(), actual.end());
+    std::sort(expected[p].begin(), expected[p].end());
+    EXPECT_EQ(actual, expected[p]) << "partition " << p;
+  }
+}
+
+// flush() must not modify the vectors handed to append(): the caller may still
+// be holding them. Combining an ancestor's null mask into a level's own nulls
+// therefore needs a buffer of its own rather than the input's null bitmap.
+TEST_F(
+    PrestoIterativePartitioningSerializerNestedRowNullTest,
+    flushDoesNotModifyInput) {
+  auto type = ROW({"r"}, {ROW({"r"}, {ROW({"a"}, {INTEGER()})})});
+
+  // The inner ROW is null at row 2 only, the outer ROW at row 0 only, so the
+  // two masks must be combined for the leaf.
+  auto leaf = makeFlatVector<int32_t>({0, 1, 2, 3});
+  auto inner = makeRowVector({"a"}, {leaf}, [](auto row) { return row == 2; });
+  auto outer = makeRowVector({"r"}, {inner}, [](auto row) { return row == 0; });
+
+  const auto* innerNullsBefore = inner->rawNulls();
+  ASSERT_EQ(BaseVector::countNulls(inner->nulls(), 4), 1);
+
+  auto serializer = makeSerializer(type, 1);
+  serializer->append(makeRowVector({"r"}, {outer}), 0u);
+  auto ioBufs = serializer->flush();
+
+  EXPECT_EQ(inner->rawNulls(), innerNullsBefore);
+  EXPECT_EQ(BaseVector::countNulls(inner->nulls(), 4), 1);
+  EXPECT_FALSE(inner->isNullAt(0));
+
+  // The combined mask must still be applied to what is written.
+  ASSERT_EQ(ioBufs.size(), 1);
+  auto page = deserialize(*ioBufs.at(0).first, type);
+  ASSERT_EQ(page->size(), 4);
+  auto* outerResult = page->childAt(0)->as<RowVector>();
+  auto* innerResult = outerResult->childAt(0)->as<RowVector>();
+  auto* leafResult = innerResult->childAt(0)->as<FlatVector<int32_t>>();
+  EXPECT_TRUE(outerResult->isNullAt(0));
+  EXPECT_TRUE(innerResult->isNullAt(2));
+  EXPECT_EQ(leafResult->valueAt(1), 1);
+  EXPECT_EQ(leafResult->valueAt(3), 3);
+}
+
+// A VARCHAR leaf under a ROW round-trips as long as no ancestor ROW drops
+// rows. A null bitmap that is merely materialized, with no null set, drops
+// nothing and must not be mistaken for one that does.
+TEST_F(PrestoIterativePartitioningSerializerNestedRowNullTest, nestedVarchar) {
+  auto type = ROW({"r"}, {ROW({"s"}, {VARCHAR()})});
+
+  auto inner = makeRowVector(
+      {"s"}, {makeFlatVector<std::string>({"aa", "bb", "cc", "dd"})});
+  // Materialize an all-not-null bitmap the way setNull()/ensureWritable() do.
+  inner->setNull(0, true);
+  inner->setNull(0, false);
+  ASSERT_NE(inner->rawNulls(), nullptr);
+  ASSERT_EQ(BaseVector::countNulls(inner->nulls(), 4), 0);
+
+  auto serializer = makeSerializer(type, 2);
+  serializer->append(makeRowVector({"r"}, {inner}), {0, 1, 0, 1});
+
+  auto ioBufs = serializer->flush();
+  ASSERT_EQ(ioBufs.size(), 2);
+
+  auto leafValues = [&](uint32_t partition) {
+    auto page = deserialize(*ioBufs.at(partition).first, type);
+    auto* leaf = page->childAt(0)
+                     ->as<RowVector>()
+                     ->childAt(0)
+                     ->as<FlatVector<StringView>>();
+    std::vector<std::string> values;
+    for (auto row = 0; row < page->size(); ++row) {
+      values.push_back(leaf->valueAt(row).str());
+    }
+    return values;
+  };
+
+  EXPECT_THAT(leafValues(0), testing::ElementsAre("aa", "cc"));
+  EXPECT_THAT(leafValues(1), testing::ElementsAre("bb", "dd"));
+}
+
+// A VARCHAR leaf whose ancestor ROW actually drops rows is not supported yet.
+// The buffered offsets and values cover every partitioned row, so the writer
+// cannot skip the rows the ancestor discards.
+TEST_F(
+    PrestoIterativePartitioningSerializerNestedRowNullTest,
+    nestedVarcharUnderNullRow) {
+  auto type = ROW({"r"}, {ROW({"s"}, {VARCHAR()})});
+
+  auto inner = makeRowVector(
+      {"s"},
+      {makeFlatVector<std::string>({"aa", "bb", "cc", "dd"})},
+      [](auto row) { return row == 0; });
+
+  auto serializer = makeSerializer(type, 2);
+  serializer->append(makeRowVector({"r"}, {inner}), {0, 1, 0, 1});
+
+  VELOX_ASSERT_THROW(
+      serializer->flush(),
+      "Variable-width columns nested under a ROW with nulls are not supported");
+}
+
+// A struct column can arrive CONSTANT-encoded, in which case
+// PartitionedVector::create() produces a PartitionedConstantVector rather than
+// a PartitionedRowVector. Both the size estimate and append() must report the
+// unsupported encoding instead of misinterpreting the vector.
+TEST_F(
+    PrestoIterativePartitioningSerializerNestedRowNullTest,
+    constantEncodedRowColumn) {
+  auto type = ROW({"r"}, {ROW({"a"}, {INTEGER()})});
+  auto serializer = makeSerializer(type, 2);
+
+  auto input = makeRowVector(
+      {"r"},
+      {BaseVector::wrapInConstant(
+          4, 0, makeRowVector({"a"}, {makeFlatVector<int32_t>({7})}))});
+
+  VELOX_ASSERT_THROW(
+      serializer->estimateBytesAfterAppend(input),
+      "Unsupported encoding for a ROW column");
+  VELOX_ASSERT_THROW(
+      serializer->append(input, {0, 1, 0, 1}),
+      "Unsupported encoding for a ROW column");
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Levels,
+    PrestoIterativePartitioningSerializerNestedRowTest,
+    ::testing::Values(1, 2, 3),
+    [](const ::testing::TestParamInfo<int>& info) {
+      return "level" + std::to_string(info.param);
+    });
+
 // ---------------------------------------------------------------------------
 // Non-typed fixture (TEST_F) — lifecycle, structural, regression
 // ---------------------------------------------------------------------------

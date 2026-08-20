@@ -207,13 +207,44 @@ TEST_P(PartitioningVectorTest, testRowVector) {
       {makeFlatVector<int32_t>(numValues, [](auto row) { return row; })},
       [](auto /*row*/) { return true; }));
 
-  // Nested RowVector.
+  // Nested RowVector, no nulls at any level.
   testVectorPartitioning(makeRowVector({
       makeFlatVector<int32_t>(numValues, [](auto row) { return row; }),
       makeRowVector({
           makeFlatVector<int64_t>(numValues, [](auto row) { return row; }),
       }),
   }));
+
+  // Nested RowVector with row-level nulls on the outer row.
+  testVectorPartitioning(makeRowVector(
+      {makeRowVector({
+          makeFlatVector<int32_t>(numValues, [](auto row) { return row; }),
+      })},
+      nullEvery(2)));
+
+  // Nested RowVector with row-level nulls on the inner row.
+  testVectorPartitioning(makeRowVector({
+      makeRowVector(
+          {makeFlatVector<int32_t>(numValues, [](auto row) { return row; })},
+          nullEvery(3)),
+  }));
+
+  // Nested RowVector with row-level nulls at both levels.
+  testVectorPartitioning(makeRowVector(
+      {makeRowVector(
+          {makeFlatVector<int32_t>(numValues, [](auto row) { return row; })},
+          nullEvery(3))},
+      nullEvery(2)));
+
+  // Three-level nesting with nulls at every level.
+  testVectorPartitioning(makeRowVector(
+      {makeRowVector(
+          {makeRowVector(
+              {makeFlatVector<int32_t>(
+                  numValues, [](auto row) { return row; })},
+              nullEvery(4))},
+          nullEvery(3))},
+      nullEvery(2)));
 }
 
 TEST_P(PartitioningVectorTest, testConstantVector) {
@@ -449,6 +480,80 @@ TEST_P(PartitioningVectorTest, numNullsAtRowRowLevelNulls) {
         BaseVector::countNulls(child->baseVector()->nulls(), begin, end);
     EXPECT_EQ(child->numNullsAt(p), expected)
         << "Child null count mismatch, partition " << p;
+  }
+}
+
+// numNullsAt() for a nested RowVector must track outer and inner null counts
+// independently at every level of nesting.
+TEST_P(PartitioningVectorTest, numNullsAtNestedRow) {
+  const int numValues = 10;
+
+  // Outer row-level nulls on every even row; inner child has no nulls.
+  auto inner = makeRowVector({
+      makeFlatVector<int32_t>(
+          numValues, [](auto row) { return row; }, nullEvery(3)),
+  });
+  auto outer = makeRowVector({inner}, nullEvery(2));
+
+  std::vector<uint32_t> partitions(numValues);
+  for (int i = 0; i < numValues; ++i) {
+    partitions[i] = i % 3;
+  }
+  auto pv = PartitionedVector::create(outer, partitions, 3, ctx_, pool_.get());
+
+  // Outer null counts must match a manual bit-scan of the outer null bitmap.
+  const auto* rawOffsets = pv->rawPartitionOffsets();
+  for (uint32_t p = 0; p < 3; ++p) {
+    const vector_size_t begin = p == 0 ? 0 : rawOffsets[p - 1];
+    const vector_size_t end = rawOffsets[p];
+    const vector_size_t expected =
+        BaseVector::countNulls(pv->baseVector()->nulls(), begin, end);
+    EXPECT_EQ(pv->numNullsAt(p), expected)
+        << "outer null count mismatch, partition " << p;
+  }
+
+  // Inner RowVector child must report zero nulls (it has no null bitmap).
+  auto* prv = dynamic_cast<PartitionedRowVector*>(pv.get());
+  ASSERT_NE(prv, nullptr);
+  auto innerPv = prv->childAt(0);
+  for (uint32_t p = 0; p < 3; ++p) {
+    EXPECT_EQ(innerPv->numNullsAt(p), 0)
+        << "inner null count must be zero when inner has no nulls, partition "
+        << p;
+  }
+
+  // Repeat with nulls on both the outer and inner RowVector.
+  auto innerWithNulls = makeRowVector(
+      {makeFlatVector<int32_t>(numValues, [](auto row) { return row; })},
+      nullEvery(3));
+  auto outerWithNulls =
+      makeRowVector({BaseVector::copy(*innerWithNulls)}, nullEvery(2));
+
+  auto pv2 = PartitionedVector::create(
+      outerWithNulls, partitions, 3, ctx_, pool_.get());
+
+  const auto* rawOffsets2 = pv2->rawPartitionOffsets();
+  auto* prv2 = dynamic_cast<PartitionedRowVector*>(pv2.get());
+  ASSERT_NE(prv2, nullptr);
+  auto innerPv2 = prv2->childAt(0);
+  const auto* innerOffsets = innerPv2->rawPartitionOffsets();
+
+  for (uint32_t p = 0; p < 3; ++p) {
+    // Outer nulls.
+    const vector_size_t outerBegin = p == 0 ? 0 : rawOffsets2[p - 1];
+    const vector_size_t outerEnd = rawOffsets2[p];
+    const vector_size_t expectedOuter = BaseVector::countNulls(
+        pv2->baseVector()->nulls(), outerBegin, outerEnd);
+    EXPECT_EQ(pv2->numNullsAt(p), expectedOuter)
+        << "outer null count mismatch (both levels), partition " << p;
+
+    // Inner nulls must be tracked independently of the outer nulls.
+    const vector_size_t innerBegin = p == 0 ? 0 : innerOffsets[p - 1];
+    const vector_size_t innerEnd = innerOffsets[p];
+    const vector_size_t expectedInner = BaseVector::countNulls(
+        innerPv2->baseVector()->nulls(), innerBegin, innerEnd);
+    EXPECT_EQ(innerPv2->numNullsAt(p), expectedInner)
+        << "inner null count mismatch (both levels), partition " << p;
   }
 }
 
