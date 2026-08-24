@@ -79,12 +79,24 @@ struct TestParam {
 std::vector<TestParam> testParams() {
   std::vector<TestParam> params;
 
-  const std::vector<std::pair<std::string, TypePtr>> types = {
+  // Builds an n-level nested ROW: 1 → ROW(int, bigint); 2 → ROW(int, row1);
+  // 3 → ROW(int, row2); …. The "r" child carries the next nesting level.
+  std::function<TypePtr(int)> nestedRow = [&](int level) -> TypePtr {
+    if (level <= 1) {
+      return ROW({"a", "b"}, {INTEGER(), BIGINT()});
+    }
+    return ROW({"a", "r"}, {INTEGER(), nestedRow(level - 1)});
+  };
+
+  std::vector<std::pair<std::string, TypePtr>> types = {
       {"bool", BOOLEAN()},
       {"tinyint", TINYINT()},
       {"bigint", BIGINT()},
       {"hugeint", HUGEINT()},
   };
+  for (int level = 1; level <= 3; ++level) {
+    types.emplace_back("row" + std::to_string(level), nestedRow(level));
+  }
 
   const std::vector<std::pair<std::string, NullMode>> nullModes = {
       {"no_null", NullMode::kNoNull},
@@ -475,8 +487,56 @@ class OptimizedPartitionedOutputParamTest
     VELOX_UNREACHABLE();
   }
 
-  /// Creates a flat vector of the param's value type with random values and
-  /// nulls applied according to nullMode.
+  /// Recursively creates a vector of the given type with random values. Only
+  /// the top-level row carries row-level nulls (applied by the caller via
+  /// makeRandomValueVector); leaf flat vectors are non-null inside this helper.
+  VectorPtr makeRandomVectorOfType(
+      const TypePtr& type,
+      int numRows,
+      std::mt19937_64& rng) {
+    switch (type->kind()) {
+      case TypeKind::BOOLEAN:
+        return vectorMaker_.flatVector<bool>(
+            numRows, [&](auto /*i*/) -> bool { return rng() % 2 == 0; });
+      case TypeKind::TINYINT:
+        return vectorMaker_.flatVector<int8_t>(
+            numRows,
+            [&](auto /*i*/) -> int8_t { return static_cast<int8_t>(rng()); });
+      case TypeKind::INTEGER:
+        return vectorMaker_.flatVector<int32_t>(
+            numRows,
+            [&](auto /*i*/) -> int32_t { return static_cast<int32_t>(rng()); });
+      case TypeKind::BIGINT:
+        return vectorMaker_.flatVector<int64_t>(
+            numRows,
+            [&](auto /*i*/) -> int64_t { return static_cast<int64_t>(rng()); });
+      case TypeKind::HUGEINT:
+        return vectorMaker_.flatVector<int128_t>(
+            numRows, [&](auto /*i*/) -> int128_t {
+              int64_t hi = static_cast<int64_t>(rng());
+              uint64_t lo = rng();
+              return (static_cast<int128_t>(hi) << 64) |
+                  static_cast<int128_t>(lo);
+            });
+      case TypeKind::ROW: {
+        const auto& rowType = type->asRow();
+        std::vector<VectorPtr> children;
+        children.reserve(rowType.size());
+        for (size_t i = 0; i < rowType.size(); ++i) {
+          children.push_back(
+              makeRandomVectorOfType(rowType.childAt(i), numRows, rng));
+        }
+        return vectorMaker_.rowVector(rowType.names(), children);
+      }
+      default:
+        VELOX_UNREACHABLE("Unsupported value type: {}", type->toString());
+    }
+  }
+
+  /// Creates a vector of the param's value type with random values and nulls
+  /// applied at the top level according to nullMode. For flat scalar types the
+  /// nulls are placed on the leaf. For ROW types the nulls are placed at the
+  /// outermost row level only; child columns themselves remain null-free.
   VectorPtr makeRandomValueVector(int numRows, std::mt19937_64& rng) {
     auto isNullFn = [this](vector_size_t i) -> bool { return isNull(i); };
 
@@ -506,6 +566,16 @@ class OptimizedPartitionedOutputParamTest
                   static_cast<int128_t>(lo);
             },
             isNullFn);
+      case TypeKind::ROW: {
+        auto result = std::dynamic_pointer_cast<RowVector>(
+            makeRandomVectorOfType(param().valueType, numRows, rng));
+        for (vector_size_t i = 0; i < numRows; ++i) {
+          if (isNull(i)) {
+            result->setNull(i, true);
+          }
+        }
+        return result;
+      }
       default:
         VELOX_UNREACHABLE(
             "Unsupported value type: {}", param().valueType->toString());
