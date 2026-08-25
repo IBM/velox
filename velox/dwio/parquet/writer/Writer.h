@@ -146,6 +146,7 @@ struct ParquetWriterOptions : public dwio::common::FormatSpecificOptions {
   std::optional<uint64_t> rowGroupSizeBytes;
   /// Maximum number of rows in a row group.
   std::optional<uint64_t> rowGroupRows;
+  std::optional<int64_t> dataPageRowLimit;
   std::optional<bool> enableDictionary;
   /// Controls the level of Parquet size statistics written by the Arrow bridge.
   /// NONE disables size statistics; COLUMN_CHUNK writes column-chunk
