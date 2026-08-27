@@ -843,6 +843,19 @@ TEST_P(PrestoSerializerTest, basic) {
   testRoundTrip(rowVector);
 }
 
+TEST_P(PrestoSerializerTest, NestedRow) {
+  const int numValues = 10;
+
+  // Outer row-level nulls on every even row; inner child has no nulls.
+  auto inner = makeRowVector({
+      makeFlatVector<int32_t>(
+          numValues, [](auto row) { return row; }, nullEvery(3)),
+  });
+  auto outer = makeRowVector({inner}, nullEvery(2));
+
+  testRoundTrip(outer);
+}
+
 TEST_P(PrestoSerializerTest, basicLarge) {
 #ifndef NDEBUG
   constexpr vector_size_t kNumRows = 20'000;
