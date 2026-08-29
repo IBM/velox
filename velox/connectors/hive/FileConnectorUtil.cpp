@@ -144,10 +144,13 @@ void configureReaderOptions(
   readerOptions.setFileColumnNamesReadAsLowerCase(
       fileConfig->isFileColumnNamesReadAsLowerCase(sessionProperties));
   readerOptions.setAllowEmptyFile(true);
-  readerOptions.setColumnMappingMode(
+  // A split-level mode, when present, overrides the session/connector config.
+  const auto columnMappingMode = fileSplit->columnMappingMode.value_or(
       useColumnNames(*fileConfig, *sessionProperties, fileSplit->fileFormat)
           ? dwio::common::ColumnMappingMode::kName
           : dwio::common::ColumnMappingMode::kPosition);
+  validateColumnMappingMode(columnMappingMode, fileSplit->fileFormat);
+  readerOptions.setColumnMappingMode(columnMappingMode);
   readerOptions.setFileSchema(fileSchema);
   readerOptions.setFilePreloadThreshold(fileConfig->filePreloadThreshold());
   readerOptions.setPrefetchRowGroups(fileConfig->prefetchRowGroups());
