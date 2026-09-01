@@ -1823,6 +1823,26 @@ TEST_F(ParquetReaderTest, structOfArrayOfArray) {
   }
 }
 
+// The first physical branch ends in a legacy repeated primitive. Reading the
+// enclosing struct with no logical children must select the primitive leaf,
+// not its ARRAY wrapper, as the rep/def source.
+TEST_F(ParquetReaderTest, legacyRepDefSource) {
+  auto readerOptions = makeDefaultReaderOptions();
+  readerOptions.setColumnMappingMode(ColumnMappingMode::kName);
+  auto reader = createReader("struct_of_array_of_array.parquet", readerOptions);
+  auto scanSpec = std::make_shared<ScanSpec>("");
+  auto* structSpec = scanSpec->getOrCreateChild(Subfield("test"));
+  structSpec->setFilter(exec::isNotNull());
+  structSpec->setProjectOut(false);
+
+  RowReaderOptions options;
+  options.setScanSpec(scanSpec);
+  auto rowReader = reader->createRowReader(options);
+  auto result = BaseVector::create(ROW({}, {}), 0, leafPool_.get());
+  EXPECT_EQ(rowReader->next(20'000, result), 13'520);
+  EXPECT_EQ(result->size(), 13'520);
+}
+
 TEST_F(ParquetReaderTest, testLzoDataPage) {
   auto outputRowType = ROW(
       {"test"},
