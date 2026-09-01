@@ -447,6 +447,28 @@ class BaseHashTable {
   /// be deduplicated, but it will not impact the containing row container.
   virtual void setAllowDuplicates(bool allowDuplicates) = 0;
 
+  /// Marks this table as being built only in order to be serialized with
+  /// serializeTo(), never probed in this process. Must be set before
+  /// prepareJoinTable().
+  ///
+  /// serializeTo() does not write the slot array: it holds absolute pointers
+  /// into the row container, which are meaningless in the process that reads
+  /// the table back, so deserializeFrom() allocates the slot array and inserts
+  /// the build rows into it itself. Building the slot array here as well is
+  /// therefore pure duplicated work, and for a large build side it is a
+  /// substantial part of both the build time and the peak memory.
+  ///
+  /// Everything that does go on the wire is still produced: the hash mode
+  /// decision, the VectorHasher value id state, the normalized keys written
+  /// into the rows, and the bloom filters.
+  void setBuildForSerializationOnly(bool value) {
+    buildForSerializationOnly_ = value;
+  }
+
+  bool buildForSerializationOnly() const {
+    return buildForSerializationOnly_;
+  }
+
   /// Returns the memory footprint in bytes for any data structures
   /// owned by 'this'.
   virtual int64_t allocatedBytes() const = 0;
@@ -591,6 +613,9 @@ class BaseHashTable {
 
   std::vector<std::unique_ptr<VectorHasher>> hashers_;
   std::unique_ptr<RowContainer> rows_;
+
+  // See setBuildForSerializationOnly().
+  bool buildForSerializationOnly_{false};
 
   ParallelJoinBuildStats parallelJoinBuildStats_;
   CpuWallTiming vectorHasherMergeTiming_;
@@ -848,6 +873,23 @@ class HashTable : public BaseHashTable {
   /// are left till the end of the table.
   std::string toString(int64_t startBucket, int64_t numBuckets = 1) const;
 
+  /// Returns the exact serialized size in bytes for the current hash table.
+  size_t serializedSize() const;
+
+  /// Serializes the hash table directly to a caller-provided memory buffer.
+  /// @param data Destination buffer
+  /// @param size Size of destination buffer in bytes. Must equal
+  /// serializedSize().
+  void serializeTo(void* data, size_t size) const;
+
+  /// Deserializes the hash table directly from a contiguous memory buffer.
+  /// @param data Serialized hash table bytes
+  /// @param size Serialized hash table size in bytes
+  /// @param pool Memory pool for allocating deserialized data
+  /// @return A new HashTable instance with deserialized data
+  static std::unique_ptr<HashTable<ignoreNullKeys>>
+  deserializeFrom(const void* data, size_t size, memory::MemoryPool* pool);
+
   /// Invoked to check the consistency of the internal state. The function scans
   /// all the table slots to check if the relevant slot counting are correct
   /// such as the number of used slots ('numDistinct_') and the number of
@@ -882,6 +924,12 @@ class HashTable : public BaseHashTable {
   }
 
  private:
+  // Writes the serialized form to 'writer'. 'Writer' is either a writer that
+  // only counts the bytes, for serializedSize(), or one that fills in a
+  // destination buffer, for serializeTo().
+  template <typename Writer>
+  void serializeImpl(Writer& writer) const;
+
   // Enables debug stats for collisions for debug build.
 #ifdef NDEBUG
   static constexpr bool kTrackLoads = false;
