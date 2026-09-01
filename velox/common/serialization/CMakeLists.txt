@@ -17,7 +17,6 @@ velox_add_library(
   DeserializationRegistry.cpp
   HEADERS
   DeserializationRegistry.h
-  NativeSerdeIO.h
   Registry.h
   Serializable.h
 )
