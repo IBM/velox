@@ -174,6 +174,9 @@ enum class ExchangeInputKind {
   kDeep10K,
   kDeep50,
   kStruct1K,
+  kNested1_1K,
+  kNested2_1K,
+  kNested3_1K,
 };
 
 struct ExchangeInputSpec {
@@ -246,6 +249,18 @@ RowTypePtr makeDeepType() {
                 ROW({{"s2_int", INTEGER()}, {"s2_string", VARCHAR()}})))}});
 }
 
+// N levels of single-field ROW wrapping a BIGINT leaf, behind a BIGINT "c0"
+// partition key. Exercises the nested-ROW serialization path; combined with
+// nullPct it produces nulls at every ROW level and the leaf, on disjoint sets
+// of rows.
+RowTypePtr makeNestedType(int level) {
+  TypePtr inner = BIGINT();
+  for (int i = 0; i < level; ++i) {
+    inner = ROW({"r"}, {inner});
+  }
+  return ROW({"c0", "v"}, {BIGINT(), inner});
+}
+
 ExchangeInputSpec makeInputSpec(ExchangeInputKind kind) {
   switch (kind) {
     case ExchangeInputKind::kDeep10K:
@@ -254,6 +269,12 @@ ExchangeInputSpec makeInputSpec(ExchangeInputKind kind) {
       return {"Deep50", makeDeepType(), 2000, 50};
     case ExchangeInputKind::kStruct1K:
       return {"Struct1K", makeStructType(), 100, 1000};
+    case ExchangeInputKind::kNested1_1K:
+      return {"Nested1_1K", makeNestedType(1), 100, 1000};
+    case ExchangeInputKind::kNested2_1K:
+      return {"Nested2_1K", makeNestedType(2), 100, 1000};
+    case ExchangeInputKind::kNested3_1K:
+      return {"Nested3_1K", makeNestedType(3), 100, 1000};
   }
 
   VELOX_UNREACHABLE();
@@ -360,20 +381,24 @@ class ExchangeBenchmark : public VectorTestBase {
  public:
   /// Creates a single flat column of `type` with `numRows` rows.
   /// Approximately `nullPct` percent of rows are set to null, distributed
-  /// uniformly (row % 100 < nullPct). Non-null values are sequential integers
-  /// cast to the native type. VARCHAR values alternate between inline and
-  /// non-inline strings, and `vectorIndex` helps constant columns cover both
-  /// cases.
+  /// uniformly over a window of 100 rows starting at `nullPhase`
+  /// ((row + nullPhase) % 100 < nullPct). Non-null values are sequential
+  /// integers cast to the native type. VARCHAR values alternate between inline
+  /// and non-inline strings, and `vectorIndex` helps constant columns cover
+  /// both cases.
   VectorPtr makeColumn(
       const TypePtr& type,
       int32_t numRows,
       int32_t nullPct,
-      int32_t vectorIndex = 0) {
+      int32_t vectorIndex = 0,
+      int32_t nullPhase = 0) {
     std::function<bool(vector_size_t)> isNull;
     if (nullPct == 100) {
       isNull = [](auto) { return true; };
     } else if (nullPct > 0) {
-      isNull = [nullPct](vector_size_t row) { return (row % 100) < nullPct; };
+      isNull = [nullPct, nullPhase](vector_size_t row) {
+        return ((row + nullPhase) % 100) < nullPct;
+      };
     }
 
     switch (type->kind()) {
@@ -422,6 +447,30 @@ class ExchangeBenchmark : public VectorTestBase {
             },
             isNull,
             type);
+      case TypeKind::ROW: {
+        // Build each child independently and apply row-level nulls so a ROW
+        // column carries nulls at this level and, recursively, at every nested
+        // ROW level and the leaf. Advancing the null window by nullPct per
+        // level keeps the per-level null positions disjoint, so a null parent
+        // really does drop rows its children would otherwise write. Sharing one
+        // window across levels would make every mask identical and leave that
+        // path unexercised.
+        const auto& rowType = type->asRow();
+        std::vector<std::string> names;
+        std::vector<VectorPtr> children;
+        names.reserve(rowType.size());
+        children.reserve(rowType.size());
+        for (auto i = 0; i < rowType.size(); ++i) {
+          names.push_back(rowType.nameOf(i));
+          children.push_back(makeColumn(
+              rowType.childAt(i),
+              numRows,
+              nullPct,
+              vectorIndex,
+              nullPhase + nullPct));
+        }
+        return makeRowVector(names, children, isNull);
+      }
       default:
         VELOX_NYI(
             "makeColumn does not support complex type {} yet",
@@ -1046,11 +1095,23 @@ EXCHANGE_BENCHMARK_DICTIONARY_CASE(
 //     10K_Varchar_col16,
 //     makeInputSpec(SimpleColType::kVarchar, 16));
 
-// The complex type benchmarks are temporarily disabled.
+// The ARRAY/MAP complex type benchmarks are temporarily disabled because
+// makeColumn does not generate ARRAY/MAP yet.
 // EXCHANGE_BENCHMARK_CASE(Deep10K, makeInputSpec(ExchangeInputKind::kDeep10K));
 // EXCHANGE_BENCHMARK_CASE(Deep50, makeInputSpec(ExchangeInputKind::kDeep50));
 // EXCHANGE_BENCHMARK_CASE(Struct1K,
 // makeInputSpec(ExchangeInputKind::kStruct1K));
+
+// Nested ROW columns (makeColumn supports ROW recursively).
+EXCHANGE_BENCHMARK_CASE(
+    Nested1_1K,
+    makeInputSpec(ExchangeInputKind::kNested1_1K));
+EXCHANGE_BENCHMARK_CASE(
+    Nested2_1K,
+    makeInputSpec(ExchangeInputKind::kNested2_1K));
+EXCHANGE_BENCHMARK_CASE(
+    Nested3_1K,
+    makeInputSpec(ExchangeInputKind::kNested3_1K));
 
 #undef EXCHANGE_BENCHMARK_CASE
 #undef EXCHANGE_BENCHMARK_DICTIONARY_CASE
