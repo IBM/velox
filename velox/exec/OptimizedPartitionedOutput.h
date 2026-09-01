@@ -16,9 +16,13 @@
 
 #pragma once
 
+#include <optional>
+
 #include "velox/exec/DefaultOutputBufferManager.h"
 #include "velox/exec/Operator.h"
 #include "velox/serializers/PrestoIterativePartitioningSerializer.h"
+#include "velox/vector/DecodedVector.h"
+#include "velox/vector/SelectivityVector.h"
 
 namespace facebook::velox::exec {
 
@@ -32,6 +36,13 @@ class OptimizedPartitionedOutput : public Operator {
   /// Minimum flush size for non-final flush; 60 KB + overhead fits a 64 KB
   /// network MTU.
   static constexpr uint64_t kMinDestinationSize = 60 * 1024;
+  static constexpr vector_size_t kMaxRowsPerDestinationBeforeFlush = 10'000;
+
+  /// Caps dictionary-expanded rows allocated by one replication append.
+  static constexpr int64_t kMaxReplicaRowsPerAppend = 100'000;
+
+  /// Caps retained replication metadata not included in bytesBuffered().
+  static constexpr uint32_t kMaxReplicationAppendsPerFlush = 64;
 
   OptimizedPartitionedOutput(
       int32_t operatorId,
@@ -55,9 +66,43 @@ class OptimizedPartitionedOutput : public Operator {
   bool isFinished() override;
 
  private:
+  struct ReplicaBatch {
+    RowVectorPtr rowsToReplicate;
+    uint32_t mainAppendDestination;
+  };
+
+  struct PendingReplication {
+    ReplicaBatch batch;
+    uint32_t nextDestination;
+  };
+
   /// Computes the serializer input columns and the mapping from output columns
   /// to serializer input columns.
   void initializeSerializerLayout();
+
+  const SelectivityVector& collectNullRows(const RowVector& input);
+
+  // Collects and copies rows that must be sent to every destination. Returns
+  // std::nullopt when no replication is needed.
+  std::optional<ReplicaBatch> prepareReplication(
+      const RowVector& input,
+      const RowVectorPtr& serializerInput,
+      const std::optional<uint32_t>& singlePartition);
+
+  RowVectorPtr copyRows(
+      const RowVectorPtr& source,
+      const std::vector<vector_size_t>& rows);
+
+  // Repeats rows once per destination using dictionary encoding.
+  RowVectorPtr makeReplicaChunk(
+      const RowVectorPtr& rowsToReplicate,
+      const std::vector<uint32_t>& chunkDestinations);
+
+  // Flushes if needed before a replication append. Returns false if the flush
+  // blocks and the append must be resumed later.
+  bool ensureReplicationAppendCapacity(const RowVectorPtr& appendInput);
+
+  void appendReplicatedRows(ReplicaBatch batch, uint32_t nextDestination);
 
   /// Builds the RowVector consumed by the serializer. When the output layout
   /// has duplicated columns, this projects only the distinct columns and
@@ -106,6 +151,17 @@ class OptimizedPartitionedOutput : public Operator {
   BlockingReason blockingReason_{BlockingReason::kNotBlocked};
   ContinueFuture future_;
   bool finished_{false};
+
+  bool replicatedAny_{false};
+  uint32_t replicationAppendsSinceLastFlush_{0};
+
+  SelectivityVector rows_;
+  SelectivityVector nullRows_;
+  std::vector<DecodedVector> decodedVectors_;
+  std::vector<vector_size_t> replicatedRowIds_;
+  std::vector<uint32_t> replicaPartitions_;
+
+  std::optional<PendingReplication> pendingReplication_;
 
   /// Counts addInput() calls that appended at least one row to the serializer.
   /// Exposed as the "numAppendTimes" runtime stat.

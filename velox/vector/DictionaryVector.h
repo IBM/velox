@@ -146,6 +146,18 @@ class DictionaryVector : public SimpleVector<T> {
     indices_ = std::move(indices);
   }
 
+  /// Replaces the dictionary indices in place. The caller must own this
+  /// vector exclusively: no copy-on-write is performed, so any other holder
+  /// of the vector observes the new indices. The buffer must hold at least
+  /// size() indices.
+  void setIndices(BufferPtr indices) {
+    VELOX_CHECK_NOT_NULL(indices);
+    VELOX_CHECK_GE(
+        indices->size(), BaseVector::length_ * sizeof(vector_size_t));
+    setWrapInfo(std::move(indices));
+    rawIndices_ = indices_->as<vector_size_t>();
+  }
+
   BufferPtr mutableIndices(vector_size_t size) {
     BaseVector::resizeIndices(
         BaseVector::length_, size, BaseVector::pool_, indices_, &rawIndices_);
