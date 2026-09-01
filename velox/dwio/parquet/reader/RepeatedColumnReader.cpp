@@ -27,16 +27,33 @@ PageReader* readLeafRepDefs(
     dwio::common::SelectiveColumnReader* reader,
     int32_t numTop,
     bool mustRead) {
-  auto children = reader->children();
+  const auto& children = reader->children();
+  PageReader* pageReader = nullptr;
+  if (auto structReader = dynamic_cast<StructColumnReader*>(reader)) {
+    // A struct can have no logical children and use a separate physical leaf
+    // solely as its rep/def source.
+    auto* repDefSourceReader = structReader->repDefSourceReader();
+    VELOX_CHECK_NOT_NULL(
+        repDefSourceReader,
+        "Cannot source repetition/definition levels for nested struct: {}",
+        structReader->fileType().fullName());
+    pageReader = readLeafRepDefs(repDefSourceReader, numTop, true);
+    structReader->setNullsFromRepDefs(*pageReader);
+    for (auto* child : children) {
+      if (child != repDefSourceReader) {
+        readLeafRepDefs(child, numTop, false);
+      }
+    }
+    return pageReader;
+  }
   if (children.empty()) {
     if (!mustRead) {
       return nullptr;
     }
-    auto pageReader = reader->formatData().as<ParquetData>().reader();
-    pageReader->decodeRepDefs(numTop);
-    return pageReader;
+    auto* leafPageReader = reader->formatData().as<ParquetData>().reader();
+    leafPageReader->decodeRepDefs(numTop);
+    return leafPageReader;
   }
-  PageReader* pageReader = nullptr;
   auto& type = *reinterpret_cast<const ParquetTypeWithId*>(&reader->fileType());
   if (type.type()->kind() == TypeKind::ARRAY) {
     pageReader = readLeafRepDefs(children[0], numTop, true);
@@ -53,29 +70,20 @@ PageReader* readLeafRepDefs(
     map->setLengthsFromRepDefs(*pageReader);
     return pageReader;
   }
-  if (auto structReader = dynamic_cast<StructColumnReader*>(reader)) {
-    pageReader = readLeafRepDefs(structReader->childForRepDefs(), numTop, true);
-    assert(pageReader);
-    structReader->setNullsFromRepDefs(*pageReader);
-    for (auto i = 0; i < children.size(); ++i) {
-      auto child = children[i];
-      if (child != structReader->childForRepDefs()) {
-        readLeafRepDefs(child, numTop, false);
-      }
-    }
-  }
   return pageReader;
 }
 
 void skipUnreadLengthsAndNulls(dwio::common::SelectiveColumnReader& reader) {
-  auto children = reader.children();
+  if (auto* structReader = dynamic_cast<StructColumnReader*>(&reader)) {
+    structReader->seekToEndOfPresetNulls();
+    return;
+  }
+  const auto& children = reader.children();
   if (children.empty()) {
     return;
   }
   if (reader.fileType().type()->kind() == TypeKind::ARRAY) {
     reinterpret_cast<ListColumnReader*>(&reader)->skipUnreadLengths();
-  } else if (reader.fileType().type()->kind() == TypeKind::ROW) {
-    reinterpret_cast<StructColumnReader*>(&reader)->seekToEndOfPresetNulls();
   } else if (reader.fileType().type()->kind() == TypeKind::MAP) {
     reinterpret_cast<MapColumnReader*>(&reader)->skipUnreadLengths();
   } else {
@@ -83,19 +91,36 @@ void skipUnreadLengthsAndNulls(dwio::common::SelectiveColumnReader& reader) {
   }
 }
 
-void enqueueChildren(
-    dwio::common::SelectiveColumnReader* reader,
+} // namespace
+
+void enqueueRowGroupRecursive(
+    dwio::common::SelectiveColumnReader& reader,
     uint32_t index,
     dwio::common::BufferedInput& input) {
-  auto children = reader->children();
+  const auto& children = reader.children();
   if (children.empty()) {
-    return reader->formatData().as<ParquetData>().enqueueRowGroup(index, input);
+    if (auto* structReader = dynamic_cast<StructColumnReader*>(&reader)) {
+      auto* repDefSourceReader = structReader->repDefSourceReader();
+      if (!repDefSourceReader) {
+        auto& type = reinterpret_cast<const ParquetTypeWithId&>(
+            structReader->fileType());
+        if (!type.parent()) {
+          return;
+        }
+        VELOX_CHECK_NOT_NULL(
+            repDefSourceReader,
+            "Cannot source repetition/definition levels for nested struct: {}",
+            structReader->fileType().fullName());
+      }
+      enqueueRowGroupRecursive(*repDefSourceReader, index, input);
+      return;
+    }
+    return reader.formatData().as<ParquetData>().enqueueRowGroup(index, input);
   }
   for (auto* child : children) {
-    enqueueChildren(child, index, input);
+    enqueueRowGroupRecursive(*child, index, input);
   }
 }
-} // namespace
 
 void ensureRepDefs(
     dwio::common::SelectiveColumnReader& reader,
@@ -143,7 +168,7 @@ MapColumnReader::MapColumnReader(
 void MapColumnReader::enqueueRowGroup(
     uint32_t index,
     dwio::common::BufferedInput& input) {
-  enqueueChildren(this, index, input);
+  enqueueRowGroupRecursive(*this, index, input);
 }
 
 void MapColumnReader::seekToRowGroup(int64_t index) {
@@ -251,7 +276,7 @@ ListColumnReader::ListColumnReader(
 void ListColumnReader::enqueueRowGroup(
     uint32_t index,
     dwio::common::BufferedInput& input) {
-  enqueueChildren(this, index, input);
+  enqueueRowGroupRecursive(*this, index, input);
 }
 
 void ListColumnReader::seekToRowGroup(int64_t index) {
