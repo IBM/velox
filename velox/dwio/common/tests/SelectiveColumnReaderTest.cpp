@@ -165,6 +165,24 @@ class TestColumnReader : public SelectiveColumnReader {
     }
   }
 
+  /// Force the all-null short-circuit path in convertDateToTimestampValues.
+  void setAllNull(bool allNull) {
+    allNull_ = allNull;
+  }
+
+  // Inspectors for post-call state assertions. Kept in the test subclass so the
+  // production class's API is unchanged.
+  int8_t valueSize() const {
+    return valueSize_;
+  }
+  bool mayGetValues() const {
+    return mayGetValues_;
+  }
+  vector_size_t numValues() const {
+    return numValues_;
+  }
+
+  using SelectiveColumnReader::convertDateToTimestampValues;
   using SelectiveColumnReader::getFlatValues;
 };
 
@@ -586,6 +604,328 @@ TEST_F(GetFlatValuesTest, int64ToInt128SparseRowsWithNulls) {
   EXPECT_EQ(flat->valueAt(0), 100);
   EXPECT_TRUE(flat->isNullAt(1));
   EXPECT_EQ(flat->valueAt(2), 500);
+}
+
+// Tests for the reentrant DATE->TIMESTAMP extraction path.
+// See convertDateToTimestampValues in SelectiveColumnReader.cpp: a single
+// read of int32 days-since-epoch can be drained across multiple disjoint
+// extraction calls. The function picks between two paths per call:
+//   - bulk path (rows.size() >= numValues_/2): transmute all numValues_
+//     days to Timestamps in place, then delegate to getFlatValues.
+//   - small-subset path (rows.size() < numValues_/2): emit a freshly
+//     allocated Timestamp vector and leave the source buffer untouched.
+// The bulk path transitions valueSize_ from sizeof(int32_t) to
+// sizeof(Timestamp) ("State B"); subsequent extractions are expected to
+// route through getFlatValues<Timestamp, Timestamp> instead of calling
+// convertDateToTimestampValues again.
+class ConvertDateToTimestampTest : public ::testing::Test {
+ protected:
+  static constexpr int64_t kSecondsPerDay{86'400};
+
+  static void SetUpTestCase() {
+    memory::MemoryManager::testingSetInstance(memory::MemoryManager::Options{});
+  }
+
+  void SetUp() override {
+    pool_ = memory::memoryManager()->addLeafPool("ConvertDateToTimestampTest");
+    stats_ = std::make_unique<SplitStats>(FileFormat::DWRF);
+    params_ = std::make_unique<StubFormatParams>(*pool_, *stats_);
+    scanSpec_ = std::make_unique<velox::common::ScanSpec>("test");
+    scanSpec_->setProjectOut(true);
+  }
+
+  std::unique_ptr<TestColumnReader> makeReader() const {
+    auto fileType = TypeWithId::create(DATE());
+    return std::make_unique<TestColumnReader>(
+        DATE(), std::move(fileType), *params_, *scanSpec_);
+  }
+
+  // Asserts that flat[i] == Timestamp(days[selectedRow[i]] * 86400, 0).
+  static void expectTimestampsMatch(
+      const VectorPtr& result,
+      const std::vector<int32_t>& days,
+      const std::vector<int32_t>& selectedRows) {
+    auto* flat = result->as<FlatVector<Timestamp>>();
+    ASSERT_NE(flat, nullptr);
+    ASSERT_EQ(flat->size(), selectedRows.size());
+    for (size_t i = 0; i < selectedRows.size(); ++i) {
+      const auto src = days[selectedRows[i]];
+      EXPECT_EQ(
+          flat->valueAt(i),
+          Timestamp(kSecondsPerDay * static_cast<int64_t>(src), 0))
+          << "Mismatch at index " << i << " (source row " << selectedRows[i]
+          << ")";
+    }
+  }
+
+  std::shared_ptr<memory::MemoryPool> pool_;
+  std::unique_ptr<SplitStats> stats_;
+  std::unique_ptr<StubFormatParams> params_;
+  std::unique_ptr<velox::common::ScanSpec> scanSpec_;
+};
+
+// Single bulk call covering all rows. Triggers the in-place transmute, then
+// the isFinal flag should lock further extractions out via mayGetValues_.
+TEST_F(ConvertDateToTimestampTest, singleCallAllRows) {
+  auto reader = makeReader();
+  const std::vector<int32_t> days = {0, 1, 2, 3, 4, 5, 6, 7};
+  std::vector<int32_t> rowNums(days.size());
+  std::iota(rowNums.begin(), rowNums.end(), 0);
+  reader->setupValues(days, rowNums);
+
+  const RowSet rows(rowNums.data(), rowNums.size());
+  VectorPtr result;
+  reader->convertDateToTimestampValues(rows, &result, /*isFinal=*/true);
+
+  expectTimestampsMatch(result, days, rowNums);
+  // Bulk path transmuted the buffer in place: valueSize_ flipped to
+  // sizeof(Timestamp).
+  EXPECT_EQ(reader->valueSize(), sizeof(Timestamp));
+  EXPECT_EQ(reader->numValues(), 8);
+  // isFinal=true released the mayGetValues_ lock.
+  EXPECT_FALSE(reader->mayGetValues());
+}
+
+// Two disjoint small-subset calls, each well below the half-of-numValues_
+// threshold. valueSize_ must stay at sizeof(int32_t) (State A is preserved).
+TEST_F(ConvertDateToTimestampTest, singleCallSmallSubset) {
+  auto reader = makeReader();
+  std::vector<int32_t> days(20);
+  std::iota(days.begin(), days.end(), 0);
+  std::vector<int32_t> rowNums(days.size());
+  std::iota(rowNums.begin(), rowNums.end(), 0);
+  reader->setupValues(days, rowNums);
+
+  // First small-subset call (3 < 20/2).
+  const std::vector<int32_t> firstSelected = {2, 5, 11};
+  const RowSet firstRows(firstSelected.data(), firstSelected.size());
+  VectorPtr firstResult;
+  reader->convertDateToTimestampValues(firstRows, &firstResult);
+
+  expectTimestampsMatch(firstResult, days, firstSelected);
+  EXPECT_EQ(reader->valueSize(), sizeof(int32_t));
+  EXPECT_TRUE(reader->mayGetValues());
+
+  // Second small-subset call, disjoint from the first, marked final.
+  const std::vector<int32_t> secondSelected = {1, 7, 19};
+  const RowSet secondRows(secondSelected.data(), secondSelected.size());
+  VectorPtr secondResult;
+  reader->convertDateToTimestampValues(
+      secondRows, &secondResult, /*isFinal=*/true);
+
+  expectTimestampsMatch(secondResult, days, secondSelected);
+  // Small-subset path never transitions to State B.
+  EXPECT_EQ(reader->valueSize(), sizeof(int32_t));
+  EXPECT_FALSE(reader->mayGetValues());
+  EXPECT_EQ(reader->numValues(), 20);
+
+  // The first result must still be intact after the second extraction.
+  expectTimestampsMatch(firstResult, days, firstSelected);
+}
+
+// Three small-subset calls in sequence. Each result owns its own buffer and
+// must remain readable after the others run. valueSize_ stays in State A.
+TEST_F(ConvertDateToTimestampTest, twoSmallSubsetsThenSmallFinal) {
+  auto reader = makeReader();
+  std::vector<int32_t> days(30);
+  std::iota(days.begin(), days.end(), 100);
+  std::vector<int32_t> rowNums(days.size());
+  std::iota(rowNums.begin(), rowNums.end(), 0);
+  reader->setupValues(days, rowNums);
+
+  const std::vector<int32_t> selected1 = {0, 3};
+  const std::vector<int32_t> selected2 = {7, 11, 12};
+  const std::vector<int32_t> selected3 = {20, 29};
+  VectorPtr r1, r2, r3;
+
+  const RowSet rows1(selected1.data(), selected1.size());
+  reader->convertDateToTimestampValues(rows1, &r1);
+  EXPECT_EQ(reader->valueSize(), sizeof(int32_t));
+  EXPECT_TRUE(reader->mayGetValues());
+
+  const RowSet rows2(selected2.data(), selected2.size());
+  reader->convertDateToTimestampValues(rows2, &r2);
+  EXPECT_EQ(reader->valueSize(), sizeof(int32_t));
+  EXPECT_TRUE(reader->mayGetValues());
+
+  const RowSet rows3(selected3.data(), selected3.size());
+  reader->convertDateToTimestampValues(rows3, &r3, /*isFinal=*/true);
+  EXPECT_EQ(reader->valueSize(), sizeof(int32_t));
+  EXPECT_FALSE(reader->mayGetValues());
+
+  // All three results remain independently correct: no shared buffer.
+  expectTimestampsMatch(r1, days, selected1);
+  expectTimestampsMatch(r2, days, selected2);
+  expectTimestampsMatch(r3, days, selected3);
+}
+
+// First a small-subset call, then a bulk call that triggers in-place
+// transmute. The first result must continue to read correctly even though
+// the source int32 buffer has been overwritten with 12-byte Timestamps.
+TEST_F(ConvertDateToTimestampTest, smallSubsetThenBulk) {
+  auto reader = makeReader();
+  std::vector<int32_t> days(16);
+  for (int i = 0; i < 16; ++i) {
+    days[i] = i * 2;
+  }
+  std::vector<int32_t> rowNums(days.size());
+  std::iota(rowNums.begin(), rowNums.end(), 0);
+  reader->setupValues(days, rowNums);
+
+  // Small subset first (2 < 16/2 == 8). State A preserved.
+  const std::vector<int32_t> smallSelected = {3, 9};
+  const RowSet smallRows(smallSelected.data(), smallSelected.size());
+  VectorPtr smallResult;
+  reader->convertDateToTimestampValues(smallRows, &smallResult);
+  EXPECT_EQ(reader->valueSize(), sizeof(int32_t));
+
+  // Bulk call covering enough rows to clear the threshold (8 >= 16/2).
+  const std::vector<int32_t> bulkSelected = {0, 1, 2, 3, 4, 5, 6, 7};
+  const RowSet bulkRows(bulkSelected.data(), bulkSelected.size());
+  VectorPtr bulkResult;
+  reader->convertDateToTimestampValues(bulkRows, &bulkResult, /*isFinal=*/true);
+  EXPECT_EQ(reader->valueSize(), sizeof(Timestamp));
+  EXPECT_FALSE(reader->mayGetValues());
+
+  // The small result must still be correct: it owns its own Timestamp
+  // buffer, decoupled from the source bytes that the bulk call overwrote.
+  expectTimestampsMatch(smallResult, days, smallSelected);
+  expectTimestampsMatch(bulkResult, days, bulkSelected);
+}
+
+// Bulk call transitions to State B (valueSize_ == sizeof(Timestamp)), then
+// follow-up extractions must use getFlatValues<Timestamp, Timestamp>
+// directly: this is the contract that getIntValues encodes via its
+// valueSize_ dispatch. The bulk call requests rows.size() == numValues_ so
+// compactScalarValues early-returns and the full buffer remains available
+// for subsequent subset extractions.
+TEST_F(ConvertDateToTimestampTest, bulkThenStateBExtraction) {
+  auto reader = makeReader();
+  std::vector<int32_t> days(10);
+  std::iota(days.begin(), days.end(), 50);
+  std::vector<int32_t> rowNums(days.size());
+  std::iota(rowNums.begin(), rowNums.end(), 0);
+  reader->setupValues(days, rowNums);
+
+  // First call: bulk path. rows.size() == numValues_, so
+  // getFlatValues -> compactScalarValues early-returns without compaction.
+  const RowSet allRows(rowNums.data(), rowNums.size());
+  VectorPtr firstResult;
+  reader->convertDateToTimestampValues(allRows, &firstResult);
+  expectTimestampsMatch(firstResult, days, rowNums);
+  EXPECT_EQ(reader->valueSize(), sizeof(Timestamp));
+  EXPECT_TRUE(reader->mayGetValues());
+
+  // Second extraction: dispatch through getFlatValues<Timestamp, Timestamp>
+  // because the buffer is now Timestamps (this is what getIntValues does).
+  // Compacts in place: the buffer afterward only holds the requested rows.
+  const std::vector<int32_t> secondSelected = {1, 4, 8};
+  const RowSet secondRows(secondSelected.data(), secondSelected.size());
+  VectorPtr secondResult;
+  reader->getFlatValues<Timestamp, Timestamp>(
+      secondRows, &secondResult, TIMESTAMP(), /*isFinal=*/false);
+  expectTimestampsMatch(secondResult, days, secondSelected);
+  EXPECT_TRUE(reader->mayGetValues());
+
+  // Third extraction, marked final. Subset of what's still in the buffer.
+  const std::vector<int32_t> thirdSelected = {1, 8};
+  const RowSet thirdRows(thirdSelected.data(), thirdSelected.size());
+  VectorPtr thirdResult;
+  reader->getFlatValues<Timestamp, Timestamp>(
+      thirdRows, &thirdResult, TIMESTAMP(), /*isFinal=*/true);
+  expectTimestampsMatch(thirdResult, days, thirdSelected);
+  EXPECT_FALSE(reader->mayGetValues());
+}
+
+// Two small-subset calls with nulls. Each call must produce correct null
+// flags for its requested subset, and a prior result's nulls must not be
+// clobbered by a subsequent call.
+TEST_F(ConvertDateToTimestampTest, smallSubsetWithNulls) {
+  auto reader = makeReader();
+  // 10 source values with nulls at rows 1, 4, 7.
+  const std::vector<int32_t> days = {10, 0, 20, 30, 0, 50, 60, 0, 80, 90};
+  const std::vector<bool> nulls = {
+      false, true, false, false, true, false, false, true, false, false};
+  std::vector<int32_t> rowNums(days.size());
+  std::iota(rowNums.begin(), rowNums.end(), 0);
+  reader->setupValuesWithNulls(days, nulls, rowNums);
+
+  // First small subset: includes nulls at source positions 1 and 4.
+  const std::vector<int32_t> firstSelected = {0, 1, 4};
+  const RowSet firstRows(firstSelected.data(), firstSelected.size());
+  VectorPtr firstResult;
+  reader->convertDateToTimestampValues(firstRows, &firstResult);
+
+  ASSERT_NE(firstResult, nullptr);
+  auto* firstFlat = firstResult->as<FlatVector<Timestamp>>();
+  ASSERT_NE(firstFlat, nullptr);
+  ASSERT_EQ(firstFlat->size(), 3);
+  EXPECT_FALSE(firstFlat->isNullAt(0));
+  EXPECT_EQ(firstFlat->valueAt(0), Timestamp(kSecondsPerDay * 10, 0));
+  EXPECT_TRUE(firstFlat->isNullAt(1));
+  EXPECT_TRUE(firstFlat->isNullAt(2));
+
+  // Second small subset: includes null at source position 7.
+  const std::vector<int32_t> secondSelected = {3, 7, 9};
+  const RowSet secondRows(secondSelected.data(), secondSelected.size());
+  VectorPtr secondResult;
+  reader->convertDateToTimestampValues(
+      secondRows, &secondResult, /*isFinal=*/true);
+
+  auto* secondFlat = secondResult->as<FlatVector<Timestamp>>();
+  ASSERT_NE(secondFlat, nullptr);
+  ASSERT_EQ(secondFlat->size(), 3);
+  EXPECT_FALSE(secondFlat->isNullAt(0));
+  EXPECT_EQ(secondFlat->valueAt(0), Timestamp(kSecondsPerDay * 30, 0));
+  EXPECT_TRUE(secondFlat->isNullAt(1));
+  EXPECT_FALSE(secondFlat->isNullAt(2));
+  EXPECT_EQ(secondFlat->valueAt(2), Timestamp(kSecondsPerDay * 90, 0));
+
+  // First result's null flags must still be correct after the second
+  // extraction: nulls were allocated into a local buffer per call.
+  EXPECT_FALSE(firstFlat->isNullAt(0));
+  EXPECT_TRUE(firstFlat->isNullAt(1));
+  EXPECT_TRUE(firstFlat->isNullAt(2));
+  EXPECT_EQ(firstFlat->valueAt(0), Timestamp(kSecondsPerDay * 10, 0));
+}
+
+// allNull_ short-circuit: produces a ConstantVector<Timestamp> of the
+// requested size; mayGetValues_ is left intact unless isFinal is set.
+TEST_F(ConvertDateToTimestampTest, allNullsShortCircuit) {
+  auto reader = makeReader();
+  // numValues_ is required to be set for the function's invariants. Use
+  // an arbitrary non-empty buffer; allNull_ short-circuits before reading.
+  const std::vector<int32_t> days = {0, 0, 0, 0};
+  std::vector<int32_t> rowNums(days.size());
+  std::iota(rowNums.begin(), rowNums.end(), 0);
+  reader->setupValues(days, rowNums);
+  reader->setAllNull(true);
+
+  // First call: not final. Expect ConstantVector<Timestamp> of size 3.
+  const std::vector<int32_t> firstSelected = {0, 1, 2};
+  const RowSet firstRows(firstSelected.data(), firstSelected.size());
+  VectorPtr firstResult;
+  reader->convertDateToTimestampValues(firstRows, &firstResult);
+
+  ASSERT_NE(firstResult, nullptr);
+  auto* firstConst = firstResult->as<ConstantVector<Timestamp>>();
+  ASSERT_NE(firstConst, nullptr);
+  EXPECT_EQ(firstConst->size(), 3);
+  EXPECT_TRUE(firstConst->isNullAt(0));
+  EXPECT_TRUE(reader->mayGetValues());
+
+  // Second call: final. Expect another ConstantVector<Timestamp>; lock flips.
+  const std::vector<int32_t> secondSelected = {0, 1};
+  const RowSet secondRows(secondSelected.data(), secondSelected.size());
+  VectorPtr secondResult;
+  reader->convertDateToTimestampValues(
+      secondRows, &secondResult, /*isFinal=*/true);
+
+  auto* secondConst = secondResult->as<ConstantVector<Timestamp>>();
+  ASSERT_NE(secondConst, nullptr);
+  EXPECT_EQ(secondConst->size(), 2);
+  EXPECT_TRUE(secondConst->isNullAt(0));
+  EXPECT_FALSE(reader->mayGetValues());
 }
 
 } // namespace

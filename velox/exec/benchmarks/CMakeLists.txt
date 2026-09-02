@@ -31,6 +31,17 @@ target_link_libraries(
   Folly::follybenchmark
 )
 
+add_executable(
+  velox_cast_in_filter_project_benchmark CastInFilterProjectBenchmark.cpp)
+
+target_link_libraries(
+  velox_cast_in_filter_project_benchmark
+  velox_exec
+  velox_vector_test_lib
+  velox_exec_test_lib
+  Folly::follybenchmark
+)
+
 add_executable(velox_exchange_benchmark ExchangeBenchmark.cpp)
 
 target_link_libraries(

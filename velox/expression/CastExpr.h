@@ -108,6 +108,19 @@ class CastExpr : public SpecialForm {
       const TypePtr& toType,
       VectorPtr& result);
 
+  /// Returns true if casting from 'fromType' to 'toType' takes the fast
+  /// numeric upcast path: a single static_cast per row over a flat input
+  /// (see applyNumericUpcast). Casts on this path are cheap and non-
+  /// throwing, which Expr::evalWithMemo's eager-fill strategy relies on:
+  /// computing every base position up front is acceptable because the
+  /// per-position cost is single-digit cycles and no surprise errors
+  /// from un-requested positions can occur.
+  static bool isSupportedFastUpcast(
+      const TypePtr& fromType,
+      const TypePtr& toType);
+
+  bool isCheapToReevaluate() const override;
+
  private:
   VectorPtr applyMap(
       const SelectivityVector& rows,
@@ -407,8 +420,38 @@ class CastExpr : public SpecialForm {
 
   CastOperatorPtr getCastOperator(const TypePtr& type);
 
+  /// Looks up the cast operators for (inputs_[0]->type(), type_) once via
+  /// getCastOperator and caches them on the first applyPeeled call. The
+  /// pair is constant for the lifetime of this CastExpr, so subsequent
+  /// per-call lookups in castOperators_ are skipped.
+  void ensureTopLevelCastOperators(
+      const TypePtr& fromType,
+      const TypePtr& toType);
+
+  /// Lazily resolves and caches hooks_->getPolicy() so per-call
+  /// applyCastPrimitives doesn't pay the virtual call.
+  PolicyType policy() {
+    if (!policyCached_) {
+      cachedPolicy_ = hooks_->getPolicy();
+      policyCached_ = true;
+    }
+    return cachedPolicy_;
+  }
+
   // Custom cast operators for to and from top-level as well as nested types.
   folly::F14FastMap<std::string, CastOperatorPtr> castOperators_;
+
+  // Cached lookup of (inputs_[0]->type(), type_) in castOperators_. Both
+  // entries are nullptr when no custom operator is registered. Populated
+  // on the first applyPeeled call.
+  bool topLevelCastOperatorsCached_{false};
+  CastOperatorPtr topLevelCastFromOperator_;
+  CastOperatorPtr topLevelCastToOperator_;
+
+  // Cached PolicyType returned by hooks_->getPolicy(). Populated on first
+  // policy() call.
+  bool policyCached_{false};
+  PolicyType cachedPolicy_{LegacyCastPolicy};
 
   bool isTryCast_;
   std::shared_ptr<CastHooks> hooks_;

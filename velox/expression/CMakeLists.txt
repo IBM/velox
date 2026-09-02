@@ -50,10 +50,14 @@ velox_add_library(
   EvalCtx.cpp
   Expr.cpp
   ExprCompiler.cpp
+  ExprEvaluatorV2.cpp
   ExprRewriteRegistry.cpp
   ExprOptimizer.cpp
+  ExprRuntimeState.cpp
+  ExprSetV2.cpp
   ExprToSubfieldFilter.cpp
   ExprUtils.cpp
+  ExprV2.cpp
   FieldReference.cpp
   FunctionCallToSpecialForm.cpp
   GenericWriter.cpp
@@ -85,16 +89,22 @@ velox_add_library(
   ConjunctExpr.h
   ConjunctRewrite.h
   ConstantExpr.h
+  DebugGuards.h
   DecodedArgs.h
   EvalCtx.h
+  EvalFrame.h
   Expr.h
   ExprCompiler.h
   ExprConstants.h
+  ExprEvaluatorV2.h
   ExprOptimizer.h
   ExprRewriteRegistry.h
+  ExprRuntimeState.h
+  ExprSetV2.h
   ExprStats.h
   ExprToSubfieldFilter.h
   ExprUtils.h
+  ExprV2.h
   FieldReference.h
   FunctionCallToSpecialForm.h
   KindToSimpleType.h
@@ -140,4 +150,8 @@ add_subdirectory(signature_parser)
 if(${VELOX_BUILD_TESTING})
   add_subdirectory(tests)
   add_subdirectory(fuzzer)
+endif()
+
+if(${VELOX_ENABLE_BENCHMARKS})
+  add_subdirectory(benchmarks)
 endif()
