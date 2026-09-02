@@ -20,6 +20,7 @@
 #include "velox/exec/tests/utils/TempDirectoryPath.h"
 #include "velox/vector/tests/utils/VectorTestBase.h"
 
+#include <folly/executors/CPUThreadPoolExecutor.h>
 #include <gtest/gtest.h>
 
 #include <sys/wait.h>
@@ -79,8 +80,10 @@ class HashTableSerializationTest : public testing::Test, public VectorTestBase {
 
   std::unique_ptr<HashTable<true>> deserialize(
       const std::string& data,
-      memory::MemoryPool* pool) const {
-    return HashTable<true>::deserializeFrom(data.data(), data.size(), pool);
+      memory::MemoryPool* pool,
+      folly::Executor* executor = nullptr) const {
+    return HashTable<true>::deserializeFrom(
+        data.data(), data.size(), pool, executor);
   }
 
   void SetUp() override {
@@ -162,36 +165,32 @@ class HashTableSerializationTest : public testing::Test, public VectorTestBase {
 
     auto* origRows = original->rows();
     auto* restRows = restored->rows();
-
-    ASSERT_EQ(origRows->numRows(), restRows->numRows());
     ASSERT_EQ(origRows->columnTypes().size(), restRows->columnTypes().size());
 
-    std::vector<char*> origRowPtrs;
-    std::vector<char*> restRowPtrs;
+    // The rows of either side may be spread over several containers: a
+    // parallel build leaves one per build thread behind, and deserializeFrom()
+    // gives each serialized row section one of its own so that the sections
+    // can be decoded in parallel. Gather them all.
+    auto listAll = [](HashTable<true>* table) {
+      std::vector<char*> rowPtrs;
+      std::vector<char*> buffer(1000);
+      for (auto* container : table->allRows()) {
+        RowContainerIterator iter;
+        while (true) {
+          auto numRows = container->listRows(
+              &iter, buffer.size(), RowContainer::kUnlimited, buffer.data());
+          if (numRows == 0) {
+            break;
+          }
+          rowPtrs.insert(
+              rowPtrs.end(), buffer.begin(), buffer.begin() + numRows);
+        }
+      }
+      return rowPtrs;
+    };
 
-    RowContainerIterator origIter;
-    RowContainerIterator restIter;
-
-    std::vector<char*> buffer(1000);
-
-    while (true) {
-      auto numRows = origRows->listRows(
-          &origIter, buffer.size(), RowContainer::kUnlimited, buffer.data());
-      if (numRows == 0)
-        break;
-      origRowPtrs.insert(
-          origRowPtrs.end(), buffer.begin(), buffer.begin() + numRows);
-    }
-
-    while (true) {
-      auto numRows = restRows->listRows(
-          &restIter, buffer.size(), RowContainer::kUnlimited, buffer.data());
-      if (numRows == 0)
-        break;
-      restRowPtrs.insert(
-          restRowPtrs.end(), buffer.begin(), buffer.begin() + numRows);
-    }
-
+    const auto origRowPtrs = listAll(original);
+    const auto restRowPtrs = listAll(restored);
     ASSERT_EQ(origRowPtrs.size(), restRowPtrs.size());
 
     // Extract through RowContainer so that strings spread over several
@@ -553,6 +552,111 @@ TEST_F(HashTableSerializationTest, buildForSerializationOnlyWithDuplicates) {
   EXPECT_TRUE(restored->hasDuplicateKeys());
   verifyHashTablesEqual(full.get(), restored.get());
   verifyJoinProbe(restored.get(), data, data->size());
+}
+
+TEST_F(HashTableSerializationTest, parallelDeserialize) {
+  // The serialized form splits the build rows into independently decodable
+  // sections so that deserializeFrom() can fill several RowContainers and the
+  // slot array at once. The result must not depend on whether it does.
+  struct TestCase {
+    std::string name;
+    bool withValueIds;
+    std::function<int64_t(vector_size_t)> key;
+    BaseHashTable::HashMode expectedMode;
+  };
+
+  // Enough rows to cross the section size, so that the parallel path really has
+  // more than one section to work with.
+  const vector_size_t numRows = 600'000;
+  const std::vector<TestCase> testCases = {
+      {"kHash",
+       false,
+       [](auto row) { return row; },
+       BaseHashTable::HashMode::kHash},
+      {"kArray",
+       true,
+       [](auto row) { return row; },
+       BaseHashTable::HashMode::kArray},
+      {"kNormalizedKey",
+       true,
+       [](auto row) { return static_cast<int64_t>(row) * 1'000'003; },
+       BaseHashTable::HashMode::kNormalizedKey},
+  };
+
+  folly::CPUThreadPoolExecutor executor(8);
+  for (const auto& testCase : testCases) {
+    SCOPED_TRACE(testCase.name);
+    auto data = makeRowVector(
+        {makeFlatVector<int64_t>(numRows, testCase.key),
+         makeFlatVector<std::string>(numRows, [](auto row) {
+           return fmt::format("parallel_value_{}", row);
+         })});
+
+    auto table = createTestHashTable({BIGINT()}, {VARCHAR()}, false);
+    if (testCase.withValueIds) {
+      insertDataWithValueIds(table.get(), data);
+    } else {
+      insertData(table.get(), data, {0});
+    }
+    table->prepareJoinTable(
+        {}, BaseHashTable::kNoSpillInputStartPartitionBit, 1'000'000);
+    ASSERT_EQ(table->hashMode(), testCase.expectedMode);
+
+    const auto serialized = serialize(*table);
+    auto serial = deserialize(serialized, pool_.get());
+    auto parallel = deserialize(serialized, pool_.get(), &executor);
+
+    // More than one section, or the parallel path would be untested.
+    EXPECT_GT(parallel->testingOtherTables().size(), 0);
+
+    for (auto* restored : {serial.get(), parallel.get()}) {
+      verifyHashTablesEqual(table.get(), restored);
+      verifyJoinProbe(restored, data, data->size());
+      // A valid slot array: every used and tombstone slot accounted for.
+      restored->checkConsistency();
+      // The wire form must survive a round trip through either path.
+      EXPECT_EQ(serialize(*restored), serialized);
+    }
+  }
+}
+
+TEST_F(HashTableSerializationTest, normalizedKeysCarryTheHashes) {
+  // In kNormalizedKey mode the hashes are mixNormalizedKey() of the normalized
+  // keys, which are on the wire regardless, so they are not serialized
+  // separately. Guard the 8 bytes per row that buys.
+  const vector_size_t numRows = 10'000;
+  auto data = makeRowVector(
+      {makeFlatVector<int64_t>(
+           numRows,
+           [](auto row) { return static_cast<int64_t>(row) * 1'000'003; }),
+       makeFlatVector<std::string>(
+           numRows, [](auto row) { return fmt::format("v_{}", row); })});
+
+  auto table = createTestHashTable({BIGINT()}, {VARCHAR()}, false);
+  insertDataWithValueIds(table.get(), data);
+  table->prepareJoinTable(
+      {}, BaseHashTable::kNoSpillInputStartPartitionBit, 1'000'000);
+  ASSERT_EQ(table->hashMode(), BaseHashTable::HashMode::kNormalizedKey);
+
+  const auto serialized = serialize(*table);
+  auto restored = deserialize(serialized, pool_.get());
+  verifyJoinProbe(restored.get(), data, data->size());
+
+  auto hashTable = createTestHashTable({BIGINT()}, {VARCHAR()}, false);
+  insertData(hashTable.get(), data, {0});
+  hashTable->prepareJoinTable(
+      {}, BaseHashTable::kNoSpillInputStartPartitionBit, 1'000'000);
+  ASSERT_EQ(hashTable->hashMode(), BaseHashTable::HashMode::kHash);
+
+  // Same rows either way, and each mode writes exactly one 8 byte per row
+  // side table: normalized keys for one, hashes for the other. So the two wire
+  // forms differ only by their metadata, well under one such side table.
+  const auto hashSerialized = serialize(*hashTable);
+  const size_t sideTableBytes = numRows * sizeof(uint64_t);
+  const auto difference = serialized.size() > hashSerialized.size()
+      ? serialized.size() - hashSerialized.size()
+      : hashSerialized.size() - serialized.size();
+  EXPECT_LT(difference, sideTableBytes);
 }
 
 TEST_F(HashTableSerializationTest, CrossProcessSerialization) {

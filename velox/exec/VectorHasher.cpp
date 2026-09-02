@@ -387,6 +387,26 @@ bool VectorHasher::computeValueIdsForRows(
       result.data());
 }
 
+bool VectorHasher::computeValueIdsForRowsReadOnly(
+    char** groups,
+    int32_t numGroups,
+    int32_t offset,
+    int32_t nullByte,
+    uint8_t nullMask,
+    raw_vector<uint64_t>& result) const {
+  checkTypeSupportsValueIds();
+
+  return VALUE_ID_TYPE_DISPATCH(
+      makeValueIdsForRowsReadOnly,
+      typeKind_,
+      groups,
+      numGroups,
+      offset,
+      nullByte,
+      nullMask,
+      result.data());
+}
+
 template <>
 bool VectorHasher::makeValueIdsForRows<TypeKind::VARCHAR>(
     char** groups,
@@ -403,6 +423,32 @@ bool VectorHasher::makeValueIdsForRows<TypeKind::VARCHAR>(
     } else {
       std::string storage;
       auto id = valueId<StringView>(HashStringAllocator::contiguousString(
+          valueAt<StringView>(groups[i], offset), storage));
+      if (id == kUnmappable) {
+        return false;
+      }
+      result[i] = multiplier_ == 1 ? id : result[i] + multiplier_ * id;
+    }
+  }
+  return true;
+}
+
+template <>
+bool VectorHasher::makeValueIdsForRowsReadOnly<TypeKind::VARCHAR>(
+    char** groups,
+    int32_t numGroups,
+    int32_t offset,
+    int32_t nullByte,
+    uint8_t nullMask,
+    uint64_t* result) const {
+  for (int32_t i = 0; i < numGroups; ++i) {
+    if (isNullAt(groups[i], nullByte, nullMask)) {
+      if (multiplier_ == 1) {
+        result[i] = 0;
+      }
+    } else {
+      std::string storage;
+      auto id = lookupValueId<StringView>(HashStringAllocator::contiguousString(
           valueAt<StringView>(groups[i], offset), storage));
       if (id == kUnmappable) {
         return false;

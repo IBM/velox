@@ -874,6 +874,12 @@ class HashTable : public BaseHashTable {
   std::string toString(int64_t startBucket, int64_t numBuckets = 1) const;
 
   /// Returns the exact serialized size in bytes for the current hash table.
+  ///
+  /// Listing the build rows and measuring their variable-width columns is the
+  /// bulk of the cost and is the same work serializeTo() needs, so the result
+  /// is cached and reused by a following serializeTo(). The cache is dropped by
+  /// serializeTo() and invalidated whenever the row count changes, so callers
+  /// that mutate the table in between simply pay for a recompute.
   size_t serializedSize() const;
 
   /// Serializes the hash table directly to a caller-provided memory buffer.
@@ -886,9 +892,16 @@ class HashTable : public BaseHashTable {
   /// @param data Serialized hash table bytes
   /// @param size Serialized hash table size in bytes
   /// @param pool Memory pool for allocating deserialized data
+  /// @param executor If given, the build rows are decoded and inserted into
+  /// the slot array on this executor rather than on the calling thread. The
+  /// serialized form carries the rows in independent sections precisely so
+  /// that this can be done in parallel; see kSerializedTableVersion.
   /// @return A new HashTable instance with deserialized data
-  static std::unique_ptr<HashTable<ignoreNullKeys>>
-  deserializeFrom(const void* data, size_t size, memory::MemoryPool* pool);
+  static std::unique_ptr<HashTable<ignoreNullKeys>> deserializeFrom(
+      const void* data,
+      size_t size,
+      memory::MemoryPool* pool,
+      folly::Executor* executor = nullptr);
 
   /// Invoked to check the consistency of the internal state. The function scans
   /// all the table slots to check if the relevant slot counting are correct
@@ -924,11 +937,70 @@ class HashTable : public BaseHashTable {
   }
 
  private:
+  // One independently decodable run of build rows in the serialized form. The
+  // reading side gives each section its own RowContainer so that the sections
+  // can be decoded in parallel, which is why a section records both its row
+  // count and its byte count: neither can be derived from the row bytes
+  // without walking them.
+  struct SerializedSection {
+    // Index of the first row of this section in SerializationPlan::rows.
+    uint64_t firstRow;
+    uint64_t numRows;
+    uint64_t numBytes;
+  };
+
+  // Everything serializeImpl() needs about the build rows, shared by the
+  // size-counting and the buffer-filling pass. See serializedSize().
+  struct SerializationPlan {
+    explicit SerializationPlan(memory::MemoryPool* pool) : rows(pool) {}
+
+    // The build rows of all containers, section by section.
+    raw_vector<char*> rows;
+    // The container each section's rows live in, 1:1 with 'sections'.
+    std::vector<RowContainer*> sectionContainers;
+    std::vector<SerializedSection> sections;
+    uint64_t totalRows{0};
+    uint64_t rowBytes{0};
+  };
+
+  // Returns the cached serialization plan, computing it if absent or stale.
+  const SerializationPlan& ensureSerializationPlan() const;
+
   // Writes the serialized form to 'writer'. 'Writer' is either a writer that
   // only counts the bytes, for serializedSize(), or one that fills in a
   // destination buffer, for serializeTo().
   template <typename Writer>
-  void serializeImpl(Writer& writer) const;
+  void serializeImpl(Writer& writer, const SerializationPlan& plan) const;
+
+  // Inserts 'numRows' rows with the given precomputed 'hashes' into the slot
+  // array using 'executor'. Each worker owns a disjoint range of bucket
+  // offsets and picks the rows whose home bucket falls in its range, so no two
+  // workers touch the same bucket; the few rows that probe past the end of
+  // their range are collected and re-inserted serially at the end. This is the
+  // same partitioning parallelJoinBuild() uses, but driven off flat row and
+  // hash arrays, which is what deserializeFrom() has.
+  void insertForJoinParallel(
+      char** rows,
+      const uint64_t* hashes,
+      uint64_t numRows,
+      folly::Executor* executor,
+      int32_t numPartitions);
+
+  // The rehash() variant used for a serialize-only build. Such a build has no
+  // slot array to insert into, so all that is left of a rehash is settling the
+  // value ids and writing the normalized keys into the rows, and that spreads
+  // over 'buildExecutor_' cleanly because the rows are disjoint. Returns false
+  // if a value id lookup missed, in which case the caller must fall back to
+  // the serial rehash(), which will then degrade the hash mode as usual.
+  bool parallelRehashForSerialization(bool initNormalizedKeys);
+
+  // Thread-safe counterpart of hashRows() for a serialize-only build: it looks
+  // value ids up instead of assigning them, so several threads may run it on
+  // disjoint row ranges. Returns false if a lookup missed.
+  bool hashRowsReadOnly(
+      folly::Range<char**> rows,
+      bool initNormalizedKeys,
+      raw_vector<uint64_t>& hashes) const;
 
   // Enables debug stats for collisions for debug build.
 #ifdef NDEBUG
@@ -1405,6 +1477,10 @@ class HashTable : public BaseHashTable {
 
   //  Counts parallel build rows. Used for consistency check.
   std::atomic<int64_t> numParallelBuildRows_{0};
+
+  // Cached result of the row-listing and row-measuring work shared by
+  // serializedSize() and serializeTo(). See serializedSize().
+  mutable std::unique_ptr<SerializationPlan> serializationPlan_;
 
   // If true, avoids using VectorHasher value ranges with kArray hash mode.
   bool disableRangeArrayHash_{false};

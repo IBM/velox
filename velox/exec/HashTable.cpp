@@ -867,6 +867,52 @@ bool HashTable<ignoreNullKeys>::hashRows(
   return true;
 }
 
+template <bool ignoreNullKeys>
+bool HashTable<ignoreNullKeys>::hashRowsReadOnly(
+    folly::Range<char**> rows,
+    bool initNormalizedKeys,
+    raw_vector<uint64_t>& hashes) const {
+  if (rows.empty()) {
+    return true;
+  }
+  if (!initNormalizedKeys && hashMode_ == HashMode::kNormalizedKey) {
+    const auto numRows = static_cast<int32_t>(rows.size());
+    for (int32_t i = 0; i < numRows; ++i) {
+      hashes[i] =
+          mixNormalizedKey(RowContainer::normalizedKey(rows[i]), sizeBits_);
+    }
+    return true;
+  }
+
+  for (int32_t i = 0; i < hashers_.size(); ++i) {
+    const auto& hasher = hashers_[i];
+    if (hashMode_ == HashMode::kHash) {
+      rows_->hash(i, rows, i > 0, hashes.data());
+    } else {
+      // Array or normalized key. Unlike hashRows(), this looks the value ids
+      // up rather than assigning new ones, which is what makes it safe to run
+      // on several row ranges at once.
+      auto column = rows_->columnAt(i);
+      if (!hasher->computeValueIdsForRowsReadOnly(
+              rows.data(),
+              rows.size(),
+              column.offset(),
+              column.nullByte(),
+              ignoreNullKeys ? 0 : column.nullMask(),
+              hashes)) {
+        return false;
+      }
+    }
+  }
+  if (hashMode_ == HashMode::kNormalizedKey && initNormalizedKeys) {
+    for (auto i = 0; i < rows.size(); ++i) {
+      RowContainer::normalizedKey(rows[i]) = hashes[i];
+      hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
+    }
+  }
+  return true;
+}
+
 namespace {
 
 template <typename T>
@@ -1565,6 +1611,17 @@ void HashTable<ignoreNullKeys>::rehash(
   ++numRehashes_;
   if (canApplyParallelJoinBuild()) {
     parallelJoinBuild();
+    return;
+  }
+  // A serialize-only build has no slot array, so canApplyParallelJoinBuild()
+  // above declines: partitioning the table is exactly the work that mode
+  // exists to skip. What is left of the rehash is per-row and still worth
+  // spreading over the executor. Bloom filters are excluded because inserting
+  // into one from several threads is not safe, and parallelJoinBuild()'s
+  // partitioned Bloom filter build needs the slot array partitioning.
+  if (buildForSerializationOnly_ && buildExecutor_ != nullptr &&
+      !bloomFilterSupported() &&
+      parallelRehashForSerialization(initNormalizedKeys)) {
     return;
   }
   raw_vector<uint64_t> hashes(pool_);
@@ -2742,7 +2799,26 @@ namespace {
 // fixed-width values and is only readable by the same binary on the same
 // architecture.
 constexpr uint32_t kSerializedTableMagic = 0x48415348; // "HASH"
-constexpr uint32_t kSerializedTableVersion = 9;
+// v10 splits the build rows into independently decodable sections and stops
+// writing the hashes in kNormalizedKey mode, where they are a pure function of
+// the normalized keys that are on the wire anyway.
+constexpr uint32_t kSerializedTableVersion = 10;
+
+// Target number of build rows per serialized section. Sections are decoded
+// independently, each into its own RowContainer, so this is what bounds the
+// parallelism available to deserializeFrom(). Small enough that a build side
+// of a few million rows splits into more sections than a host has cores, large
+// enough that the per-section RowContainer overhead stays irrelevant.
+constexpr uint64_t kSerializedSectionRows = 256 * 1024;
+
+// Caps the number of sections, and with it the number of RowContainers the
+// reading side creates, for a very large build side.
+constexpr uint64_t kMaxSerializedSections = 128;
+
+// Rows per unit of work in parallelRehashForSerialization(). Large enough that
+// the per-chunk hash vector allocation and the executor hop are amortized,
+// small enough that the chunks still balance across the executor.
+constexpr uint64_t kRehashChunkRows = 64 * 1024;
 
 // Counts the bytes a serialization produces without materializing them.
 // 'kSizeOnly' lets serializeImpl() skip the row extraction and hashing, which
@@ -2836,13 +2912,260 @@ TypePtr parseSerializedType(std::string_view typeString) {
   return functions::prestosql::parseType(normalized);
 }
 
+// Runs 'work(i)' for every i in [0, numItems) on 'executor', keeping the last
+// item on the calling thread rather than leaving it idle. Falls back to running
+// everything inline when there is no executor or nothing to overlap. All items
+// are synced before returning, including when one of them throws, since they
+// hold references to the caller's frame; the first error is rethrown.
+template <typename Work>
+void runParallel(folly::Executor* executor, size_t numItems, Work work) {
+  if (numItems == 0) {
+    return;
+  }
+  if (executor == nullptr || numItems == 1) {
+    for (size_t i = 0; i < numItems; ++i) {
+      work(i);
+    }
+    return;
+  }
+
+  std::vector<std::shared_ptr<AsyncSource<bool>>> steps;
+  steps.reserve(numItems - 1);
+  // Runs on the unwinding path if 'work' throws before the sync loop below is
+  // reached, so it must not throw itself.
+  auto sync = folly::makeGuard([&]() {
+    for (auto& step : steps) {
+      try {
+        step->move();
+      } catch (const std::exception& e) {
+        LOG(ERROR) << "Error in async hash table work: " << e.what();
+      }
+    }
+  });
+
+  // Passing the driver context explicitly, since the worker threads have no
+  // thread local one of their own.
+  const DriverCtx* driverCtx{nullptr};
+  if (const auto* driverThreadCtx = driverThreadContext()) {
+    driverCtx = driverThreadCtx->driverCtx();
+  }
+
+  for (size_t i = 0; i + 1 < numItems; ++i) {
+    auto step = std::make_shared<AsyncSource<bool>>([i, &work]() {
+      work(i);
+      return std::make_unique<bool>(true);
+    });
+    steps.push_back(step);
+    executor->add([driverCtx, step]() {
+      ScopedDriverThreadContext scopedDriverThreadContext(driverCtx);
+      step->prepare();
+    });
+  }
+  work(numItems - 1);
+
+  std::exception_ptr error;
+  for (auto& step : steps) {
+    try {
+      step->move();
+    } catch (const std::exception&) {
+      if (error == nullptr) {
+        error = std::current_exception();
+      }
+    }
+  }
+  // Everything has been synced, so keep the guard from doing it again.
+  steps.clear();
+  if (error != nullptr) {
+    std::rethrow_exception(error);
+  }
+}
+
+// Number of bucket range partitions to insert 'numSections' row sections with.
+// Mirrors the constraints parallelJoinBuild() works under: the partition index
+// has to fit in a uint8_t, and a partition must cover more than
+// 'minTableSizeForParallelJoinBuild' entries for the partitioning to pay off.
+int32_t numInsertPartitions(
+    uint64_t capacity,
+    uint32_t minTableSizeForParallelJoinBuild,
+    size_t numSections) {
+  auto numPartitions = static_cast<int32_t>(
+      std::min<size_t>(numSections, std::numeric_limits<uint8_t>::max()));
+  while (numPartitions > 1 &&
+         capacity / numPartitions <= minTableSizeForParallelJoinBuild) {
+    --numPartitions;
+  }
+  return numPartitions;
+}
+
 } // namespace
 
 template <bool ignoreNullKeys>
-template <typename Writer>
-void HashTable<ignoreNullKeys>::serializeImpl(Writer& writer) const {
-  VELOX_CHECK(isJoinBuild_, "Only join-build hash tables are supported");
+bool HashTable<ignoreNullKeys>::parallelRehashForSerialization(
+    bool initNormalizedKeys) {
+  VELOX_CHECK(buildForSerializationOnly_);
+  VELOX_CHECK_NOT_NULL(buildExecutor_);
 
+  // One unit of work: a range of 'rows' below, plus whether the normalized
+  // keys of those rows have to be written. Rows of a container other than the
+  // main one always get theirs written, mirroring the
+  // 'initNormalizedKeys || i != 0' the serial rehash() uses.
+  struct Chunk {
+    uint64_t firstRow;
+    uint64_t numRows;
+    bool initNormalizedKeys;
+  };
+
+  uint64_t totalRows{0};
+  for (int32_t i = 0; i <= otherTables_.size(); ++i) {
+    totalRows += tableAt(i)->rows()->numRows();
+  }
+  if (totalRows == 0) {
+    return true;
+  }
+
+  // The row ranges have to be known up front to be handed out to the workers,
+  // and listing them is a sequential walk of each container's arena.
+  raw_vector<char*> rows(pool_);
+  rows.resize(totalRows);
+  std::vector<Chunk> chunks;
+  uint64_t numListed{0};
+  for (int32_t i = 0; i <= otherTables_.size(); ++i) {
+    auto* container = tableAt(i)->rows();
+    const uint64_t containerRows = container->numRows();
+    if (containerRows == 0) {
+      continue;
+    }
+    RowContainerIterator iter;
+    const auto listed =
+        container->listRows(&iter, containerRows, rows.data() + numListed);
+    VELOX_CHECK_EQ(listed, containerRows, "Failed to list build rows");
+    for (uint64_t offset = 0; offset < containerRows;
+         offset += kRehashChunkRows) {
+      chunks.push_back(Chunk{
+          numListed + offset,
+          std::min<uint64_t>(kRehashChunkRows, containerRows - offset),
+          initNormalizedKeys || i != 0});
+    }
+    numListed += containerRows;
+  }
+  VELOX_CHECK_EQ(numListed, totalRows);
+
+  std::atomic<bool> unmappable{false};
+  runParallel(buildExecutor_, chunks.size(), [&](size_t i) {
+    if (unmappable.load(std::memory_order_relaxed)) {
+      return;
+    }
+    const auto& chunk = chunks[i];
+    raw_vector<uint64_t> hashes(chunk.numRows, pool_);
+    if (!hashRowsReadOnly(
+            folly::Range<char**>(
+                rows.data() + chunk.firstRow,
+                static_cast<size_t>(chunk.numRows)),
+            chunk.initNormalizedKeys,
+            hashes)) {
+      unmappable.store(true, std::memory_order_relaxed);
+    }
+  });
+
+  // A miss means the value ids no longer fit. Let the serial rehash() redo the
+  // work and take its 'setHashMode(kHash)' path; it overwrites whatever
+  // normalized keys were written here.
+  return !unmappable.load(std::memory_order_relaxed);
+}
+
+template <bool ignoreNullKeys>
+void HashTable<ignoreNullKeys>::insertForJoinParallel(
+    char** allRows,
+    const uint64_t* hashes,
+    uint64_t numRows,
+    folly::Executor* executor,
+    int32_t numPartitions) {
+  VELOX_CHECK_GT(numPartitions, 0);
+  VELOX_CHECK_NE(
+      hashMode_,
+      HashMode::kArray,
+      "kArray mode inserts by value id and cannot be partitioned by bucket");
+
+  const auto insertRange = [&](char** rows,
+                               const uint64_t* rowHashes,
+                               uint64_t count,
+                               TableInsertPartitionInfo* partitionInfo) {
+    for (uint64_t offset = 0; offset < count; offset += kHashBatchSize) {
+      const auto batch = static_cast<int32_t>(
+          std::min<uint64_t>(kHashBatchSize, count - offset));
+      insertForJoin(rows + offset, rowHashes + offset, batch, partitionInfo);
+    }
+  };
+
+  if (numPartitions == 1 || executor == nullptr) {
+    insertRange(allRows, hashes, numRows, nullptr);
+    return;
+  }
+
+  // Same bucket range partitioning as parallelJoinBuild(): a row's home bucket
+  // determines its partition, so two partitions never write the same bucket.
+  // The bounds are cache line aligned, and the tail is the whole table.
+  std::vector<PartitionBoundIndexType> bounds(numPartitions + 1);
+  for (int32_t i = 0; i < numPartitions; ++i) {
+    bounds[i] =
+        bits::roundUp(((sizeMask_ + 1) / numPartitions) * i, kBucketSize);
+    VELOX_CHECK_GE(
+        bounds[i],
+        0,
+        "Turn on VELOX_ENABLE_INT64_BUILD_PARTITION_BOUND to avoid integer overflow in partition bounds");
+  }
+  bounds[numPartitions] = sizeMask_ + 1;
+
+  std::vector<std::vector<char*>> overflows(numPartitions);
+  std::vector<std::vector<uint64_t>> overflowHashes(numPartitions);
+
+  runParallel(executor, numPartitions, [&](size_t partition) {
+    TableInsertPartitionInfo partitionInfo{
+        bounds[partition],
+        bounds[partition + 1],
+        overflows[partition],
+        overflowHashes[partition]};
+    // Each worker scans all the hashes and keeps the rows that are its own.
+    // Rescanning the hash array per partition costs a sequential read of 8
+    // bytes per row, which is cheaper than materializing per-partition row
+    // lists and needs no shared state.
+    raw_vector<char*> batchRows(kHashBatchSize, pool_);
+    raw_vector<uint64_t> batchHashes(kHashBatchSize, pool_);
+    int32_t numBatched{0};
+    for (uint64_t i = 0; i < numRows; ++i) {
+      const auto index = bucketOffset(hashes[i]);
+      if (!partitionInfo.inRange(index)) {
+        continue;
+      }
+      batchRows[numBatched] = allRows[i];
+      batchHashes[numBatched] = hashes[i];
+      if (++numBatched == kHashBatchSize) {
+        insertForJoin(
+            batchRows.data(), batchHashes.data(), numBatched, &partitionInfo);
+        numBatched = 0;
+      }
+    }
+    if (numBatched > 0) {
+      insertForJoin(
+          batchRows.data(), batchHashes.data(), numBatched, &partitionInfo);
+    }
+  });
+
+  // Serially re-insert the rows that probed past the end of their partition.
+  // Their hashes were kept, so this does not re-hash.
+  for (int32_t i = 0; i < numPartitions; ++i) {
+    VELOX_CHECK_EQ(overflows[i].size(), overflowHashes[i].size());
+    insertRange(
+        overflows[i].data(),
+        overflowHashes[i].data(),
+        overflows[i].size(),
+        nullptr);
+  }
+}
+
+template <bool ignoreNullKeys>
+const typename HashTable<ignoreNullKeys>::SerializationPlan&
+HashTable<ignoreNullKeys>::ensureSerializationPlan() const {
   // A join build RowContainer holds all build rows, which exceeds
   // 'numDistinct_' when duplicate keys exist, and parallel build spreads the
   // rows over 'otherTables_'. All of them have to be serialized.
@@ -2861,6 +3184,69 @@ void HashTable<ignoreNullKeys>::serializeImpl(Writer& writer) const {
   for (const auto* container : containers) {
     totalRows += container->numRows();
   }
+
+  if (serializationPlan_ != nullptr &&
+      serializationPlan_->totalRows == totalRows) {
+    return *serializationPlan_;
+  }
+
+  auto plan = std::make_unique<SerializationPlan>(pool_);
+  plan->totalRows = totalRows;
+  if (totalRows == 0) {
+    serializationPlan_ = std::move(plan);
+    return *serializationPlan_;
+  }
+
+  // The rows, hashes and normalized keys sections share one row order, so list
+  // the build rows once.
+  plan->rows.resize(totalRows);
+  uint64_t numListed{0};
+  for (auto* container : containers) {
+    RowContainerIterator iter;
+    const auto listed = container->listRows(
+        &iter, container->numRows(), plan->rows.data() + numListed);
+    VELOX_CHECK_EQ(listed, container->numRows(), "Failed to list build rows");
+    numListed += listed;
+  }
+  VELOX_CHECK_EQ(numListed, totalRows, "Build row count mismatch");
+
+  // Chop the rows into sections. A section never spans containers, since the
+  // reading side fills each one from a single RowContainer, and a container
+  // holding many rows is split further so that the reading side can use all
+  // its threads even when the writing side built the table with few
+  // containers.
+  const auto rowsPerSection = std::max<uint64_t>(
+      kSerializedSectionRows,
+      (totalRows + kMaxSerializedSections - 1) / kMaxSerializedSections);
+  uint64_t firstRow{0};
+  for (auto* container : containers) {
+    const uint64_t containerRows = container->numRows();
+    for (uint64_t offset = 0; offset < containerRows;
+         offset += rowsPerSection) {
+      const auto numRows = std::min(rowsPerSection, containerRows - offset);
+      const auto numBytes = container->serializedRowsSize(
+          folly::Range<char**>(plan->rows.data() + firstRow + offset, numRows));
+      plan->sections.push_back(
+          SerializedSection{firstRow + offset, numRows, numBytes});
+      plan->sectionContainers.push_back(container);
+      plan->rowBytes += numBytes;
+    }
+    firstRow += containerRows;
+  }
+  VELOX_CHECK_EQ(firstRow, totalRows);
+
+  serializationPlan_ = std::move(plan);
+  return *serializationPlan_;
+}
+
+template <bool ignoreNullKeys>
+template <typename Writer>
+void HashTable<ignoreNullKeys>::serializeImpl(
+    Writer& writer,
+    const SerializationPlan& plan) const {
+  VELOX_CHECK(isJoinBuild_, "Only join-build hash tables are supported");
+
+  const auto totalRows = plan.totalRows;
   // The slot array is not part of the serialized form, so a table built with
   // setBuildForSerializationOnly() legitimately has none. What is required is
   // that the hash mode and the VectorHasher state have been settled, i.e. that
@@ -2942,47 +3328,44 @@ void HashTable<ignoreNullKeys>::serializeImpl(Writer& writer) const {
     return;
   }
 
-  // The rows, hashes and normalized keys sections share one row order, so list
-  // the build rows once.
-  raw_vector<char*> rows(totalRows, pool_);
-  vector_size_t numListed{0};
-  for (auto* container : containers) {
-    RowContainerIterator iter;
-    const auto listed = container->listRows(
-        &iter, container->numRows(), rows.data() + numListed);
-    VELOX_CHECK_EQ(listed, container->numRows(), "Failed to list build rows");
-    numListed += listed;
+  // The row blob is chopped into sections that the reading side can decode in
+  // parallel. Neither a section's row count nor its byte count can be derived
+  // from the bytes without walking them, so both go on the wire;
+  // storeSerializedRow() consumes exactly one row's bytes, so per-row lengths
+  // stay off it.
+  const auto& sections = plan.sections;
+  writeValue(static_cast<uint32_t>(sections.size()));
+  for (const auto& section : sections) {
+    writeValue(section.numRows);
+    writeValue(section.numBytes);
   }
-  VELOX_CHECK_EQ(numListed, totalRows, "Build row count mismatch");
 
-  auto rowsOf = [&](size_t index, const RowContainer* container) {
-    return folly::Range<char**>(rows.data() + index, container->numRows());
-  };
-
-  // Serialize the rows as one contiguous blob. storeSerializedRow() consumes
-  // exactly one row's bytes, so per-row lengths stay off the wire.
-  uint64_t rowBytes{0};
-  for (size_t index = 0; auto* container : containers) {
-    rowBytes += container->serializedRowsSize(rowsOf(index, container));
-    index += container->numRows();
-  }
-  writeValue(rowBytes);
+  writeValue(plan.rowBytes);
   if constexpr (Writer::kSizeOnly) {
-    writer.reserve(rowBytes);
+    writer.reserve(plan.rowBytes);
   } else {
-    auto* destination = writer.reserve(rowBytes);
+    auto* destination = writer.reserve(plan.rowBytes);
     size_t written{0};
-    for (size_t index = 0; auto* container : containers) {
-      written += container->serializeRows(
-          rowsOf(index, container), destination + written, nullptr);
-      index += container->numRows();
+    for (size_t i = 0; i < sections.size(); ++i) {
+      const auto& section = sections[i];
+      const auto sectionBytes = plan.sectionContainers[i]->serializeRows(
+          folly::Range<char**>(
+              plan.rows.data() + section.firstRow, section.numRows),
+          destination + written,
+          nullptr);
+      VELOX_CHECK_EQ(
+          sectionBytes, section.numBytes, "Serialized section size mismatch");
+      written += sectionBytes;
     }
-    VELOX_CHECK_EQ(written, rowBytes, "Serialized row size mismatch");
+    VELOX_CHECK_EQ(written, plan.rowBytes, "Serialized row size mismatch");
   }
 
-  // In kArray mode deserialization recomputes the value ids from the restored
-  // VectorHasher state, so serialized hashes would be ignored.
-  if (hashMode_ != HashMode::kArray) {
+  // The hashes only go on the wire in kHash mode. In kNormalizedKey mode they
+  // are mixNormalizedKey() of the normalized keys written below, which the
+  // reading side recomputes for a fraction of the cost of shipping another 8
+  // bytes per row; in kArray mode deserialization recomputes the value ids
+  // from the restored VectorHasher state.
+  if (hashMode_ == HashMode::kHash) {
     const auto hashBytes = totalRows * sizeof(uint64_t);
     if constexpr (Writer::kSizeOnly) {
       writer.reserve(hashBytes);
@@ -2992,7 +3375,7 @@ void HashTable<ignoreNullKeys>::serializeImpl(Writer& writer) const {
       // in kArray mode alone.
       VELOX_CHECK(
           const_cast<HashTable<ignoreNullKeys>*>(this)->hashRows(
-              folly::Range<char**>(rows.data(), totalRows), false, hashes),
+              folly::Range<char**>(plan.rows.data(), totalRows), false, hashes),
           "Failed to hash build rows for serialization");
       writer.write(hashes.data(), hashBytes);
     }
@@ -3007,7 +3390,7 @@ void HashTable<ignoreNullKeys>::serializeImpl(Writer& writer) const {
     } else {
       auto* destination = writer.reserve(keyBytes);
       for (uint64_t i = 0; i < totalRows; ++i) {
-        const auto key = RowContainer::normalizedKey(rows[i]);
+        const auto key = RowContainer::normalizedKey(plan.rows[i]);
         ::memcpy(destination + i * sizeof(key), &key, sizeof(key));
       }
     }
@@ -3020,16 +3403,20 @@ void HashTable<ignoreNullKeys>::serializeImpl(Writer& writer) const {
 template <bool ignoreNullKeys>
 size_t HashTable<ignoreNullKeys>::serializedSize() const {
   SizeCountingWriter writer;
-  serializeImpl(writer);
+  serializeImpl(writer, ensureSerializationPlan());
   return writer.size();
 }
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::serializeTo(void* data, size_t size) const {
   MemoryWriter writer(data, size);
-  serializeImpl(writer);
+  serializeImpl(writer, ensureSerializationPlan());
   VELOX_CHECK_EQ(
       writer.writtenSize(), size, "Hash table serialized size mismatch");
+  // The plan pins one pointer per build row plus the measured section sizes,
+  // which are only valid while the table is unchanged. Drop them now that they
+  // have been consumed instead of holding tens of MB for the table's lifetime.
+  serializationPlan_.reset();
 }
 
 template <bool ignoreNullKeys>
@@ -3037,7 +3424,8 @@ std::unique_ptr<HashTable<ignoreNullKeys>>
 HashTable<ignoreNullKeys>::deserializeFrom(
     const void* data,
     size_t size,
-    memory::MemoryPool* pool) {
+    memory::MemoryPool* pool,
+    folly::Executor* executor) {
   VELOX_CHECK_NOT_NULL(data, "Serialized hash table data cannot be null");
   common::NativeStringReader reader(
       std::string_view(static_cast<const char*>(data), size));
@@ -3079,11 +3467,19 @@ HashTable<ignoreNullKeys>::deserializeFrom(
   };
 
   const auto numHashers = reader.readValue<uint32_t>();
+  // Kept around because the extra tables that hold the row sections decoded in
+  // parallel need hashers of their own.
+  std::vector<TypePtr> keyTypes;
+  std::vector<column_index_t> keyChannels;
+  keyTypes.reserve(numHashers);
+  keyChannels.reserve(numHashers);
   std::vector<std::unique_ptr<VectorHasher>> hashers;
   hashers.reserve(numHashers);
   for (uint32_t i = 0; i < numHashers; ++i) {
     auto type = readType();
     const auto channel = reader.readValue<column_index_t>();
+    keyTypes.push_back(type);
+    keyChannels.push_back(channel);
     hashers.push_back(std::make_unique<VectorHasher>(std::move(type), channel));
   }
 
@@ -3132,26 +3528,91 @@ HashTable<ignoreNullKeys>::deserializeFrom(
   const auto totalRows = reader.readValue<uint64_t>();
   raw_vector<char*> rows(totalRows, pool);
   raw_vector<uint64_t> hashes(pool);
+  // Row sections beyond the first are decoded into tables of their own, which
+  // is what lets the decode run in parallel: a RowContainer cannot be appended
+  // to from several threads. This is the same shape a parallel join build
+  // leaves behind, so the probe side handles it as usual.
+  std::vector<std::unique_ptr<HashTable<ignoreNullKeys>>> extraTables;
+  std::vector<SerializedSection> sections;
   if (totalRows > 0) {
-    const auto rowBytes = reader.readValue<uint64_t>();
-    const auto consumed = table->rows_->storeSerializedRows(
-        reader.view(rowBytes), totalRows, rows.data());
-    VELOX_CHECK_EQ(consumed, rowBytes, "Serialized row data size mismatch");
+    const auto numSections = reader.readValue<uint32_t>();
+    VELOX_CHECK_GT(
+        numSections, 0, "Serialized hash table has rows but no row sections");
+    sections.resize(numSections);
+    uint64_t firstRow{0};
+    uint64_t sectionBytes{0};
+    for (uint32_t i = 0; i < numSections; ++i) {
+      sections[i].firstRow = firstRow;
+      sections[i].numRows = reader.readValue<uint64_t>();
+      sections[i].numBytes = reader.readValue<uint64_t>();
+      VELOX_CHECK_LE(
+          sections[i].numRows,
+          std::numeric_limits<vector_size_t>::max(),
+          "Serialized row section is too large");
+      firstRow += sections[i].numRows;
+      sectionBytes += sections[i].numBytes;
+    }
+    VELOX_CHECK_EQ(
+        firstRow, totalRows, "Serialized section row counts do not add up");
 
-    if (hashMode != HashMode::kArray) {
+    const auto rowBytes = reader.readValue<uint64_t>();
+    VELOX_CHECK_EQ(
+        sectionBytes, rowBytes, "Serialized section byte counts do not add up");
+    const auto rowData = reader.view(rowBytes);
+
+    std::vector<RowContainer*> sectionRows(numSections);
+    sectionRows[0] = table->rows_.get();
+    extraTables.reserve(numSections - 1);
+    for (uint32_t i = 1; i < numSections; ++i) {
+      std::vector<std::unique_ptr<VectorHasher>> sectionHashers;
+      sectionHashers.reserve(numHashers);
+      for (uint32_t key = 0; key < numHashers; ++key) {
+        sectionHashers.push_back(
+            std::make_unique<VectorHasher>(keyTypes[key], keyChannels[key]));
+      }
+      auto sectionTable = std::make_unique<HashTable<ignoreNullKeys>>(
+          std::move(sectionHashers),
+          std::vector<Accumulator>{},
+          dependentTypes,
+          allowDuplicates,
+          isJoinBuild,
+          hasProbedFlag,
+          hasCountFlag,
+          minTableSizeForParallelJoinBuild,
+          pool,
+          bloomFilterMaxSize);
+      sectionRows[i] = sectionTable->rows_.get();
+      extraTables.push_back(std::move(sectionTable));
+    }
+
+    uint64_t byteOffset{0};
+    std::vector<uint64_t> sectionByteOffsets(numSections);
+    for (uint32_t i = 0; i < numSections; ++i) {
+      sectionByteOffsets[i] = byteOffset;
+      byteOffset += sections[i].numBytes;
+    }
+
+    runParallel(executor, numSections, [&](size_t i) {
+      const auto& section = sections[i];
+      const auto consumed = sectionRows[i]->storeSerializedRows(
+          std::string_view(
+              rowData.data() + sectionByteOffsets[i], section.numBytes),
+          static_cast<vector_size_t>(section.numRows),
+          rows.data() + section.firstRow);
+      VELOX_CHECK_EQ(
+          consumed, section.numBytes, "Serialized row data size mismatch");
+    });
+
+    if (hashMode == HashMode::kHash) {
       hashes.resize(totalRows);
       reader.read(hashes.data(), totalRows * sizeof(uint64_t));
     }
-
-    if (hashMode == HashMode::kNormalizedKey) {
-      const auto keys = reader.view(totalRows * sizeof(normalized_key_t));
-      for (uint64_t i = 0; i < totalRows; ++i) {
-        normalized_key_t key;
-        ::memcpy(&key, keys.data() + i * sizeof(key), sizeof(key));
-        RowContainer::normalizedKey(rows[i]) = key;
-      }
-    }
   }
+
+  const std::string_view normalizedKeys =
+      totalRows > 0 && hashMode == HashMode::kNormalizedKey
+      ? reader.view(totalRows * sizeof(normalized_key_t))
+      : std::string_view{};
   VELOX_CHECK(
       reader.atEnd(), "Trailing bytes after hash table deserialization");
 
@@ -3160,7 +3621,11 @@ HashTable<ignoreNullKeys>::deserializeFrom(
   table->hashMode_ = hashMode;
   if (hashMode == HashMode::kHash) {
     table->rows_->disableNormalizedKeys();
+    for (auto& extra : extraTables) {
+      extra->rows()->disableNormalizedKeys();
+    }
   }
+  table->otherTables_ = std::move(extraTables);
 
   if (totalRows > 0) {
     if (hashMode == HashMode::kArray) {
@@ -3172,7 +3637,9 @@ HashTable<ignoreNullKeys>::deserializeFrom(
       table->table_ = table->tableAllocation_.template data<char*>();
       memset(table->table_, 0, bytes);
 
-      // Recompute the value ids from the restored VectorHasher state.
+      // Recompute the value ids from the restored VectorHasher state. The
+      // array slot is the value id itself, so this cannot be partitioned by
+      // bucket range the way the other modes are.
       raw_vector<uint64_t> valueIds(totalRows, pool);
       VELOX_CHECK(
           table->hashRows(
@@ -3181,7 +3648,34 @@ HashTable<ignoreNullKeys>::deserializeFrom(
       table->insertForJoin(rows.data(), valueIds.data(), totalRows, nullptr);
     } else {
       table->allocateTables(capacity, kNoSpillInputStartPartitionBit);
-      table->insertForJoin(rows.data(), hashes.data(), totalRows, nullptr);
+
+      if (hashMode == HashMode::kNormalizedKey) {
+        // Restore the normalized keys and derive the hashes from them. This
+        // needs 'sizeBits_', hence the allocateTables() above; the writing
+        // side derived the serialized hashes the same way from the same
+        // 'capacity_'.
+        hashes.resize(totalRows);
+        runParallel(executor, sections.size(), [&](size_t i) {
+          const auto& section = sections[i];
+          for (uint64_t row = section.firstRow;
+               row < section.firstRow + section.numRows;
+               ++row) {
+            normalized_key_t key;
+            ::memcpy(
+                &key, normalizedKeys.data() + row * sizeof(key), sizeof(key));
+            RowContainer::normalizedKey(rows[row]) = key;
+            hashes[row] = mixNormalizedKey(key, table->sizeBits_);
+          }
+        });
+      }
+
+      table->insertForJoinParallel(
+          rows.data(),
+          hashes.data(),
+          totalRows,
+          executor,
+          numInsertPartitions(
+              capacity, minTableSizeForParallelJoinBuild, sections.size()));
     }
   }
 
@@ -3201,10 +3695,12 @@ template void HashTable<false>::serializeTo(void* data, size_t size) const;
 template std::unique_ptr<HashTable<true>> HashTable<true>::deserializeFrom(
     const void* data,
     size_t size,
-    memory::MemoryPool* pool);
+    memory::MemoryPool* pool,
+    folly::Executor* executor);
 template std::unique_ptr<HashTable<false>> HashTable<false>::deserializeFrom(
     const void* data,
     size_t size,
-    memory::MemoryPool* pool);
+    memory::MemoryPool* pool,
+    folly::Executor* executor);
 
 } // namespace facebook::velox::exec
