@@ -735,9 +735,7 @@ void RowContainer::extractSerializedRows(
     size_t offset = 0;
 
     // Copy nulls and other flags.
-    const auto flagsOffset =
-        nullOffsets_.empty() ? freeFlagOffset_ / 8 : nullByte(nullOffsets_[0]);
-    ::memcpy(rawBuffer + offset, row + flagsOffset, flagBytes_);
+    ::memcpy(rawBuffer + offset, row + rowColumns_[0].nullByte(), flagBytes_);
     offset += flagBytes_;
 
     // Copy values.
@@ -767,16 +765,9 @@ void RowContainer::storeSerializedRow(
     char* row) {
   VELOX_CHECK(!vector.isNullAt(index));
   const auto serialized = vector.valueAt(index);
-  storeSerializedRow(
-      std::string_view(serialized.data(), serialized.size()), row);
-}
-
-void RowContainer::storeSerializedRow(std::string_view serialized, char* row) {
   size_t offset = 0;
 
-  const auto flagsOffset =
-      nullOffsets_.empty() ? freeFlagOffset_ / 8 : nullByte(nullOffsets_[0]);
-  ::memcpy(row + flagsOffset, serialized.data(), flagBytes_);
+  ::memcpy(row + rowColumns_[0].nullByte(), serialized.data(), flagBytes_);
   offset += flagBytes_;
 
   RowSizeTracker tracker(row[rowSizeOffset_], *stringAllocator_);
@@ -792,10 +783,6 @@ void RowContainer::storeSerializedRow(std::string_view serialized, char* row) {
     }
     updateColumnStats(row, i);
   }
-  VELOX_CHECK_EQ(
-      offset,
-      serialized.size(),
-      "Serialized row size mismatch while storing RowContainer row");
 }
 
 void RowContainer::extractString(
