@@ -249,24 +249,6 @@ class VectorHasher {
       uint8_t nullMask,
       raw_vector<uint64_t>& result);
 
-  /// Same as computeValueIdsForRows() except that it never mutates 'this': it
-  /// looks the value ids up instead of assigning new ones, and returns false as
-  /// soon as a value has no id yet.
-  ///
-  /// This makes it callable concurrently from several threads, which
-  /// computeValueIdsForRows() is not, since assigning an id inserts into
-  /// 'uniqueValues_'. It is meant for recomputing the value ids of rows that
-  /// have already been analyzed, where every lookup is expected to hit; a
-  /// caller that gets false must fall back to the mutating variant on a single
-  /// thread.
-  bool computeValueIdsForRowsReadOnly(
-      char** groups,
-      int32_t numGroups,
-      int32_t offset,
-      int32_t nullByte,
-      uint8_t nullMask,
-      raw_vector<uint64_t>& result) const;
-
   struct ScratchMemory {
     DecodedVector decoded;
     raw_vector<uint64_t> hashes;
@@ -497,34 +479,6 @@ class VectorHasher {
         }
       } else {
         auto id = valueId(valueAt<T>(groups[i], offset));
-        if (id == kUnmappable) {
-          return false;
-        }
-        result[i] =
-            multiplier_ == 1 ? toInt64(id) : result[i] + multiplier_ * id;
-      }
-    }
-    return true;
-  }
-
-  // Read-only counterpart of makeValueIdsForRows(). See
-  // computeValueIdsForRowsReadOnly().
-  template <TypeKind Kind>
-  bool makeValueIdsForRowsReadOnly(
-      char** groups,
-      int32_t numGroups,
-      int32_t offset,
-      int32_t nullByte,
-      uint8_t nullMask,
-      uint64_t* result) const {
-    using T = typename TypeTraits<Kind>::NativeType;
-    for (int32_t i = 0; i < numGroups; ++i) {
-      if (isNullAt(groups[i], nullByte, nullMask)) {
-        if (multiplier_ == 1) {
-          result[i] = 0;
-        }
-      } else {
-        auto id = lookupValueId(valueAt<T>(groups[i], offset));
         if (id == kUnmappable) {
           return false;
         }
@@ -771,15 +725,6 @@ bool VectorHasher::makeValueIdsForRows<TypeKind::VARCHAR>(
     int32_t nullByte,
     uint8_t nullMask,
     uint64_t* result);
-
-template <>
-bool VectorHasher::makeValueIdsForRowsReadOnly<TypeKind::VARCHAR>(
-    char** groups,
-    int32_t numGroups,
-    int32_t offset,
-    int32_t nullByte,
-    uint8_t nullMask,
-    uint64_t* result) const;
 
 template <>
 void VectorHasher::analyzeValue(StringView value);
