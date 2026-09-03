@@ -986,22 +986,6 @@ class HashTable : public BaseHashTable {
       folly::Executor* executor,
       int32_t numPartitions);
 
-  // The rehash() variant used for a serialize-only build. Such a build has no
-  // slot array to insert into, so all that is left of a rehash is settling the
-  // value ids and writing the normalized keys into the rows, and that spreads
-  // over 'buildExecutor_' cleanly because the rows are disjoint. Returns false
-  // if a value id lookup missed, in which case the caller must fall back to
-  // the serial rehash(), which will then degrade the hash mode as usual.
-  bool parallelRehashForSerialization(bool initNormalizedKeys);
-
-  // Thread-safe counterpart of hashRows() for a serialize-only build: it looks
-  // value ids up instead of assigning them, so several threads may run it on
-  // disjoint row ranges. Returns false if a lookup missed.
-  bool hashRowsReadOnly(
-      folly::Range<char**> rows,
-      bool initNormalizedKeys,
-      raw_vector<uint64_t>& hashes) const;
-
   // Enables debug stats for collisions for debug build.
 #ifdef NDEBUG
   static constexpr bool kTrackLoads = false;

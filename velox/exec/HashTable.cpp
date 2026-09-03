@@ -867,52 +867,6 @@ bool HashTable<ignoreNullKeys>::hashRows(
   return true;
 }
 
-template <bool ignoreNullKeys>
-bool HashTable<ignoreNullKeys>::hashRowsReadOnly(
-    folly::Range<char**> rows,
-    bool initNormalizedKeys,
-    raw_vector<uint64_t>& hashes) const {
-  if (rows.empty()) {
-    return true;
-  }
-  if (!initNormalizedKeys && hashMode_ == HashMode::kNormalizedKey) {
-    const auto numRows = static_cast<int32_t>(rows.size());
-    for (int32_t i = 0; i < numRows; ++i) {
-      hashes[i] =
-          mixNormalizedKey(RowContainer::normalizedKey(rows[i]), sizeBits_);
-    }
-    return true;
-  }
-
-  for (int32_t i = 0; i < hashers_.size(); ++i) {
-    const auto& hasher = hashers_[i];
-    if (hashMode_ == HashMode::kHash) {
-      rows_->hash(i, rows, i > 0, hashes.data());
-    } else {
-      // Array or normalized key. Unlike hashRows(), this looks the value ids
-      // up rather than assigning new ones, which is what makes it safe to run
-      // on several row ranges at once.
-      auto column = rows_->columnAt(i);
-      if (!hasher->computeValueIdsForRowsReadOnly(
-              rows.data(),
-              rows.size(),
-              column.offset(),
-              column.nullByte(),
-              ignoreNullKeys ? 0 : column.nullMask(),
-              hashes)) {
-        return false;
-      }
-    }
-  }
-  if (hashMode_ == HashMode::kNormalizedKey && initNormalizedKeys) {
-    for (auto i = 0; i < rows.size(); ++i) {
-      RowContainer::normalizedKey(rows[i]) = hashes[i];
-      hashes[i] = mixNormalizedKey(hashes[i], sizeBits_);
-    }
-  }
-  return true;
-}
-
 namespace {
 
 template <typename T>
@@ -1613,15 +1567,15 @@ void HashTable<ignoreNullKeys>::rehash(
     parallelJoinBuild();
     return;
   }
-  // A serialize-only build has no slot array, so canApplyParallelJoinBuild()
-  // above declines: partitioning the table is exactly the work that mode
-  // exists to skip. What is left of the rehash is per-row and still worth
-  // spreading over the executor. Bloom filters are excluded because inserting
-  // into one from several threads is not safe, and parallelJoinBuild()'s
-  // partitioned Bloom filter build needs the slot array partitioning.
-  if (buildForSerializationOnly_ && buildExecutor_ != nullptr &&
-      !bloomFilterSupported() &&
-      parallelRehashForSerialization(initNormalizedKeys)) {
+  // A serialize-only build has no slot array to insert into, so in kHash mode a
+  // rehash produces nothing that is kept: the hashes it computes are thrown
+  // away and serializeImpl() computes the ones it writes itself. The other
+  // modes do keep something, namely the value ids that insertBatch() settles
+  // and, in kNormalizedKey mode, the normalized keys it writes into the rows.
+  // Bloom filters are the other thing a rehash produces, and they are
+  // serialized as part of the VectorHasher state.
+  if (buildForSerializationOnly_ && hashMode_ == HashMode::kHash &&
+      !bloomFilterSupported()) {
     return;
   }
   raw_vector<uint64_t> hashes(pool_);
@@ -2815,11 +2769,6 @@ constexpr uint64_t kSerializedSectionRows = 256 * 1024;
 // reading side creates, for a very large build side.
 constexpr uint64_t kMaxSerializedSections = 128;
 
-// Rows per unit of work in parallelRehashForSerialization(). Large enough that
-// the per-chunk hash vector allocation and the executor hop are amortized,
-// small enough that the chunks still balance across the executor.
-constexpr uint64_t kRehashChunkRows = 64 * 1024;
-
 // Counts the bytes a serialization produces without materializing them.
 // 'kSizeOnly' lets serializeImpl() skip the row extraction and hashing, which
 // affect only the content and not the size of the output.
@@ -2998,80 +2947,6 @@ int32_t numInsertPartitions(
 }
 
 } // namespace
-
-template <bool ignoreNullKeys>
-bool HashTable<ignoreNullKeys>::parallelRehashForSerialization(
-    bool initNormalizedKeys) {
-  VELOX_CHECK(buildForSerializationOnly_);
-  VELOX_CHECK_NOT_NULL(buildExecutor_);
-
-  // One unit of work: a range of 'rows' below, plus whether the normalized
-  // keys of those rows have to be written. Rows of a container other than the
-  // main one always get theirs written, mirroring the
-  // 'initNormalizedKeys || i != 0' the serial rehash() uses.
-  struct Chunk {
-    uint64_t firstRow;
-    uint64_t numRows;
-    bool initNormalizedKeys;
-  };
-
-  uint64_t totalRows{0};
-  for (int32_t i = 0; i <= otherTables_.size(); ++i) {
-    totalRows += tableAt(i)->rows()->numRows();
-  }
-  if (totalRows == 0) {
-    return true;
-  }
-
-  // The row ranges have to be known up front to be handed out to the workers,
-  // and listing them is a sequential walk of each container's arena.
-  raw_vector<char*> rows(pool_);
-  rows.resize(totalRows);
-  std::vector<Chunk> chunks;
-  uint64_t numListed{0};
-  for (int32_t i = 0; i <= otherTables_.size(); ++i) {
-    auto* container = tableAt(i)->rows();
-    const uint64_t containerRows = container->numRows();
-    if (containerRows == 0) {
-      continue;
-    }
-    RowContainerIterator iter;
-    const auto listed =
-        container->listRows(&iter, containerRows, rows.data() + numListed);
-    VELOX_CHECK_EQ(listed, containerRows, "Failed to list build rows");
-    for (uint64_t offset = 0; offset < containerRows;
-         offset += kRehashChunkRows) {
-      chunks.push_back(Chunk{
-          numListed + offset,
-          std::min<uint64_t>(kRehashChunkRows, containerRows - offset),
-          initNormalizedKeys || i != 0});
-    }
-    numListed += containerRows;
-  }
-  VELOX_CHECK_EQ(numListed, totalRows);
-
-  std::atomic<bool> unmappable{false};
-  runParallel(buildExecutor_, chunks.size(), [&](size_t i) {
-    if (unmappable.load(std::memory_order_relaxed)) {
-      return;
-    }
-    const auto& chunk = chunks[i];
-    raw_vector<uint64_t> hashes(chunk.numRows, pool_);
-    if (!hashRowsReadOnly(
-            folly::Range<char**>(
-                rows.data() + chunk.firstRow,
-                static_cast<size_t>(chunk.numRows)),
-            chunk.initNormalizedKeys,
-            hashes)) {
-      unmappable.store(true, std::memory_order_relaxed);
-    }
-  });
-
-  // A miss means the value ids no longer fit. Let the serial rehash() redo the
-  // work and take its 'setHashMode(kHash)' path; it overwrites whatever
-  // normalized keys were written here.
-  return !unmappable.load(std::memory_order_relaxed);
-}
 
 template <bool ignoreNullKeys>
 void HashTable<ignoreNullKeys>::insertForJoinParallel(
