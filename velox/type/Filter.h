@@ -15,6 +15,8 @@
  */
 #pragma once
 
+#include <string_view>
+
 #include <folly/Range.h>
 #include <folly/container/F14Set.h>
 #include <xsimd/xsimd.hpp>
@@ -1295,7 +1297,7 @@ class BigintValuesUsingBitmask final : public Filter {
   const int64_t max_;
 };
 
-class BigintValuesUsingBloomFilter final : public Filter {
+class BigintValuesUsingBloomFilter : public Filter {
  public:
   static int64_t numBlocks(int64_t capacity) {
     return SplitBlockBloomFilter::numBlocks(capacity, 0.01);
@@ -1306,7 +1308,7 @@ class BigintValuesUsingBloomFilter final : public Filter {
         blocks_(numBlocks(capacity)),
         filter_(blocks_) {}
 
-  bool testInt64(int64_t value) const final {
+  bool testInt64(int64_t value) const override {
     return filter_.mayContain(hash(value));
   }
 
@@ -1323,7 +1325,7 @@ class BigintValuesUsingBloomFilter final : public Filter {
   }
 
   bool testInt64Range(int64_t /*min*/, int64_t /*max*/, bool /*hasNull*/)
-      const final {
+      const override {
     return true;
   }
 
@@ -1337,6 +1339,10 @@ class BigintValuesUsingBloomFilter final : public Filter {
   folly::dynamic serialize() const override;
 
   static std::unique_ptr<Filter> create(const folly::dynamic& obj);
+
+  void serializeBinary(std::string& out) const;
+
+  static std::unique_ptr<Filter> deserializeBinary(std::string_view data);
 
   bool testingEquals(const Filter& other) const override;
 
