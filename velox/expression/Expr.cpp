@@ -31,6 +31,7 @@
 #include "velox/common/EnumDefine.h"
 #include "velox/expression/ConstantExpr.h"
 #include "velox/expression/Expr.h"
+#include "velox/expression/ExprSetV2.h"
 #include "velox/expression/ExprCompiler.h"
 #include "velox/expression/FieldReference.h"
 #include "velox/expression/LambdaExpr.h"
@@ -2433,6 +2434,10 @@ std::unique_ptr<ExprSet> makeExprSetFromFlag(
   if (execCtx->queryCtx()->queryConfig().exprEvalSimplified() ||
       FLAGS_force_eval_simplified) {
     return std::make_unique<ExprSetSimplified>(std::move(source), execCtx);
+  }
+  if (execCtx->queryCtx()->queryConfig().exprEvalV2()) {
+    return std::make_unique<ExprSetV2>(
+        source, execCtx, /*enableConstantFolding=*/true, lazyDereference);
   }
   return std::make_unique<ExprSet>(
       std::move(source), execCtx, true, lazyDereference);

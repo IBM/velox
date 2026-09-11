@@ -39,6 +39,7 @@ const std::vector<config::ConfigProperty>& QueryConfig::registeredProperties() {
     // Expression evaluation.
     VELOX_REGISTER_QUERY_CONFIG(kExprEvalSimplified);
     VELOX_REGISTER_QUERY_CONFIG(kExprEvalFlatNoNulls);
+    VELOX_REGISTER_QUERY_CONFIG(kExprEvalV2);
     VELOX_REGISTER_QUERY_CONFIG(kExprTrackCpuUsage);
     VELOX_REGISTER_QUERY_CONFIG(kExprTrackCpuUsageForFunctions);
     VELOX_REGISTER_QUERY_CONFIG(kExprAdaptiveCpuSampling);

@@ -148,6 +148,19 @@ class QueryConfig {
       true,
       "Enable FlatNoNulls fast path for expression evaluation.")
 
+  /// Whether to route expression evaluation through the V2 evaluator
+  /// (ExprEvaluatorV2 + ExprV2).  V2 is a behavior-preserving refactor
+  /// that produces bit-identical output to V1; the flag exists so V2
+  /// can be canaried per-query before the cutover.  False by default
+  /// until canary signal is positive.
+  VELOX_QUERY_CONFIG(
+      kExprEvalV2,
+      exprEvalV2,
+      "expression.eval_v2",
+      bool,
+      false,
+      "Route expression evaluation through the V2 evaluator.")
+
   /// Whether to track CPU usage for individual expressions (supported by call
   /// and cast expressions). False by default. Can be expensive when processing
   /// small batches, e.g. < 10K rows.
