@@ -459,8 +459,14 @@ void RowNumber::setupInputSpiller(
     keyChannels.push_back(hasher->channel());
   }
 
-  spillHashFunction_ = std::make_unique<HashPartitionFunction>(
-      inputSpiller_->hashBits(), inputType_, keyChannels);
+  spillHashFunction_ = createHashPartitionFunction(
+      inputSpiller_->hashBits(),
+      inputType_,
+      keyChannels,
+      {},
+      operatorCtx_->driverCtx()
+          ->queryConfig()
+          .optimizedHashPartitionFunctionEnabled());
 }
 
 void RowNumber::spill() {

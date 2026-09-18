@@ -466,6 +466,16 @@ class QueryConfig {
       false,
       "Flush PartitionedOutput rows eagerly without buffering.")
 
+  /// If true, use OptimizedHashPartitionFunction in place of
+  /// HashPartitionFunction.
+  VELOX_QUERY_CONFIG(
+      kOptimizedHashPartitionFunctionEnabled,
+      optimizedHashPartitionFunctionEnabled,
+      "optimized_hash_partition_function_enabled",
+      bool,
+      false,
+      "Use OptimizedHashPartitionFunction instead of HashPartitionFunction.")
+
   /// The maximum number of bytes to buffer in PartitionedOutput operator to
   /// avoid creating tiny SerializedPages.
   VELOX_QUERY_CONFIG(
@@ -1529,6 +1539,14 @@ class QueryConfig {
       "query to reach a backend fixes its policy for the life of the worker "
       "process; later queries contribute their outcomes to the adaptation but "
       "cannot change the setting.")
+
+  VELOX_QUERY_CONFIG(
+      kOptimizedPartitionedOutputEnabled,
+      optimizedPartitionedOutputEnabled,
+      "optimized_repartitioning",
+      bool,
+      false,
+      "Enable OptimizedPartitionedOutput operator.");
 
   // --- Hand-written accessors for properties that need custom logic ---
 

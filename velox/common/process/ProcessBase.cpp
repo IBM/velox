@@ -33,6 +33,8 @@ DECLARE_bool(avx2); // Enables use of AVX2 when available NOLINT
 
 DECLARE_bool(bmi2); // Enables use of BMI2 when available NOLINT
 
+DECLARE_bool(avx512f);
+
 namespace facebook {
 namespace velox {
 namespace process {
@@ -107,6 +109,7 @@ uint64_t threadCpuNanos() {
 namespace {
 bool bmi2CpuFlag = folly::CpuId().bmi2();
 bool avx2CpuFlag = folly::CpuId().avx2();
+bool avx512fCpuFlag = folly::CpuId().avx512f();
 } // namespace
 
 bool hasAvx2() {
@@ -130,6 +133,14 @@ bool hasSimd() {
 bool hasBmi2() {
 #ifdef __BMI2__
   return bmi2CpuFlag && FLAGS_bmi2;
+#else
+  return false;
+#endif
+}
+
+bool hasAvx512f() {
+#ifdef __AVX512F__
+  return avx512fCpuFlag && FLAGS_avx512f;
 #else
   return false;
 #endif
