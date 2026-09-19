@@ -36,6 +36,12 @@ struct ExpressionVerifierOptions {
   bool disableConstantFolding{false};
   std::string reproPersistPath;
   bool persistAndRunOnce{false};
+  // When true, the verifier additionally evaluates each expression
+  // through the V2 evaluator (ExprSetV2) and asserts bit-identical
+  // output (and matching exception patterns) against the V1 common
+  // path.  Defaults to true while V2 is in experimental mode to
+  // maximize divergence coverage from fuzzer runs.
+  bool enableV2Fuzzing{true};
 };
 
 class ExpressionVerifier {
