@@ -43,7 +43,8 @@ class RoundRobinPartitionFunctionSpec : public core::PartitionFunctionSpec {
  public:
   std::unique_ptr<core::PartitionFunction> create(
       int numPartitions,
-      bool /*localExchange*/) const override {
+      bool /*localExchange*/,
+      bool /*useOptimizedPartitionFunction*/ = false) const override {
     return std::make_unique<velox::exec::RoundRobinPartitionFunction>(
         numPartitions);
   }

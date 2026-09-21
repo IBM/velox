@@ -55,6 +55,8 @@ DEFINE_int32(
 
 DEFINE_bool(avx2, true, "Enables use of AVX2 when available");
 
+DEFINE_bool(avx512f, true, "Enables use of AVX512F when available");
+
 DEFINE_bool(bmi2, true, "Enables use of BMI2 when available");
 
 // Used in exec/Expr.cpp
