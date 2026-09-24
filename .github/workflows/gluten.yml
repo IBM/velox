@@ -49,7 +49,7 @@ jobs:
           # sed -i 's/VELOX_BRANCH=2025.*/VELOX_BRANCH=${BRANCH}/g' ep/build-velox/src/get-velox.sh
       - name: Build Gluten native libraries
         run: |
-          docker run -v $GITHUB_WORKSPACE:/work -w /work apache/gluten:vcpkg-centos-7-gcc13 bash -c "
+          docker run -v $GITHUB_WORKSPACE:/work -w /work apache/gluten:vcpkg-almalinux-8-gcc13 bash -c "
             git config --global --add safe.directory /work
             set -e
             df -a
@@ -57,7 +57,6 @@ jobs:
             git log -n 3
             cd /work/gluten
             git config --global --add safe.directory /work/gluten
-            bash ./dev/install-linux-socket-header.sh
             git log -n 3
             export CCACHE_DIR=/work/.ccache
             export CCACHE_SLOPPINESS=file_macro,locale,time_macros
@@ -65,6 +64,7 @@ jobs:
             ccache -M 1G
             ccache -sz
             export NUM_THREADS=4
+            source /opt/rh/gcc-toolset-13/enable
             ./dev/builddeps-veloxbe.sh --enable_vcpkg=ON --build_arrow=OFF --build_tests=OFF --build_benchmarks=OFF \
                            --build_examples=OFF --enable_s3=ON --enable_gcs=ON --enable_hdfs=ON --enable_abfs=ON --enable_enhanced_features=ON --velox_home=/work               
             pushd /work
