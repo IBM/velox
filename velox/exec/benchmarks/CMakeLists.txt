@@ -21,6 +21,27 @@ target_link_libraries(
   Folly::follybenchmark
 )
 
+add_executable(velox_exec_optimized_vector_hasher_benchmark OptimizedVectorHasherBenchmark.cpp)
+
+target_link_libraries(
+  velox_exec_optimized_vector_hasher_benchmark
+  velox_exec
+  velox_vector_test_lib
+  Folly::follybenchmark
+)
+
+add_executable(
+  velox_exec_optimized_hash_partition_function_benchmark
+  OptimizedHashPartitionFunctionBenchmark.cpp
+)
+
+target_link_libraries(
+  velox_exec_optimized_hash_partition_function_benchmark
+  velox_exec
+  velox_vector_test_lib
+  Folly::follybenchmark
+)
+
 add_executable(velox_filter_project_benchmark FilterProjectBenchmark.cpp)
 
 target_link_libraries(
@@ -45,6 +66,16 @@ add_executable(velox_merge_join_stream_left_benchmark MergeJoinStreamLeftBenchma
 
 target_link_libraries(
   velox_merge_join_stream_left_benchmark
+  velox_exec
+  velox_exec_test_lib
+  velox_vector_test_lib
+  Folly::follybenchmark
+)
+
+add_executable(velox_local_exchange_benchmark LocalExchangeBenchmark.cpp)
+
+target_link_libraries(
+  velox_local_exchange_benchmark
   velox_exec
   velox_exec_test_lib
   velox_vector_test_lib

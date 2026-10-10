@@ -470,6 +470,16 @@ class QueryConfig {
       false,
       "Flush PartitionedOutput rows eagerly without buffering.")
 
+  /// If true, use OptimizedHashPartitionFunction in place of
+  /// HashPartitionFunction.
+  VELOX_QUERY_CONFIG(
+      kOptimizedHashPartitionFunctionEnabled,
+      optimizedHashPartitionFunctionEnabled,
+      "optimized_hash_partition_function_enabled",
+      bool,
+      false,
+      "Use OptimizedHashPartitionFunction instead of HashPartitionFunction.")
+
   /// The maximum number of bytes to buffer in PartitionedOutput operator to
   /// avoid creating tiny SerializedPages.
   VELOX_QUERY_CONFIG(
@@ -1572,6 +1582,14 @@ class QueryConfig {
       "with the function ceiling using the smaller positive value. With no "
       "positive ceiling, adaptive mode starts at 200 with a 1,000,000 safety "
       "ceiling and fixed mode uses 200.")
+
+  VELOX_QUERY_CONFIG(
+      kOptimizedPartitionedOutputEnabled,
+      optimizedPartitionedOutputEnabled,
+      "optimized_repartitioning",
+      bool,
+      false,
+      "Enable OptimizedPartitionedOutput operator.");
 
   // --- Hand-written accessors for properties that need custom logic ---
 
