@@ -540,8 +540,9 @@ class EvalCtx {
       const SelectivityVector& rows,
       const TypePtr& type,
       VectorPtr& result) {
-    BaseVector::ensureWritable(
-        rows, type, execCtx_->pool(), result, execCtx_->vectorPool());
+    BaseVector::ensureWritable(rows, type, execCtx_->pool(), result, nullptr);
+    //    BaseVector::ensureWritable(
+    //        rows, type, execCtx_->pool(), result, execCtx_->vectorPool());
   }
 
   PeeledEncoding* getPeeledEncoding() {
