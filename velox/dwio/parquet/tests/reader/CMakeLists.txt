@@ -74,6 +74,24 @@ if(VELOX_ENABLE_BENCHMARKS)
 
   add_executable(velox_dwio_parquet_metadata_benchmark MetadataBenchmark.cpp)
   target_link_libraries(velox_dwio_parquet_metadata_benchmark velox_dwio_native_parquet_reader)
+
+  add_executable(
+    velox_dwio_parquet_string_function_filter_benchmark
+    StringFunctionFilterBenchmark.cpp
+  )
+  target_link_libraries(
+    velox_dwio_parquet_string_function_filter_benchmark
+    velox_dwio_parquet_reader
+    velox_dwio_parquet_writer
+    velox_exec_test_lib
+    velox_exec
+    velox_hive_connector
+    velox_functions_prestosql
+    velox_aggregates
+    ${TEST_LINK_LIBS}
+    Folly::follybenchmark
+    Folly::folly
+  )
 endif()
 
 add_executable(

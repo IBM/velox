@@ -31,6 +31,8 @@ namespace facebook::velox::parquet {
 enum class LevelMode;
 class PageReader;
 class ParquetParams;
+class ParquetStatsContext;
+struct RowRange;
 
 class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
  public:
@@ -85,8 +87,25 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
       const dwio::common::StatsContext&,
       dwio::common::FormatData::FilterRowGroupsResult&) const override;
 
+  /// Reads from 'input' the page indexes of the filtered top-level leaf
+  /// children whose statistics are trusted, and returns the sorted row ranges
+  /// of the 'rowGroupId'th row group that may pass all their filters. Returns
+  /// std::nullopt if no such child has a usable page index.
+  std::optional<std::vector<RowRange>> pageIndexRowRanges(
+      uint32_t rowGroupId,
+      dwio::common::BufferedInput& input,
+      const ParquetStatsContext& statsContext) const;
+
  private:
   struct SyntheticRepDefSource;
+
+  // Skips the row groups in 'result' for which a filtered child has a
+  // dictionary with no passing value. Reads the dictionary pages of all
+  // candidate children and row groups at once. Like statistics, dictionaries
+  // are not used for columns whose statistics 'statsContext' ignores.
+  void filterRowGroupsByDictionary(
+      const ParquetStatsContext& statsContext,
+      dwio::common::FormatData::FilterRowGroupsResult& result) const;
 
   // Creates a non-projected physical leaf reader to source repetition and
   // definition levels when no logical child reader is available.
@@ -106,6 +125,11 @@ class StructColumnReader : public dwio::common::SelectiveStructColumnReader {
 
   // Reader subtree used for getting nullability information for 'this'.
   dwio::common::SelectiveColumnReader* repDefSourceReader_{nullptr};
+
+  // Source of dictionary pages for row group filtering. Null if disabled.
+  // Comes from ParquetParams because filterRowGroups() overrides a method
+  // whose signature has no input.
+  dwio::common::BufferedInput* const dictionaryFilterInput_;
 
   // Mode for getting nulls from repdefs. kStructOverLists if the source is
   // below an ARRAY or MAP.

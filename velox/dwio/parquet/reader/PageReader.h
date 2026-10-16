@@ -137,6 +137,12 @@ class PageReader {
   /// are no nulls, buffer may be set to nullptr.
   void readNullsOnly(int64_t numValues, BufferPtr& buffer);
 
+  /// Reads the dictionary page at the start of the column chunk. Returns false
+  /// if the first page is not a dictionary page, in which case the reader must
+  /// not be used further. Must be called before any other read. Used to test
+  /// filters on the dictionary before reading data pages.
+  bool readDictionaryPage();
+
   // Returns the current string dictionary as a FlatVector<StringView>.
   const VectorPtr& dictionaryValues(const TypePtr& type);
 

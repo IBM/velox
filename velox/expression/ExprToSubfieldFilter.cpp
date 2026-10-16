@@ -19,6 +19,7 @@
 #include <span>
 
 #include "velox/expression/Expr.h"
+#include "velox/type/StringFunctionFilter.h"
 
 using namespace facebook::velox;
 
@@ -1187,6 +1188,34 @@ std::unique_ptr<common::Filter> tryMergeBytesValues(
   return std::make_unique<common::BytesValues>(values, nullAllowed);
 }
 
+// Merges disjuncts that are CaseMapped filters with the same mapping into one
+// whose inner filter merges theirs, e.g. lower(a) = 'x' or lower(a) = 'y' into
+// lower(a) in ('x', 'y'). Returns nullptr if the disjuncts are not such filters
+// or their inner filters do not merge.
+std::unique_ptr<common::Filter> tryMergeCaseMapped(
+    const std::vector<std::unique_ptr<common::Filter>>& disjuncts) {
+  const auto* first =
+      dynamic_cast<const common::CaseMapped*>(disjuncts[0].get());
+  if (first == nullptr) {
+    return nullptr;
+  }
+  std::vector<std::unique_ptr<common::Filter>> innerFilters;
+  for (const auto& disjunct : disjuncts) {
+    const auto* caseMapped =
+        dynamic_cast<const common::CaseMapped*>(disjunct.get());
+    if (caseMapped == nullptr || caseMapped->mapping() != first->mapping()) {
+      return nullptr;
+    }
+    innerFilters.push_back(caseMapped->inner().clone());
+  }
+  auto inner =
+      ExprToSubfieldFilterParser::makeOrFilter(std::move(innerFilters));
+  if (inner == nullptr) {
+    return nullptr;
+  }
+  return common::CaseMapped::wrap(first->mapping(), std::move(inner));
+}
+
 } // namespace
 
 // static
@@ -1263,6 +1292,10 @@ std::unique_ptr<common::Filter> ExprToSubfieldFilterParser::makeOrFilter(
     return merged;
   }
 
+  if (auto merged = tryMergeCaseMapped(disjuncts)) {
+    return merged;
+  }
+
   return nullptr;
 }
 
@@ -1275,6 +1308,327 @@ combine(common::Subfield& subfield, std::unique_ptr<common::Filter>& filter) {
 
   return std::nullopt;
 }
+
+// Returns the argument of 'expr' if 'expr' is a call to 'functionName' with a
+// single argument of 'argumentKind', nullptr otherwise.
+const core::TypedExprPtr* unaryCallArgument(
+    const core::TypedExprPtr& expr,
+    std::string_view functionName,
+    TypeKind argumentKind) {
+  if (!expr->isCallKind()) {
+    return nullptr;
+  }
+  const auto* call = expr->asUnchecked<core::CallTypedExpr>();
+  if (call->name() != functionName || call->inputs().size() != 1 ||
+      call->inputs()[0]->type()->kind() != argumentKind) {
+    return nullptr;
+  }
+  return &call->inputs()[0];
+}
+
+// Returns 'call' with its first argument replaced by 'argument'.
+core::CallTypedExprPtr replaceFirstArgument(
+    const core::CallTypedExpr& call,
+    core::TypedExprPtr argument) {
+  auto inputs = call.inputs();
+  inputs[0] = std::move(argument);
+  return std::make_shared<core::CallTypedExpr>(
+      call.type(), std::move(inputs), call.name());
+}
+
+// Argument and mapping of lower(x) or upper(x).
+struct CaseMappingCall {
+  core::TypedExprPtr argument;
+  // Presto's lower() and upper() use simple Unicode case mapping, which
+  // CaseMapped applies.
+  common::CaseMapped::Mapping mapping;
+};
+
+// Returns x and the mapping if 'expr' is lower(x) or upper(x), or
+// std::nullopt.
+std::optional<CaseMappingCall> caseMappingCall(const core::TypedExprPtr& expr) {
+  using Mapping = common::CaseMapped::Mapping;
+  for (const auto& [name, mapping] :
+       {std::pair{"lower", Mapping::kLower},
+        std::pair{"upper", Mapping::kUpper}}) {
+    if (const auto* argument =
+            unaryCallArgument(expr, name, TypeKind::VARCHAR)) {
+      return CaseMappingCall{*argument, mapping};
+    }
+  }
+  return std::nullopt;
+}
+
+// Leaf call with its first argument, lower(x) or upper(x), replaced by x.
+struct UnwrappedCaseMapping {
+  core::CallTypedExprPtr call;
+  // Mapping of lower() or upper().
+  common::CaseMapped::Mapping mapping;
+};
+
+// Returns 'call' with its first argument unwrapped if that argument is
+// lower(x) or upper(x), or std::nullopt otherwise.
+std::optional<UnwrappedCaseMapping> unwrapCaseMapping(
+    const core::CallTypedExpr& call) {
+  auto caseMapping = caseMappingCall(call.inputs()[0]);
+  if (!caseMapping.has_value()) {
+    return std::nullopt;
+  }
+  return UnwrappedCaseMapping{
+      replaceFirstArgument(call, std::move(caseMapping->argument)),
+      caseMapping->mapping};
+}
+
+// Returns 'field' with type 'type', or nullptr if 'field' is not a field
+// reference.
+core::TypedExprPtr retypeField(
+    const core::TypedExprPtr& field,
+    const TypePtr& type) {
+  if (const auto* access =
+          dynamic_cast<const core::FieldAccessTypedExpr*>(field.get())) {
+    return access->inputs().empty()
+        ? std::make_shared<core::FieldAccessTypedExpr>(type, access->name())
+        : std::make_shared<core::FieldAccessTypedExpr>(
+              type, access->inputs()[0], access->name());
+  }
+  if (const auto* dereference =
+          dynamic_cast<const core::DereferenceTypedExpr*>(field.get())) {
+    return std::make_shared<core::DereferenceTypedExpr>(
+        type, dereference->inputs()[0], dereference->index());
+  }
+  return nullptr;
+}
+
+// Leaf call with its first argument, length(x), replaced by x retyped as
+// BIGINT, so that the call parses into a filter on lengths.
+struct UnwrappedLength {
+  core::CallTypedExprPtr call;
+  // Unit that length() counts.
+  common::StringLength::Unit unit;
+};
+
+// Returns 'call' with its first argument unwrapped if that argument is
+// length(x), or std::nullopt otherwise.
+std::optional<UnwrappedLength> unwrapLength(const core::CallTypedExpr& call) {
+  using Unit = common::StringLength::Unit;
+  // length() counts code points of VARCHAR and bytes of VARBINARY.
+  for (const auto& [kind, unit] :
+       {std::pair{TypeKind::VARCHAR, Unit::kCodePoints},
+        std::pair{TypeKind::VARBINARY, Unit::kBytes}}) {
+    if (const auto* argument =
+            unaryCallArgument(call.inputs()[0], "length", kind)) {
+      if (auto field = retypeField(*argument, BIGINT())) {
+        return UnwrappedLength{
+            replaceFirstArgument(call, std::move(field)), unit};
+      }
+      return std::nullopt;
+    }
+  }
+  return std::nullopt;
+}
+
+// Returns the value of 'expr' if it is a non-null VARCHAR constant, or
+// std::nullopt.
+std::optional<std::string> varcharConstant(
+    const core::TypedExprPtr& expr,
+    core::ExpressionEvaluator* evaluator) {
+  if (expr->type()->kind() != TypeKind::VARCHAR) {
+    return std::nullopt;
+  }
+  auto value = toConstant(expr, evaluator);
+  if (value == nullptr || value->isNullAt(0)) {
+    return std::nullopt;
+  }
+  return std::string(singleValue<StringView>(value));
+}
+
+// One element of a LIKE pattern.
+struct LikeToken {
+  enum class Kind {
+    // A byte that matches itself.
+    kLiteral,
+    // '_', which matches one character.
+    kSingleChar,
+    // '%', which matches any number of characters.
+    kAnyChars,
+  };
+
+  Kind kind;
+  // Byte to match if 'kind' is kLiteral.
+  char literal{0};
+};
+
+// Splits LIKE 'pattern' into tokens the way LIKE reads it: an escape makes the
+// next character a literal. Returns std::nullopt for escapes that LIKE rejects,
+// i.e. one at the end of 'pattern' or one before a character other than '%',
+// '_' and the escape.
+std::optional<std::vector<LikeToken>> likeTokens(
+    std::string_view pattern,
+    std::optional<char> escape) {
+  std::vector<LikeToken> tokens;
+  for (size_t i = 0; i < pattern.size(); ++i) {
+    const char c = pattern[i];
+    if (c == escape) {
+      if (i + 1 == pattern.size()) {
+        return std::nullopt;
+      }
+      const char escaped = pattern[++i];
+      if (escaped != '%' && escaped != '_' && escaped != c) {
+        return std::nullopt;
+      }
+      tokens.push_back({LikeToken::Kind::kLiteral, escaped});
+    } else if (c == '%') {
+      tokens.push_back({LikeToken::Kind::kAnyChars});
+    } else if (c == '_') {
+      tokens.push_back({LikeToken::Kind::kSingleChar});
+    } else {
+      tokens.push_back({LikeToken::Kind::kLiteral, c});
+    }
+  }
+  return tokens;
+}
+
+// Returns the tokens of the pattern of 'call' if it is x LIKE pattern
+// [ESCAPE escape] on a VARCHAR with a constant pattern and escape, or
+// std::nullopt.
+std::optional<std::vector<LikeToken>> likeCallTokens(
+    const core::CallTypedExpr& call,
+    core::ExpressionEvaluator* evaluator) {
+  const auto& inputs = call.inputs();
+  if (call.name() != "like" || inputs.size() < 2 ||
+      inputs[0]->type()->kind() != TypeKind::VARCHAR) {
+    return std::nullopt;
+  }
+  const auto pattern = varcharConstant(inputs[1], evaluator);
+  if (!pattern.has_value()) {
+    return std::nullopt;
+  }
+  std::optional<char> escape;
+  if (inputs.size() > 2) {
+    const auto escapeString = varcharConstant(inputs[2], evaluator);
+    if (!escapeString.has_value() || escapeString->size() != 1) {
+      return std::nullopt;
+    }
+    escape = escapeString->front();
+  }
+  return likeTokens(pattern.value(), escape);
+}
+
+// Returns a filter on the lengths of strings that match a LIKE pattern of
+// 'tokens', or nullptr if the pattern does not restrict the length. Literal
+// bytes match themselves in all LIKE implementations. Each '_' matches one byte
+// of an ASCII string and at least one byte of other strings: on invalid UTF-8,
+// some implementations match a lead byte with any number of continuation
+// bytes. So a pattern with '_' bounds only ASCII strings from above.
+std::unique_ptr<common::Filter> likeLengthFilter(
+    const std::vector<LikeToken>& tokens) {
+  using Unit = common::StringLength::Unit;
+  int64_t minLength{0};
+  bool hasSingleChar{false};
+  bool hasAnyChars{false};
+  for (const auto& token : tokens) {
+    switch (token.kind) {
+      case LikeToken::Kind::kLiteral:
+        ++minLength;
+        break;
+      case LikeToken::Kind::kSingleChar:
+        ++minLength;
+        hasSingleChar = true;
+        break;
+      case LikeToken::Kind::kAnyChars:
+        hasAnyChars = true;
+        break;
+    }
+  }
+  if (hasAnyChars) {
+    if (minLength == 0) {
+      return nullptr;
+    }
+    // Without an upper bound, both units pass the same strings. kBytes lets
+    // the filter merge with other implied filters.
+    return std::make_unique<common::StringLength>(
+        Unit::kBytes, greaterThanOrEqual(minLength));
+  }
+  return std::make_unique<common::StringLength>(
+      hasSingleChar ? Unit::kAsciiBytes : Unit::kBytes, equal(minLength));
+}
+
+// Returns the literal of a LIKE pattern '%literal%' of 'tokens' without other
+// wildcards, which LIKE matches as a substring of bytes, or std::nullopt.
+std::optional<std::string> likeSubstring(const std::vector<LikeToken>& tokens) {
+  if (tokens.size() < 3 || tokens.front().kind != LikeToken::Kind::kAnyChars ||
+      tokens.back().kind != LikeToken::Kind::kAnyChars) {
+    return std::nullopt;
+  }
+  std::string substring;
+  for (size_t i = 1; i + 1 < tokens.size(); ++i) {
+    if (tokens[i].kind != LikeToken::Kind::kLiteral) {
+      return std::nullopt;
+    }
+    substring.push_back(tokens[i].literal);
+  }
+  return substring;
+}
+
+// String and substring of a call that holds exactly when the string contains
+// the substring.
+struct ContainedSubstring {
+  core::TypedExprPtr string;
+  std::string substring;
+};
+
+// Returns x and s if 'call' holds exactly when x contains s: x LIKE '%s%', or
+// strpos(x, s) > 0, >= 1 or <> 0, since strpos() returns 0 if and only if x
+// does not contain s. 'negated' applies to 'call'.
+std::optional<ContainedSubstring> containedSubstring(
+    const core::CallTypedExpr& call,
+    core::ExpressionEvaluator* evaluator,
+    bool negated) {
+  const auto& inputs = call.inputs();
+  if (call.name() == "like") {
+    if (negated) {
+      return std::nullopt;
+    }
+    const auto tokens = likeCallTokens(call, evaluator);
+    if (!tokens.has_value()) {
+      return std::nullopt;
+    }
+    auto substring = likeSubstring(tokens.value());
+    if (!substring.has_value()) {
+      return std::nullopt;
+    }
+    return ContainedSubstring{inputs[0], std::move(substring.value())};
+  }
+
+  auto kind = comparisonKind(call.name());
+  if (!kind.has_value() || inputs.size() != 2 || !inputs[0]->isCallKind() ||
+      inputs[1]->type()->kind() != TypeKind::BIGINT) {
+    return std::nullopt;
+  }
+  const auto* strpos = inputs[0]->asUnchecked<core::CallTypedExpr>();
+  if (strpos->name() != "strpos" || strpos->inputs().size() != 2) {
+    return std::nullopt;
+  }
+  const auto bound = toConstant(inputs[1], evaluator);
+  if (bound == nullptr || bound->isNullAt(0)) {
+    return std::nullopt;
+  }
+  if (negated) {
+    kind = negateComparison(kind.value());
+  }
+  const auto value = singleValue<int64_t>(bound);
+  const bool found = (kind == ComparisonKind::kGt && value == 0) ||
+      (kind == ComparisonKind::kGte && value == 1) ||
+      (kind == ComparisonKind::kNeq && value == 0);
+  if (!found) {
+    return std::nullopt;
+  }
+  auto substring = varcharConstant(strpos->inputs()[1], evaluator);
+  if (!substring.has_value()) {
+    return std::nullopt;
+  }
+  return ContainedSubstring{strpos->inputs()[0], std::move(substring.value())};
+}
 } // namespace
 
 std::optional<std::pair<common::Subfield, std::unique_ptr<common::Filter>>>
@@ -1284,6 +1638,62 @@ PrestoExprToSubfieldFilterParser::leafCallToSubfieldFilter(
     bool negated) {
   if (call.inputs().empty()) {
     return std::nullopt;
+  }
+
+  // Translates a leaf call on length(x), lower(x) or upper(x), e.g.
+  // length(x) between 1 and 3 or lower(x) in ('a', 'b'), into a StringLength
+  // or CaseMapped filter on x around the filter for the call on x.
+  if (auto unwrapped = unwrapLength(call)) {
+    auto result =
+        leafCallToSubfieldFilter(*unwrapped->call, evaluator, negated);
+    if (result.has_value()) {
+      result->second = common::StringLength::wrap(
+          unwrapped->unit, std::move(result->second));
+    }
+    return result;
+  }
+  if (auto unwrapped = unwrapCaseMapping(call)) {
+    // Recursing on lower(upper(x)) would give CaseMapped(kLower,
+    // CaseMapped(kUpper, ...)), which applies lower() before upper(), the
+    // reverse of the expression. Nested mappings stay in the remaining filter
+    // instead.
+    if (unwrapCaseMapping(*unwrapped->call).has_value()) {
+      return std::nullopt;
+    }
+    auto result =
+        leafCallToSubfieldFilter(*unwrapped->call, evaluator, negated);
+    if (result.has_value()) {
+      result->second = common::CaseMapped::wrap(
+          unwrapped->mapping, std::move(result->second));
+    }
+    return result;
+  }
+
+  // x LIKE '%s%' and strpos(x, s) > 0 search the bytes of x for s, as
+  // StringContains does. lower(x) LIKE '%s%' is unwrapped above, but
+  // strpos(lower(x), s) has the mapping inside its first argument, so it is
+  // unwrapped here.
+  if (auto contained = containedSubstring(call, evaluator, negated)) {
+    auto caseMapping = caseMappingCall(contained->string);
+    const auto& string =
+        caseMapping.has_value() ? caseMapping->argument : contained->string;
+    common::Subfield subfield;
+    if (!toSubfield(string.get(), subfield)) {
+      return std::nullopt;
+    }
+    std::unique_ptr<common::Filter> filter;
+    if (contained->substring.empty()) {
+      // strpos(x, '') returns 1 for every non-null x.
+      filter = isNotNull();
+    } else {
+      filter = std::make_unique<common::StringContains>(
+          std::move(contained->substring), /*nullAllowed=*/false);
+    }
+    if (caseMapping.has_value()) {
+      filter =
+          common::CaseMapped::wrap(caseMapping->mapping, std::move(filter));
+    }
+    return std::make_pair(std::move(subfield), std::move(filter));
   }
 
   const auto* leftSide = call.inputs()[0].get();
@@ -1398,6 +1808,29 @@ PrestoExprToSubfieldFilterParser::leafCallToSubfieldFilter(
     }
   }
   return std::nullopt;
+}
+
+std::optional<std::pair<common::Subfield, std::unique_ptr<common::Filter>>>
+PrestoExprToSubfieldFilterParser::leafCallToImpliedSubfieldFilter(
+    const core::CallTypedExpr& call,
+    core::ExpressionEvaluator* evaluator,
+    bool negated) {
+  if (negated) {
+    return std::nullopt;
+  }
+  const auto tokens = likeCallTokens(call, evaluator);
+  if (!tokens.has_value()) {
+    return std::nullopt;
+  }
+  common::Subfield subfield;
+  if (!toSubfield(call.inputs()[0].get(), subfield)) {
+    return std::nullopt;
+  }
+  auto lengthFilter = likeLengthFilter(tokens.value());
+  if (lengthFilter == nullptr) {
+    return std::nullopt;
+  }
+  return std::make_pair(std::move(subfield), std::move(lengthFilter));
 }
 
 } // namespace facebook::velox::exec

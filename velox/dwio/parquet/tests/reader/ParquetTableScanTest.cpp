@@ -60,6 +60,17 @@ void assertDynamicFilterProduced(
       1);
 }
 
+// Returns the sum of the custom stat 'name' of plan node 'nodeId' in 'task',
+// or 0 if the node did not report it.
+int64_t customStatSum(
+    const exec::Task& task,
+    const core::PlanNodeId& nodeId,
+    const std::string& name) {
+  const auto planStats = toPlanStats(task.taskStats());
+  const auto& customStats = planStats.at(nodeId).customStats;
+  const auto it = customStats.find(name);
+  return it == customStats.end() ? 0 : it->second.sum;
+}
 } // namespace
 
 class ParquetTableScanTest : public ParquetTableScanTestBase {
@@ -933,6 +944,393 @@ TEST_F(ParquetTableScanTest, filterOnNestedArray) {
       {},
       "struct.a0 is null",
       "SELECT ROW(NULL, NULL)");
+}
+
+// Verifies that filters derived from string function predicates, e.g.
+// lower(c0) = 'aws rds' or c0 LIKE 'a_c', return the same rows as evaluating
+// the predicates after the scan.
+TEST_F(ParquetTableScanTest, stringFunctionFilters) {
+  // Include mixed case, multi-byte characters whose byte length changes under
+  // case mapping and invalid UTF-8.
+  const std::vector<std::optional<std::string>> values = {
+      "AWS RDS",
+      "aws rds",
+      "Aws Rds ",
+      "AWS S3",
+      "(not set)",
+      "(NOT SET)",
+      "",
+      std::nullopt,
+      "\xC3\x9C"
+      "ber",
+      "\xC3\xBC"
+      "BER",
+      "abc",
+      "ABC",
+      "a\xC3\xBC"
+      "c",
+      "\xC3\x41"
+      "bc",
+      // Invalid UTF-8 on which LIKE implementations disagree about how many
+      // bytes one '_' matches.
+      "a\x80\x80\x80\x80",
+      "\xC3\xA9"
+      "a",
+      "\xE2\x84\xAA"
+      "ab",
+      "\xC8\xBA"
+      "bc",
+  };
+  constexpr int32_t kNumRows = 10'000;
+  auto data = makeRowVector(
+      {"c0", "c1"},
+      {
+          makeNullableFlatVector<std::string>([&]() {
+            std::vector<std::optional<std::string>> column;
+            for (auto i = 0; i < kNumRows; ++i) {
+              column.push_back(values[i % values.size()]);
+            }
+            return column;
+          }()),
+          makeFlatVector<std::string>(
+              kNumRows,
+              [&](auto row) {
+                return row % 7 == 0 ? std::string("(Not Set)")
+                                    : fmt::format("id-{}", row);
+              }),
+      });
+  const auto rowType = asRowType(data->type());
+
+  const std::vector<std::string> filters = {
+      "lower(c0) = lower('AWS RDS')",
+      "lower(c0) <> '(not set)'",
+      "lower(c0) = 'aws rds' and lower(c1) <> '(not set)' and c1 is not null",
+      "upper(c0) in ('ABC', '\xC3\x9C"
+      "BER', '\xC8\xBA"
+      "BC')",
+      "lower(c0) in ('abc', 'kab')",
+      "lower(c0) = 'abc' or lower(c0) = 'aws rds' or lower(c0) = 'kab'",
+      "lower(c0) not in ('abc', 'aws rds')",
+      "upper(c0) between 'A' and 'B'",
+      "lower(c0) is null",
+      "lower(upper(c0)) = 'abc'",
+      "c0 like '_'",
+      "c0 like '\xC3\xA9_' and c0 like '__'",
+      "c0 like 'a_c'",
+      "c0 like 'AWS%'",
+      "c0 like '%s%'",
+      "strpos(lower(c0), 'aws') > 0",
+      "strpos(c1, 'Set') > 0 and lower(c0) like '%\xC3\xBC%'",
+      "strpos(upper(c0), 'S R') >= 1",
+      "length(c0) = 3",
+      "length(c0) between 2 and 7 and lower(c0) = 'abc'",
+      "length(c1) > 5",
+  };
+
+  const auto parquetFile = TempFilePath::create();
+  ParquetWriterOptions parquetOptions;
+  parquetOptions.enableDictionary = true;
+  writeToParquetFile(parquetFile->getPath(), {data}, parquetOptions);
+
+  const auto plainParquetFile = TempFilePath::create();
+  ParquetWriterOptions plainOptions;
+  plainOptions.enableDictionary = false;
+  writeToParquetFile(plainParquetFile->getPath(), {data}, plainOptions);
+
+  const auto dwrfFile = TempFilePath::create();
+  writeToFile(dwrfFile->getPath(), {data});
+
+  for (const auto& filter : filters) {
+    SCOPED_TRACE(filter);
+
+    // Evaluates the filter after the scan to get the expected rows.
+    const auto expected =
+        AssertQueryBuilder(
+            PlanBuilder(pool()).values({data}).filter(filter).planNode())
+            .copyResults(pool());
+    ASSERT_GT(expected->size(), 0);
+
+    // A split keeps the data source that reads it, so each scan needs new
+    // ones.
+    const std::vector<std::shared_ptr<connector::ConnectorSplit>> splits = {
+        makeSplit(parquetFile->getPath()),
+        makeSplit(plainParquetFile->getPath()),
+        makeHiveConnectorSplit(dwrfFile->getPath()),
+    };
+    for (const auto& split : splits) {
+      SCOPED_TRACE(split->toString());
+      // The scan pushes down the filters derived from 'filter' and must
+      // return the same rows.
+      AssertQueryBuilder(
+          PlanBuilder(pool()).tableScan(rowType, {}, filter).planNode())
+          .split(split)
+          .assertResults(expected);
+    }
+  }
+}
+
+// Verifies that filters on lower() skip row groups by their min and max.
+TEST_F(ParquetTableScanTest, caseMappedFilterSkipsRowGroups) {
+  constexpr int32_t kNumRows = 10'000;
+  constexpr int32_t kRowsPerRowGroup = 1'000;
+  constexpr int32_t kNumRowGroups = kNumRows / kRowsPerRowGroup;
+  // Sorted, so each row group covers a narrow range of values.
+  auto data = makeRowVector(
+      {"c0"}, {makeFlatVector<std::string>(kNumRows, [](auto row) {
+        return fmt::format("AB-{:05}", row);
+      })});
+  const auto rowType = asRowType(data->type());
+  const auto file = TempFilePath::create();
+  dwio::common::WriterOptions writerOptions;
+  writerOptions.flushPolicyFactory = [&]() {
+    return std::make_unique<DefaultFlushPolicy>(
+        kRowsPerRowGroup, std::numeric_limits<int64_t>::max());
+  };
+  writeToParquetFile(file->getPath(), {data}, writerOptions, {});
+
+  struct TestCase {
+    std::string filter;
+    int64_t numRows;
+    int64_t numSkippedRowGroups;
+  };
+  const std::vector<TestCase> testCases = {
+      {"lower(c0) = 'ab-04321'", 1, 9},
+      {"lower(c0) in ('ab-00001', 'ab-09999')", 2, 8},
+      {"upper(c0) = 'AB-04321'", 1, 9},
+      // No string lowercases to a value with uppercase letters.
+      {"lower(c0) = 'AB-04321'", 0, 10},
+      {"lower(c0) = 'zz'", 0, 10},
+  };
+  for (const auto& testCase : testCases) {
+    SCOPED_TRACE(testCase.filter);
+    auto plan =
+        PlanBuilder(pool()).tableScan(rowType, {}, testCase.filter).planNode();
+    const auto scanId = plan->id();
+    const auto expected = AssertQueryBuilder(PlanBuilder(pool())
+                                                 .values({data})
+                                                 .filter(testCase.filter)
+                                                 .planNode())
+                              .copyResults(pool());
+    ASSERT_EQ(expected->size(), testCase.numRows);
+    auto task = AssertQueryBuilder(plan)
+                    .split(makeSplit(file->getPath()))
+                    .assertResults(expected);
+    // The split is skipped as a whole when no row group can match.
+    if (testCase.numSkippedRowGroups == kNumRowGroups) {
+      ASSERT_EQ(customStatSum(*task, scanId, "skippedSplits"), 1);
+    } else {
+      ASSERT_EQ(
+          customStatSum(*task, scanId, "skippedStrides"),
+          testCase.numSkippedRowGroups);
+    }
+  }
+}
+
+// Verifies that row groups whose dictionary has no passing value are skipped,
+// including when their min and max do not exclude the value.
+TEST_F(ParquetTableScanTest, dictionaryFilterSkipsRowGroups) {
+  constexpr int32_t kNumRowGroups = 10;
+  constexpr int32_t kRowsPerRowGroup = 1'000;
+  // Row group 'g' holds 'rg<g>-AAA', 'rg<g>-CCC' and nulls, so its min and
+  // max include 'rg<g>-BBB' while its dictionary does not.
+  auto data = makeRowVector(
+      {"c0"},
+      {makeFlatVector<std::string>(
+          kNumRowGroups * kRowsPerRowGroup,
+          [](auto row) {
+            return fmt::format(
+                "rg{}-{}", row / kRowsPerRowGroup, row % 2 ? "AAA" : "CCC");
+          },
+          [](auto row) { return row % 7 == 0; })});
+  const auto rowType = asRowType(data->type());
+  dwio::common::WriterOptions writerOptions;
+  writerOptions.flushPolicyFactory = [&]() {
+    return std::make_unique<DefaultFlushPolicy>(
+        kRowsPerRowGroup, std::numeric_limits<int64_t>::max());
+  };
+  const auto file = TempFilePath::create();
+  writeToParquetFile(file->getPath(), {data}, writerOptions, {});
+  ParquetWriterOptions plainOptions;
+  plainOptions.enableDictionary = false;
+  const auto plainFile = TempFilePath::create();
+  writeToParquetFile(plainFile->getPath(), {data}, writerOptions, plainOptions);
+
+  struct TestCase {
+    std::string filter;
+    bool plainEncoding;
+    bool dictionaryFilterEnabled;
+    int64_t numRows;
+    int64_t numSkippedRowGroups;
+  };
+  // Row group 3 has 500 'rg3-AAA' rows, 72 of which are null. The file has
+  // 8'571 non-null rows.
+  const std::vector<TestCase> testCases = {
+      {.filter = "c0 = 'rg3-BBB'",
+       .plainEncoding = false,
+       .dictionaryFilterEnabled = true,
+       .numRows = 0,
+       .numSkippedRowGroups = 10},
+      {.filter = "c0 = 'rg3-BBB'",
+       .plainEncoding = false,
+       .dictionaryFilterEnabled = false,
+       .numRows = 0,
+       .numSkippedRowGroups = 9},
+      {.filter = "c0 = 'rg3-BBB'",
+       .plainEncoding = true,
+       .dictionaryFilterEnabled = true,
+       .numRows = 0,
+       .numSkippedRowGroups = 9},
+      {.filter = "lower(c0) = 'rg3-bbb'",
+       .plainEncoding = false,
+       .dictionaryFilterEnabled = true,
+       .numRows = 0,
+       .numSkippedRowGroups = 10},
+      {.filter = "lower(c0) = 'rg3-aaa'",
+       .plainEncoding = false,
+       .dictionaryFilterEnabled = true,
+       .numRows = 428,
+       .numSkippedRowGroups = 9},
+      {.filter = "c0 <> 'rg3-AAA'",
+       .plainEncoding = false,
+       .dictionaryFilterEnabled = true,
+       .numRows = 8'143,
+       .numSkippedRowGroups = 0},
+      {.filter = "length(c0) = 3",
+       .plainEncoding = false,
+       .dictionaryFilterEnabled = true,
+       .numRows = 0,
+       .numSkippedRowGroups = 10},
+  };
+  for (const auto& testCase : testCases) {
+    SCOPED_TRACE(
+        fmt::format(
+            "{} plainEncoding {} dictionaryFilterEnabled {}",
+            testCase.filter,
+            testCase.plainEncoding,
+            testCase.dictionaryFilterEnabled));
+    auto plan =
+        PlanBuilder(pool()).tableScan(rowType, {}, testCase.filter).planNode();
+    const auto scanId = plan->id();
+    const auto expected = AssertQueryBuilder(PlanBuilder(pool())
+                                                 .values({data})
+                                                 .filter(testCase.filter)
+                                                 .planNode())
+                              .copyResults(pool());
+    ASSERT_EQ(expected->size(), testCase.numRows);
+    auto task = AssertQueryBuilder(plan)
+                    .connectorSessionProperty(
+                        kHiveConnectorId,
+                        parquetSessionProperty("dictionary_filter_enabled"),
+                        testCase.dictionaryFilterEnabled ? "true" : "false")
+                    .split(makeSplit(
+                        testCase.plainEncoding ? plainFile->getPath()
+                                               : file->getPath()))
+                    .assertResults(expected);
+    ASSERT_EQ(
+        customStatSum(*task, scanId, "skippedStrides"),
+        testCase.numSkippedRowGroups);
+  }
+}
+
+// Verifies that rows in pages that the page index excludes are skipped and
+// that the remaining rows of all columns are read correctly.
+TEST_F(ParquetTableScanTest, pageIndexFilterSkipsRows) {
+  constexpr int32_t kNumRows = 10'000;
+  auto data = makeRowVector(
+      {"c0", "c1", "c2"},
+      {
+          makeFlatVector<std::string>(
+              kNumRows, [](auto row) { return fmt::format("AB-{:05}", row); }),
+          makeFlatVector<int64_t>(kNumRows, [](auto row) { return row; }),
+          makeFlatVector<std::string>(
+              kNumRows,
+              [](auto row) { return fmt::format("v{}", row % 3); },
+              [](auto row) { return row % 11 == 0; }),
+      });
+  const auto rowType = asRowType(data->type());
+  // One row group of 100-row pages.
+  ParquetWriterOptions options;
+  options.enableWritePageIndex = true;
+  // Each write batch ends a page, because it exceeds the 1-byte page size.
+  options.dataPageSize = 1;
+  options.batchSize = 100;
+  const auto file = TempFilePath::create();
+  writeToParquetFile(file->getPath(), {data}, options);
+  const auto noIndexFile = TempFilePath::create();
+  writeToParquetFile(noIndexFile->getPath(), {data});
+
+  struct TestCase {
+    std::string filter;
+    bool hasPageIndex;
+    bool pageIndexFilterEnabled;
+    int64_t numSkippedRows;
+  };
+  const std::vector<TestCase> testCases = {
+      {.filter = "c0 = 'AB-04321'",
+       .hasPageIndex = true,
+       .pageIndexFilterEnabled = true,
+       .numSkippedRows = 9'900},
+      {.filter = "lower(c0) = 'ab-04321'",
+       .hasPageIndex = true,
+       .pageIndexFilterEnabled = true,
+       .numSkippedRows = 9'900},
+      {.filter = "c1 between 2050 and 2149",
+       .hasPageIndex = true,
+       .pageIndexFilterEnabled = true,
+       .numSkippedRows = 9'800},
+      {.filter = "c1 >= 2050 and c0 <= 'AB-02120'",
+       .hasPageIndex = true,
+       .pageIndexFilterEnabled = true,
+       .numSkippedRows = 9'800},
+      {.filter = "c1 in (5, 7777) and c2 = 'v0'",
+       .hasPageIndex = true,
+       .pageIndexFilterEnabled = true,
+       .numSkippedRows = 9'800},
+      // Row group statistics keep the row group but no page passes both.
+      {.filter = "c1 between 150 and 160 and c0 >= 'AB-09000'",
+       .hasPageIndex = true,
+       .pageIndexFilterEnabled = true,
+       .numSkippedRows = 10'000},
+      {.filter = "c1 between 2050 and 2149",
+       .hasPageIndex = true,
+       .pageIndexFilterEnabled = false,
+       .numSkippedRows = 0},
+      {.filter = "c1 between 2050 and 2149",
+       .hasPageIndex = false,
+       .pageIndexFilterEnabled = true,
+       .numSkippedRows = 0},
+  };
+  for (const auto& testCase : testCases) {
+    SCOPED_TRACE(
+        fmt::format(
+            "{} hasPageIndex {} pageIndexFilterEnabled {}",
+            testCase.filter,
+            testCase.hasPageIndex,
+            testCase.pageIndexFilterEnabled));
+    auto plan =
+        PlanBuilder(pool()).tableScan(rowType, {}, testCase.filter).planNode();
+    const auto scanId = plan->id();
+    const auto expected = AssertQueryBuilder(PlanBuilder(pool())
+                                                 .values({data})
+                                                 .filter(testCase.filter)
+                                                 .planNode())
+                              .copyResults(pool());
+    // Small batches end reads at range boundaries and skip between batches.
+    auto task = AssertQueryBuilder(plan)
+                    .config(core::QueryConfig::kPreferredOutputBatchRows, "37")
+                    .config(core::QueryConfig::kMaxOutputBatchRows, "37")
+                    .connectorSessionProperty(
+                        kHiveConnectorId,
+                        parquetSessionProperty("page_index_filter_enabled"),
+                        testCase.pageIndexFilterEnabled ? "true" : "false")
+                    .split(makeSplit(
+                        testCase.hasPageIndex ? file->getPath()
+                                              : noIndexFile->getPath()))
+                    .assertResults(expected);
+    ASSERT_EQ(
+        customStatSum(*task, scanId, "parquet.numRowsSkippedByPageIndex"),
+        testCase.numSkippedRows);
+  }
 }
 
 TEST_F(ParquetTableScanTest, readAsLowerCase) {

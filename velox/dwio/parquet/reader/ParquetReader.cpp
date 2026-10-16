@@ -27,6 +27,7 @@
 #include "velox/dwio/common/StatisticsBuilder.h"
 #include "velox/dwio/parquet/common/ParquetRuntimeStats.h"
 #include "velox/dwio/parquet/reader/ParquetColumnReader.h"
+#include "velox/dwio/parquet/reader/ParquetData.h"
 #include "velox/dwio/parquet/reader/ParquetStatsContext.h"
 #include "velox/dwio/parquet/reader/StructColumnReader.h"
 #include "velox/dwio/parquet/thrift/ParquetThrift.h"
@@ -224,6 +225,10 @@ ParquetReaderFactory::createFormatOptions(
       ParquetConfig::footerMemoryTrackingThreshold(connectorConfig, session));
   options->setNullStructIfAllFieldsMissing(
       ParquetConfig::nullStructIfAllFieldsMissing(connectorConfig, session));
+  options->setDictionaryFilterEnabled(
+      ParquetConfig::dictionaryFilterEnabled(connectorConfig, session));
+  options->setPageIndexFilterEnabled(
+      ParquetConfig::pageIndexFilterEnabled(connectorConfig, session));
   return options;
 }
 
@@ -270,6 +275,14 @@ class ReaderBase {
 
   bool nullStructIfAllFieldsMissing() const {
     return parquetReaderOptions_.nullStructIfAllFieldsMissing();
+  }
+
+  bool dictionaryFilterEnabled() const {
+    return parquetReaderOptions_.dictionaryFilterEnabled();
+  }
+
+  bool pageIndexFilterEnabled() const {
+    return parquetReaderOptions_.pageIndexFilterEnabled();
   }
 
   bool isFileColumnNamesReadAsLowerCase() const {
@@ -1618,7 +1631,9 @@ class ParquetRowReader::Impl {
         readerBase_->fileMetaData(),
         readerBase->sessionTimezone(),
         options_.timestampPrecision(),
-        readerBase_->nullStructIfAllFieldsMissing());
+        readerBase_->nullStructIfAllFieldsMissing(),
+        readerBase_->dictionaryFilterEnabled() ? &readerBase_->bufferedInput()
+                                               : nullptr);
     requestedType_ = options_.requestedType() ? options_.requestedType()
                                               : readerBase_->schema();
     columnReader_ = ParquetColumnReader::build(
@@ -1633,7 +1648,7 @@ class ParquetRowReader::Impl {
     if (!rowGroupIds_.empty()) {
       // schedule prefetch of first row group right after reading the metadata.
       // This is usually on a split preload thread before the split goes to
-      // table scan.
+      // table scan. Also reads the page indexes of the first row group.
       advanceToNextRowGroup();
     }
   }
@@ -1728,11 +1743,18 @@ class ParquetRowReader::Impl {
   }
 
   int64_t nextRowNumber() {
-    if (currentRowInGroup_ >= rowsInCurrentRowGroup_ &&
-        !advanceToNextRowGroup()) {
-      return kAtEnd;
+    for (;;) {
+      if (currentRowInGroup_ >= rowsInCurrentRowGroup_ &&
+          !advanceToNextRowGroup()) {
+        return kAtEnd;
+      }
+      skipRowsExcludedByPageIndex();
+      if (currentRowInGroup_ < rowsInCurrentRowGroup_) {
+        return firstRowOfRowGroup_[nextRowGroupIdsIdx_ - 1] +
+            currentRowInGroup_;
+      }
+      // The page index excludes the rest of the row group. Tries the next one.
     }
-    return firstRowOfRowGroup_[nextRowGroupIdsIdx_ - 1] + currentRowInGroup_;
   }
 
   int64_t nextReadSize(uint64_t size) {
@@ -1740,7 +1762,14 @@ class ParquetRowReader::Impl {
     if (nextRowNumber() == kAtEnd) {
       return kAtEnd;
     }
-    return std::min(size, rowsInCurrentRowGroup_ - currentRowInGroup_);
+    uint64_t end = rowsInCurrentRowGroup_;
+    if (pageIndexRowRanges_.has_value()) {
+      // nextRowNumber() moved into a range that may pass the filters.
+      VELOX_CHECK_LT(currentPageIndexRowRange_, pageIndexRowRanges_->size());
+      end = std::min<uint64_t>(
+          end, (*pageIndexRowRanges_)[currentPageIndexRowRange_].end);
+    }
+    return std::min(size, end - currentRowInGroup_);
   }
 
   uint64_t next(
@@ -1803,16 +1832,54 @@ class ParquetRowReader::Impl {
     }
 
     auto nextRowGroupIndex = rowGroupIds_[nextRowGroupIdsIdx_];
+    auto& rootReader = static_cast<StructColumnReader&>(*columnReader_);
     readerBase_->scheduleRowGroups(
-        rowGroupIds_,
-        nextRowGroupIdsIdx_,
-        static_cast<StructColumnReader&>(*columnReader_));
+        rowGroupIds_, nextRowGroupIdsIdx_, rootReader);
     currentRowGroupPtr_ = &rowGroups_[rowGroupIds_[nextRowGroupIdsIdx_]];
     rowsInCurrentRowGroup_ = *currentRowGroupPtr_->num_rows();
     currentRowInGroup_ = 0;
     nextRowGroupIdsIdx_++;
     columnReader_->seekToRowGroup(nextRowGroupIndex);
+    pageIndexRowRanges_ = readerBase_->pageIndexFilterEnabled()
+        ? rootReader.pageIndexRowRanges(
+              nextRowGroupIndex,
+              readerBase_->bufferedInput(),
+              parquetStatsContext_)
+        : std::nullopt;
+    currentPageIndexRowRange_ = 0;
     return true;
+  }
+
+  // Moves past the rows of the current row group that 'pageIndexRowRanges_'
+  // excludes, up to the end of the row group.
+  void skipRowsExcludedByPageIndex() {
+    if (!pageIndexRowRanges_.has_value()) {
+      return;
+    }
+    const auto& ranges = pageIndexRowRanges_.value();
+    while (currentPageIndexRowRange_ < ranges.size() &&
+           ranges[currentPageIndexRowRange_].end <= currentRowInGroup_) {
+      ++currentPageIndexRowRange_;
+    }
+    const uint64_t firstIncludedRow = currentPageIndexRowRange_ < ranges.size()
+        ? std::max<uint64_t>(
+              currentRowInGroup_, ranges[currentPageIndexRowRange_].begin)
+        : rowsInCurrentRowGroup_;
+    if (firstIncludedRow == currentRowInGroup_) {
+      return;
+    }
+    // Skipping to the end of the row group needs no seek, because
+    // advanceToNextRowGroup() repositions the readers.
+    if (firstIncludedRow < rowsInCurrentRowGroup_) {
+      // Skips whole pages without decompressing them.
+      columnReader_->seekTo(
+          columnReader_->readOffset() + (firstIncludedRow - currentRowInGroup_),
+          /*readsNullsOnly=*/false);
+    }
+    splitStats_.accumulateStat(
+        ParquetRuntimeStats::kNumRowsSkippedByPageIndexMetric,
+        firstIncludedRow - currentRowInGroup_);
+    currentRowInGroup_ = firstIncludedRow;
   }
 
   memory::MemoryPool& pool_;
@@ -1830,6 +1897,12 @@ class ParquetRowReader::Impl {
   uint64_t rowsInCurrentRowGroup_;
   uint64_t currentRowInGroup_;
   uint32_t skippedStrides_{0};
+  // Rows of the current row group whose pages may pass the filters according
+  // to the page index. Not set if no filtered column has a page index.
+  std::optional<std::vector<RowRange>> pageIndexRowRanges_;
+  // Index of the first range in 'pageIndexRowRanges_' that ends after
+  // 'currentRowInGroup_'.
+  size_t currentPageIndexRowRange_{0};
 
   std::unique_ptr<dwio::common::SelectiveColumnReader> columnReader_;
 

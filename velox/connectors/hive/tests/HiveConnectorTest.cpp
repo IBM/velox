@@ -28,6 +28,7 @@
 #include "velox/exec/tests/utils/PlanBuilder.h"
 #include "velox/expression/ExprConstants.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
+#include "velox/type/StringFunctionFilter.h"
 
 namespace facebook::velox::connector::hive {
 namespace {
@@ -714,6 +715,255 @@ TEST_F(HiveConnectorTest, extractFiltersFromRemainingFilter) {
   }
 }
 
+TEST_F(HiveConnectorTest, extractImpliedFiltersFromRemainingFilter) {
+  auto queryCtx = core::QueryCtx::create();
+  exec::SimpleExpressionEvaluator evaluator(queryCtx.get(), pool_.get());
+  auto rowType = ROW({"c0", "c1"}, {VARCHAR(), VARCHAR()});
+  using Unit = common::StringLength::Unit;
+  const auto bytes = [](int64_t min, int64_t max) {
+    return std::make_unique<common::StringLength>(
+        Unit::kBytes, exec::between(min, max));
+  };
+  constexpr int64_t kMax = std::numeric_limits<int64_t>::max();
+
+  // The implied filter is added and the predicate stays in the remaining
+  // filter.
+  auto expr =
+      parseExpr("c0 like 'a_c' and c1 like 'x%' and c1 is not null", rowType);
+  SubfieldFilters filters;
+  double sampleRate = 1;
+  auto remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_EQ(*remaining, *parseExpr("c0 like 'a_c' and c1 like 'x%'", rowType));
+  ASSERT_EQ(filters.size(), 2);
+  ASSERT_TRUE(
+      filters.at(Subfield("c0"))
+          ->testingEquals(
+              common::StringLength(Unit::kAsciiBytes, exec::between(3, 3))));
+  ASSERT_TRUE(filters.at(Subfield("c1"))->testingEquals(*bytes(1, kMax)));
+
+  // Implied filters are merged with each other.
+  expr = parseExpr("c0 like 'a%' and c0 like '___%'", rowType);
+  filters.clear();
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_EQ(*remaining, *expr);
+  ASSERT_EQ(filters.size(), 1);
+  ASSERT_TRUE(filters.at(Subfield("c0"))->testingEquals(*bytes(3, kMax)));
+
+  // An implied filter that cannot be merged with an existing filter is
+  // dropped.
+  expr = parseExpr("c0 like 'abc'", rowType);
+  filters.clear();
+  filters.emplace(Subfield("c0"), exec::lessThan("m"));
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_EQ(*remaining, *expr);
+  ASSERT_EQ(filters.size(), 1);
+  ASSERT_TRUE(filters.at(Subfield("c0"))->testingEquals(*exec::lessThan("m")));
+
+  // LIKE 'é_' gives kAsciiBytes [3, 3] and LIKE '__' gives [2, 2]. Both match
+  // the non-ASCII 3-byte 'éa', so the filters do not merge and the second one
+  // is dropped.
+  expr = parseExpr("c0 like '\xC3\xA9_' and c0 like '__'", rowType);
+  filters.clear();
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_EQ(*remaining, *expr);
+  ASSERT_EQ(filters.size(), 1);
+  ASSERT_TRUE(
+      filters.at(Subfield("c0"))
+          ->testingEquals(
+              common::StringLength(Unit::kAsciiBytes, exec::between(3, 3))));
+
+  // Filters implied by a disjunct do not hold for the disjunction.
+  expr = parseExpr("c0 like 'abc' or c0 like 'de'", rowType);
+  filters.clear();
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_EQ(*remaining, *expr);
+  ASSERT_TRUE(filters.empty());
+
+  // length() is converted to a filter and replaces the predicate. The implied
+  // filter is in a different unit and is dropped.
+  expr = parseExpr("length(c1) < 10 and c1 like 'abc'", rowType);
+  filters.clear();
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_EQ(*remaining, *parseExpr("c1 like 'abc'", rowType));
+  ASSERT_EQ(filters.size(), 1);
+  ASSERT_TRUE(filters.at(Subfield("c1"))
+                  ->testingEquals(
+                      common::StringLength(
+                          Unit::kCodePoints, exec::lessThan(int64_t{10}))));
+  ASSERT_EQ(sampleRate, 1);
+}
+
+TEST_F(HiveConnectorTest, extractSupportedFiltersFromRemainingFilter) {
+  auto queryCtx = core::QueryCtx::create();
+  exec::SimpleExpressionEvaluator evaluator(queryCtx.get(), pool_.get());
+  auto rowType = ROW({"c0", "c1"}, {VARCHAR(), VARCHAR()});
+  const auto canPushDown = [](const common::Filter& filter) {
+    return !filter.is(common::FilterKind::kStringLength) &&
+        !filter.is(common::FilterKind::kCaseMapped);
+  };
+
+  auto expr = parseExpr(
+      "lower(c0) = 'abc' and length(c1) = 3 and c0 like 'a_c' and c1 = 'x'",
+      rowType);
+  SubfieldFilters filters;
+  double sampleRate = 1;
+  auto remaining = extractFiltersFromRemainingFilter(
+      expr, &evaluator, filters, sampleRate, canPushDown);
+  ASSERT_EQ(
+      *remaining,
+      *parseExpr(
+          "lower(c0) = 'abc' and length(c1) = 3 and c0 like 'a_c'", rowType));
+  ASSERT_EQ(filters.size(), 1);
+  ASSERT_TRUE(filters.at(Subfield("c1"))->testingEquals(*exec::equal("x")));
+
+  // Disjuncts with rejected filters stay in the remaining filter.
+  expr = parseExpr("length(c1) = 3 or length(c1) = 5", rowType);
+  filters.clear();
+  remaining = extractFiltersFromRemainingFilter(
+      expr, &evaluator, filters, sampleRate, canPushDown);
+  ASSERT_EQ(*remaining, *expr);
+  ASSERT_TRUE(filters.empty());
+}
+
+TEST_F(HiveConnectorTest, extractCaseMappedFiltersFromRemainingFilter) {
+  auto queryCtx = core::QueryCtx::create();
+  exec::SimpleExpressionEvaluator evaluator(queryCtx.get(), pool_.get());
+  auto rowType = ROW({"c0", "c1"}, {VARCHAR(), VARCHAR()});
+  using Mapping = common::CaseMapped::Mapping;
+  const auto lower = [](std::unique_ptr<common::Filter> inner) {
+    return std::make_unique<common::CaseMapped>(
+        Mapping::kLower, std::move(inner));
+  };
+
+  auto expr = parseExpr(
+      "lower(c0) = 'aws rds' and lower(c1) <> '(not set)' and c1 is not null",
+      rowType);
+  SubfieldFilters filters;
+  double sampleRate = 1;
+  auto remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_FALSE(remaining);
+  ASSERT_EQ(filters.size(), 2);
+  ASSERT_TRUE(filters.at(Subfield("c0"))
+                  ->testingEquals(*lower(exec::equal("aws rds"))));
+  ASSERT_TRUE(filters.at(Subfield("c1"))
+                  ->testingEquals(*lower(
+                      exec::orFilter(
+                          exec::lessThan("(not set)"),
+                          exec::greaterThan("(not set)")))));
+
+  // Filters with the same mapping are merged.
+  expr = parseExpr(
+      "lower(c0) in ('a', 'bb') and lower(c0) in ('bb', 'ccc')", rowType);
+  filters.clear();
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_FALSE(remaining);
+  ASSERT_TRUE(
+      filters.at(Subfield("c0"))->testingEquals(*lower(exec::equal("bb"))));
+
+  // Filters with different mappings are not merged.
+  expr = parseExpr("lower(c0) = 'abc' and upper(c0) = 'ABC'", rowType);
+  filters.clear();
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_EQ(*remaining, *parseExpr("upper(c0) = 'ABC'", rowType));
+  ASSERT_TRUE(
+      filters.at(Subfield("c0"))->testingEquals(*lower(exec::equal("abc"))));
+
+  // A disjunction of comparisons with the same mapping becomes an IN-list.
+  expr = parseExpr(
+      "lower(c0) = 'a' or lower(c0) = 'bb' or lower(c0) in ('c', 'dd')",
+      rowType);
+  filters.clear();
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_FALSE(remaining);
+  ASSERT_TRUE(filters.at(Subfield("c0"))
+                  ->testingEquals(*lower(exec::in({"a", "bb", "c", "dd"}))));
+
+  // A disjunction of different mappings is not merged.
+  expr = parseExpr("lower(c0) = 'a' or upper(c0) = 'B'", rowType);
+  filters.clear();
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_EQ(*remaining, *expr);
+  ASSERT_TRUE(filters.empty());
+
+  // Merging with an IN-list keeps the values that pass.
+  expr = parseExpr("lower(c0) = 'abc'", rowType);
+  filters.clear();
+  filters.emplace(Subfield("c0"), exec::in({"ABC", "abd", "aBc"}));
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_FALSE(remaining);
+  ASSERT_TRUE(
+      filters.at(Subfield("c0"))->testingEquals(*exec::in({"ABC", "aBc"})));
+
+  // A filter that cannot be merged with an existing filter stays in the
+  // remaining filter.
+  filters.clear();
+  filters.emplace(Subfield("c0"), exec::lessThan("m"));
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_EQ(*remaining, *expr);
+  ASSERT_TRUE(filters.at(Subfield("c0"))->testingEquals(*exec::lessThan("m")));
+  ASSERT_EQ(sampleRate, 1);
+}
+
+TEST_F(HiveConnectorTest, extractStringContainsFiltersFromRemainingFilter) {
+  auto queryCtx = core::QueryCtx::create();
+  exec::SimpleExpressionEvaluator evaluator(queryCtx.get(), pool_.get());
+  auto rowType = ROW({"c0", "c1"}, {VARCHAR(), VARCHAR()});
+
+  auto expr = parseExpr(
+      "strpos(lower(c0), 'capacity-reservation') > 0 and "
+      "c1 like '%unused%' and c1 is not null",
+      rowType);
+  SubfieldFilters filters;
+  double sampleRate = 1;
+  auto remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_FALSE(remaining);
+  ASSERT_EQ(filters.size(), 2);
+  ASSERT_TRUE(filters.at(Subfield("c0"))
+                  ->testingEquals(
+                      common::CaseMapped(
+                          common::CaseMapped::Mapping::kLower,
+                          std::make_unique<common::StringContains>(
+                              "capacity-reservation", /*nullAllowed=*/false))));
+  ASSERT_TRUE(filters.at(Subfield("c1"))
+                  ->testingEquals(
+                      common::StringContains("unused", /*nullAllowed=*/false)));
+
+  // A substring of another one is implied by it.
+  expr = parseExpr("strpos(c0, 'set') > 0 and c0 like '%not set%'", rowType);
+  filters.clear();
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_FALSE(remaining);
+  ASSERT_TRUE(
+      filters.at(Subfield("c0"))
+          ->testingEquals(
+              common::StringContains("not set", /*nullAllowed=*/false)));
+
+  // Unrelated substrings do not merge into one filter.
+  expr = parseExpr("strpos(c0, 'ab') > 0 and strpos(c0, 'cd') > 0", rowType);
+  filters.clear();
+  remaining =
+      extractFiltersFromRemainingFilter(expr, &evaluator, filters, sampleRate);
+  ASSERT_EQ(*remaining, *parseExpr("strpos(c0, 'cd') > 0", rowType));
+  ASSERT_TRUE(
+      filters.at(Subfield("c0"))
+          ->testingEquals(common::StringContains("ab", /*nullAllowed=*/false)));
+}
+
 TEST_F(HiveConnectorTest, prestoTableSampling) {
   auto queryCtx = core::QueryCtx::create();
   exec::SimpleExpressionEvaluator evaluator(queryCtx.get(), pool_.get());
@@ -947,8 +1197,9 @@ TEST_F(HiveConnectorTest, fileReadOpsTableIdentityPropagation) {
   ASSERT_EQ(captured.at(std::string(kTableNameKey)), "test_table");
 }
 
-/// Verifies that getRuntimeStats() merge logic allows IoStats (ReadFile-layer)
-/// to override the storageReadBytes value from IoStatistics (DWIO-level).
+/// Verifies that getRuntimeStats() merge logic allows IoStats
+/// (ReadFile-layer) to override the storageReadBytes value from IoStatistics
+/// (DWIO-level).
 TEST_F(HiveConnectorTest, ioStatsOverridesStorageReadBytes) {
   // Step 1: Simulate DWIO-level IoStatistics with an inaccurate estimate.
   auto ioStatistics = std::make_shared<io::IoStatistics>();
