@@ -61,6 +61,46 @@ class ParquetConfig {
       false,
       "When name-based mapping is enabled and all requested struct children are missing, return NULL struct instead of a non-null struct with all-null children.")
 
+  VELOX_FORMAT_CONFIG(
+      kDictionaryFilterEnabledSession,
+      kDictionaryFilterEnabled,
+      dictionaryFilterEnabled,
+      "dictionary_filter_enabled",
+      "dictionary-filter-enabled",
+      bool,
+      true,
+      "Skip row groups whose dictionary has no value that passes the filter "
+      "on a top-level string column. Reads the dictionary page of each row "
+      "group that statistics do not skip and whose data pages are all "
+      "dictionary-encoded. Not used for columns whose statistics are "
+      "ignored.")
+
+  VELOX_FORMAT_CONFIG(
+      kPageIndexFilterEnabledSession,
+      kPageIndexFilterEnabled,
+      pageIndexFilterEnabled,
+      "page_index_filter_enabled",
+      "page-index-filter-enabled",
+      bool,
+      true,
+      "Skip rows in pages whose column index statistics show no value passes "
+      "the filter on a top-level column. Reads the column and offset index of "
+      "each filtered column of a row group when the file has them. Not used "
+      "for columns whose statistics are ignored.")
+
+  VELOX_FORMAT_CONFIG(
+      kStringFunctionFiltersEnabledSession,
+      kStringFunctionFiltersEnabled,
+      stringFunctionFiltersEnabled,
+      "string_function_filters_enabled",
+      "string-function-filters-enabled",
+      bool,
+      true,
+      "Push down predicates on length(), lower(), upper(), strpos() and "
+      "LIKE as filters on the column. When false, these predicates stay in "
+      "the remaining filter. Applies to scans of every file format, because "
+      "predicates become filters before the format of a split is known.")
+
   static constexpr uint64_t kDefaultFooterMemoryTrackingThreshold =
       std::numeric_limits<uint64_t>::max();
   VELOX_FORMAT_CONFIG(
@@ -275,6 +315,13 @@ class ParquetConfig {
         kWriterRowGroupSizeSessionProperty>(properties, sessionPrefix);
     dwio::common::registerFormatConfigProperty<
         kNullStructIfAllFieldsMissingSessionProperty>(
+        properties, sessionPrefix);
+    dwio::common::registerFormatConfigProperty<
+        kDictionaryFilterEnabledSessionProperty>(properties, sessionPrefix);
+    dwio::common::registerFormatConfigProperty<
+        kPageIndexFilterEnabledSessionProperty>(properties, sessionPrefix);
+    dwio::common::registerFormatConfigProperty<
+        kStringFunctionFiltersEnabledSessionProperty>(
         properties, sessionPrefix);
   }
 };

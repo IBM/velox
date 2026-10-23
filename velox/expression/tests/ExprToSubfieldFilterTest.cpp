@@ -20,6 +20,7 @@
 #include "velox/functions/prestosql/registration/RegistrationFunctions.h"
 #include "velox/parse/ExpressionsParser.h"
 #include "velox/parse/TypeResolver.h"
+#include "velox/type/StringFunctionFilter.h"
 
 using facebook::velox::common::Subfield;
 
@@ -29,6 +30,12 @@ using facebook::velox::common::Subfield;
 
 namespace facebook::velox::exec {
 namespace {
+
+std::unique_ptr<common::Filter> caseMapped(
+    common::CaseMapped::Mapping mapping,
+    std::unique_ptr<common::Filter> inner) {
+  return std::make_unique<common::CaseMapped>(mapping, std::move(inner));
+}
 
 void validateSubfield(
     const Subfield& subfield,
@@ -81,6 +88,19 @@ class ExprToSubfieldFilterTest : public testing::Test {
     if (auto result =
             ExprToSubfieldFilterParser::getInstance()->leafCallToSubfieldFilter(
                 *call, evaluator(), negated)) {
+      return std::move(result.value());
+    }
+
+    return std::make_pair(common::Subfield(), nullptr);
+  }
+
+  std::pair<common::Subfield, std::unique_ptr<common::Filter>>
+  leafCallToImpliedSubfieldFilter(
+      const core::CallTypedExprPtr& call,
+      bool negated = false) {
+    if (auto result = ExprToSubfieldFilterParser::getInstance()
+                          ->leafCallToImpliedSubfieldFilter(
+                              *call, evaluator(), negated)) {
       return std::move(result.value());
     }
 
@@ -401,6 +421,264 @@ TEST_F(ExprToSubfieldFilterTest, like) {
   ASSERT_FALSE(filter);
 }
 
+TEST_F(ExprToSubfieldFilterTest, length) {
+  using Unit = common::StringLength::Unit;
+  const auto rowType = ROW({"a", "b"}, {VARCHAR(), VARBINARY()});
+
+  // A predicate on length(a) gives the filter that the same predicate gives on
+  // a BIGINT column, applied to the length of a.
+  for (const std::string predicate :
+       {"= 3",
+        "<> 3",
+        "< 3",
+        "<= 3",
+        "> 3",
+        ">= 3",
+        "between 2 and 5",
+        "in (1, 3, 4)",
+        "in (1, null)",
+        "= -1",
+        "= cast(null as bigint)",
+        "is null"}) {
+    for (const bool negated : {false, true}) {
+      SCOPED_TRACE(fmt::format("{} {}", predicate, negated));
+      auto [subfield, filter] = leafCallToSubfieldFilter(
+          parseCallExpr("length(a) " + predicate, rowType), negated);
+      auto [lengthSubfield, lengthFilter] = leafCallToSubfieldFilter(
+          parseCallExpr("n " + predicate, ROW("n", BIGINT())), negated);
+      ASSERT_TRUE(lengthFilter);
+      validateSubfield(subfield, {"a"});
+      VELOX_ASSERT_FILTER(
+          common::StringLength::wrap(
+              Unit::kCodePoints, std::move(lengthFilter)),
+          filter);
+    }
+  }
+
+  {
+    auto [subfield, filter] =
+        leafCallToSubfieldFilter(parseCallExpr("length(a) = 3", rowType));
+    VELOX_ASSERT_FILTER(
+        std::make_unique<common::StringLength>(Unit::kCodePoints, equal(3)),
+        filter);
+  }
+  {
+    // length() counts bytes of VARBINARY.
+    auto [subfield, filter] =
+        leafCallToSubfieldFilter(parseCallExpr("length(b) = 3", rowType));
+    validateSubfield(subfield, {"b"});
+    VELOX_ASSERT_FILTER(
+        std::make_unique<common::StringLength>(Unit::kBytes, equal(3)), filter);
+  }
+
+  for (const auto& expr :
+       {"length(a) = length(a)", "length(lower(a)) = 3", "length(a) + 1 = 3"}) {
+    SCOPED_TRACE(expr);
+    auto [subfield, filter] =
+        leafCallToSubfieldFilter(parseCallExpr(expr, rowType));
+    ASSERT_FALSE(filter);
+  }
+}
+
+TEST_F(ExprToSubfieldFilterTest, caseMapping) {
+  using Mapping = common::CaseMapped::Mapping;
+  const auto rowType = ROW({"a", "b"}, {VARCHAR(), VARCHAR()});
+  struct TestCase {
+    std::string expr;
+    bool negated;
+    std::unique_ptr<common::Filter> expected;
+  };
+  std::vector<TestCase> testCases;
+  testCases.push_back(
+      {"lower(a) = lower('AWS RDS')",
+       false,
+       caseMapped(Mapping::kLower, equal("aws rds"))});
+  testCases.push_back(
+      {"lower(a) <> '(not set)'",
+       false,
+       caseMapped(
+           Mapping::kLower,
+           orFilter(lessThan("(not set)"), greaterThan("(not set)")))});
+  testCases.push_back(
+      {"lower(a) <> '(not set)'",
+       true,
+       caseMapped(Mapping::kLower, equal("(not set)"))});
+  testCases.push_back(
+      {"upper(a) in ('A', 'BC')",
+       false,
+       caseMapped(Mapping::kUpper, in({"A", "BC"}))});
+  testCases.push_back(
+      {"upper(a) in ('A', 'BC')",
+       true,
+       caseMapped(Mapping::kUpper, notIn({"A", "BC"}))});
+  testCases.push_back(
+      {"lower(a) >= 'm'",
+       false,
+       caseMapped(Mapping::kLower, greaterThanOrEqual("m"))});
+  testCases.push_back(
+      {"lower(a) between 'a' and 'b'",
+       false,
+       caseMapped(Mapping::kLower, between("a", "b"))});
+  // Mapping keeps nulls and non-nulls.
+  testCases.push_back({"lower(a) is null", false, isNull()});
+  testCases.push_back({"lower(a) is null", true, isNotNull()});
+  testCases.push_back(
+      {"lower(a) = cast(null as varchar)",
+       false,
+       std::make_unique<common::AlwaysFalse>()});
+
+  for (const auto& testCase : testCases) {
+    SCOPED_TRACE(fmt::format("{} {}", testCase.expr, testCase.negated));
+    auto [subfield, filter] = leafCallToSubfieldFilter(
+        parseCallExpr(testCase.expr, rowType), testCase.negated);
+    validateSubfield(subfield, {"a"});
+    ASSERT_TRUE(filter);
+    VELOX_ASSERT_FILTER(testCase.expected, filter);
+  }
+
+  for (const auto& expr :
+       {"lower(a) = b",
+        "lower(a) like 'a%'",
+        "trim(a) = 'abc'",
+        "lower(concat(a, b)) = 'abc'",
+        "lower(upper(a)) = 'abc'",
+        "upper(lower(a)) in ('A', 'B')"}) {
+    SCOPED_TRACE(expr);
+    auto [subfield, filter] =
+        leafCallToSubfieldFilter(parseCallExpr(expr, rowType));
+    ASSERT_FALSE(filter);
+  }
+}
+
+TEST_F(ExprToSubfieldFilterTest, stringContains) {
+  using Mapping = common::CaseMapped::Mapping;
+  const auto rowType = ROW({"a", "b"}, {VARCHAR(), VARCHAR()});
+  const auto contains = [](std::string substring) {
+    return std::make_unique<common::StringContains>(
+        std::move(substring), /*nullAllowed=*/false);
+  };
+
+  struct TestCase {
+    std::string expr;
+    std::unique_ptr<common::Filter> expected;
+  };
+  std::vector<TestCase> testCases;
+  // strpos() is 0 if and only if the substring is not found.
+  testCases.push_back({"strpos(a, 'set') > 0", contains("set")});
+  testCases.push_back({"strpos(a, 'set') >= 1", contains("set")});
+  testCases.push_back({"strpos(a, 'set') <> 0", contains("set")});
+  testCases.push_back(
+      {"strpos(lower(a), 'capacity-reservation') > 0",
+       caseMapped(Mapping::kLower, contains("capacity-reservation"))});
+  testCases.push_back(
+      {"strpos(upper(a), 'X') > 0",
+       caseMapped(Mapping::kUpper, contains("X"))});
+  // An empty substring is found in every string.
+  testCases.push_back({"strpos(a, '') > 0", isNotNull()});
+  testCases.push_back({"a like '%set%'", contains("set")});
+  testCases.push_back({"a like '%a#%b##%' escape '#'", contains("a%b#")});
+  testCases.push_back(
+      {"lower(a) like '%set%'", caseMapped(Mapping::kLower, contains("set"))});
+
+  for (const auto& testCase : testCases) {
+    SCOPED_TRACE(testCase.expr);
+    auto [subfield, filter] =
+        leafCallToSubfieldFilter(parseCallExpr(testCase.expr, rowType));
+    validateSubfield(subfield, {"a"});
+    ASSERT_TRUE(filter);
+    VELOX_ASSERT_FILTER(testCase.expected, filter);
+  }
+
+  for (const auto& expr :
+       {"strpos(a, 'x') = 0",
+        "strpos(a, 'x') > 1",
+        "strpos(a, b) > 0",
+        "strpos(a, 'x', 2) > 0",
+        "strpos(lower(upper(a)), 'x') > 0",
+        "strpos(concat(a, b), 'x') > 0",
+        "a like '%a_b%'",
+        "a like 'a%'",
+        "a like '%a'",
+        "a like '%%'",
+        "a like '%a#' escape '#'"}) {
+    SCOPED_TRACE(expr);
+    auto [subfield, filter] =
+        leafCallToSubfieldFilter(parseCallExpr(expr, rowType));
+    ASSERT_FALSE(filter);
+  }
+  for (const auto& expr : {"strpos(a, 'x') > 0", "a like '%x%'"}) {
+    SCOPED_TRACE(expr);
+    auto [subfield, filter] = leafCallToSubfieldFilter(
+        parseCallExpr(expr, rowType), /*negated=*/true);
+    ASSERT_FALSE(filter);
+  }
+}
+
+TEST_F(ExprToSubfieldFilterTest, impliedStringLength) {
+  using Unit = common::StringLength::Unit;
+  const auto rowType = ROW({"a", "b"}, {VARCHAR(), VARCHAR()});
+  const auto bytes = [](int64_t min, int64_t max) {
+    return std::make_unique<common::StringLength>(
+        Unit::kBytes, between(min, max));
+  };
+  const auto asciiBytes = [](int64_t min, int64_t max) {
+    return std::make_unique<common::StringLength>(
+        Unit::kAsciiBytes, between(min, max));
+  };
+  constexpr auto kMax = std::numeric_limits<int64_t>::max();
+
+  struct TestCase {
+    std::string expr;
+    std::unique_ptr<common::Filter> expected;
+  };
+  std::vector<TestCase> testCases;
+  testCases.push_back({"a like 'abc'", bytes(3, 3)});
+  // '_' matches one byte of ASCII and at least one byte of other strings.
+  testCases.push_back({"a like 'a_c'", asciiBytes(3, 3)});
+  testCases.push_back({"a like 'a%c'", bytes(2, kMax)});
+  testCases.push_back({"a like 'a_%'", bytes(2, kMax)});
+  testCases.push_back({"a like '__'", asciiBytes(2, 2)});
+  testCases.push_back(
+      {"a like '\xC3\xBC"
+       "_'",
+       asciiBytes(3, 3)});
+  testCases.push_back({"a like 'a#%#_##' escape '#'", bytes(4, 4)});
+
+  for (const auto& testCase : testCases) {
+    SCOPED_TRACE(testCase.expr);
+    auto call = parseCallExpr(testCase.expr, rowType);
+    auto [subfield, filter] = leafCallToImpliedSubfieldFilter(call);
+    validateSubfield(subfield, {"a"});
+    ASSERT_TRUE(filter);
+    VELOX_ASSERT_FILTER(testCase.expected, filter);
+
+    // The predicate itself is not converted to a filter.
+    auto [exactSubfield, exactFilter] = leafCallToSubfieldFilter(call);
+    ASSERT_FALSE(exactFilter);
+  }
+
+  // Predicates that do not restrict the length.
+  for (const auto& expr :
+       {"lower(a) = 'abc'",
+        "length(a) = 3",
+        "a = 'abc'",
+        "a like '%'",
+        "a like b",
+        // LIKE rejects these escapes.
+        "a like 'a#' escape '#'",
+        "a like 'a#b' escape '#'"}) {
+    SCOPED_TRACE(expr);
+    auto [subfield, filter] =
+        leafCallToImpliedSubfieldFilter(parseCallExpr(expr, rowType));
+    ASSERT_FALSE(filter);
+  }
+  {
+    auto [subfield, filter] = leafCallToImpliedSubfieldFilter(
+        parseCallExpr("a like 'abc'", rowType), /*negated=*/true);
+    ASSERT_FALSE(filter);
+  }
+}
+
 TEST_F(ExprToSubfieldFilterTest, nonConstant) {
   auto call = parseCallExpr("a = b + 1", ROW({"a", "b"}, BIGINT()));
   auto [subfield, filter] = leafCallToSubfieldFilter(call);
@@ -687,6 +965,26 @@ TEST_F(ExprToSubfieldFilterTest, makeOrFilterBytesValues) {
             std::make_unique<common::BytesValues>(
                 std::vector<std::string>{"JAPAN"}, /*nullAllowed=*/true)));
   }
+}
+
+TEST_F(ExprToSubfieldFilterTest, makeOrFilterCaseMapped) {
+  using Mapping = common::CaseMapped::Mapping;
+
+  // lower(a) = 'x' or lower(a) in ('y', 'z') ==> lower(a) in ('x', 'y', 'z')
+  VELOX_ASSERT_FILTER(
+      caseMapped(Mapping::kLower, in({"x", "y", "z"})),
+      makeOr(
+          caseMapped(Mapping::kLower, equal("x")),
+          caseMapped(Mapping::kLower, in({"y", "z"}))));
+
+  // Different mappings, or inner filters that do not merge, are not merged.
+  ASSERT_FALSE(makeOr(
+      caseMapped(Mapping::kLower, equal("x")),
+      caseMapped(Mapping::kUpper, equal("Y"))));
+  ASSERT_FALSE(makeOr(
+      caseMapped(Mapping::kLower, equal("x")),
+      caseMapped(Mapping::kLower, lessThan("m"))));
+  ASSERT_FALSE(makeOr(caseMapped(Mapping::kLower, equal("x")), equal("y")));
 }
 
 TEST_F(ExprToSubfieldFilterTest, makeOrFilterBytesRange) {

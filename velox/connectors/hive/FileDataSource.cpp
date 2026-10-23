@@ -26,6 +26,8 @@
 #include "velox/common/time/CpuWallTimer.h"
 #include "velox/connectors/hive/ExtractionUtils.h"
 #include "velox/connectors/hive/FileConfig.h"
+#include "velox/connectors/hive/FileConnectorUtil.h"
+#include "velox/dwio/parquet/common/ParquetConfig.h"
 #include "velox/expression/FieldReference.h"
 
 using facebook::velox::common::testutil::TestValue;
@@ -57,6 +59,24 @@ void addOperationStatsToRuntimeStats(
     // recover a per-request mean.
     add("latencyInMs", counters.latencyInMs);
   }
+}
+
+// Returns a predicate that rejects filters on string functions if the session
+// disables them, or nullptr to push down all filters.
+CanPushDownFilter makeCanPushDown(
+    const FileConfig& fileConfig,
+    const config::ConfigBase& sessionProperties) {
+  const auto parquetConfigs = makeFormatScopedConfigs(
+      fileConfig, sessionProperties, dwio::common::FileFormat::PARQUET);
+  if (parquet::ParquetConfig::stringFunctionFiltersEnabled(
+          parquetConfigs.connectorConfig, parquetConfigs.sessionProperties)) {
+    return nullptr;
+  }
+  return [](const common::Filter& filter) {
+    return !filter.is(common::FilterKind::kStringLength) &&
+        !filter.is(common::FilterKind::kCaseMapped) &&
+        !filter.is(common::FilterKind::kStringContains);
+  };
 }
 
 } // namespace
@@ -161,7 +181,8 @@ FileDataSource::FileDataSource(
       tableHandle_->remainingFilter(),
       expressionEvaluator_,
       filters_,
-      sampleRate);
+      sampleRate,
+      makeCanPushDown(*fileConfig_, *connectorQueryCtx->sessionProperties()));
   if (sampleRate != 1) {
     randomSkip_ = std::make_shared<random::RandomSkipTracker>(sampleRate);
   }

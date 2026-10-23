@@ -70,6 +70,28 @@ class ParquetReaderOptions : public dwio::common::FormatSpecificOptions {
     return nullStructIfAllFieldsMissing_;
   }
 
+  /// Sets whether row groups whose dictionary has no passing value are
+  /// skipped.
+  void setDictionaryFilterEnabled(bool value) {
+    dictionaryFilterEnabled_ = value;
+  }
+
+  /// Returns whether row groups whose dictionary has no passing value are
+  /// skipped.
+  bool dictionaryFilterEnabled() const {
+    return dictionaryFilterEnabled_;
+  }
+
+  /// Sets whether rows of pages that the page index excludes are skipped.
+  void setPageIndexFilterEnabled(bool value) {
+    pageIndexFilterEnabled_ = value;
+  }
+
+  /// Returns whether rows of pages that the page index excludes are skipped.
+  bool pageIndexFilterEnabled() const {
+    return pageIndexFilterEnabled_;
+  }
+
  private:
   /// Allows reading INT32 physical columns as narrower integer types.
   bool allowInt32Narrowing_{
@@ -83,6 +105,14 @@ class ParquetReaderOptions : public dwio::common::FormatSpecificOptions {
   bool nullStructIfAllFieldsMissing_{
       ParquetConfig::kNullStructIfAllFieldsMissingSessionProperty::
           defaultValue};
+
+  // Skips row groups by their dictionaries.
+  bool dictionaryFilterEnabled_{
+      ParquetConfig::kDictionaryFilterEnabledSessionProperty::defaultValue};
+
+  // Skips rows by the page index.
+  bool pageIndexFilterEnabled_{
+      ParquetConfig::kPageIndexFilterEnabledSessionProperty::defaultValue};
 };
 
 /// Implements the RowReader interface for Parquet.

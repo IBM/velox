@@ -499,10 +499,26 @@ class ExprToSubfieldFilterParser {
       core::ExpressionEvaluator* evaluator,
       bool negated = false) = 0;
 
+  /// Analyzes 'call' expression to determine if it implies a subfield filter,
+  /// i.e. a necessary condition that can be checked while reading the
+  /// subfield. Unlike leafCallToSubfieldFilter, the filter does not replace
+  /// 'call', which must still be evaluated. Returns std::nullopt if there is
+  /// no such filter. If 'negated' is true, considers not(call).
+  virtual std::optional<
+      std::pair<common::Subfield, std::unique_ptr<common::Filter>>>
+  leafCallToImpliedSubfieldFilter(
+      const core::CallTypedExpr& /*call*/,
+      core::ExpressionEvaluator* /*evaluator*/,
+      bool /*negated*/) {
+    return std::nullopt;
+  }
+
   /// Combines 2 or more filters with an OR.
   /// Detects overlapping ranges of bigint and floating point values.
   /// Detects a list of single-value bigint filters and combines them into a
   /// single IN list.
+  /// Merges CaseMapped disjuncts with the same mapping by merging their inner
+  /// filters.
   /// Returns nullptr if no combination has been made.
   static std::unique_ptr<common::Filter> makeOrFilter(
       std::vector<std::unique_ptr<common::Filter>> disjuncts);
@@ -591,6 +607,15 @@ class PrestoExprToSubfieldFilterParser : public ExprToSubfieldFilterParser {
       const core::CallTypedExpr& call,
       core::ExpressionEvaluator* evaluator,
       bool negated = false) override;
+
+  /// Derives a StringLength filter on 'x' from 'x LIKE pattern'. Returns
+  /// std::nullopt for NOT LIKE and for patterns that do not restrict the
+  /// length, e.g. '%'.
+  std::optional<std::pair<common::Subfield, std::unique_ptr<common::Filter>>>
+  leafCallToImpliedSubfieldFilter(
+      const core::CallTypedExpr& call,
+      core::ExpressionEvaluator* evaluator,
+      bool negated) override;
 };
 
 } // namespace facebook::velox::exec

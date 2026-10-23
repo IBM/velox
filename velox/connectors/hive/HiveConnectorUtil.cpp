@@ -28,6 +28,7 @@
 #include "velox/expression/ExprConstants.h"
 #include "velox/expression/ExprToSubfieldFilter.h"
 #include "velox/expression/FieldReference.h"
+#include "velox/type/StringFunctionFilter.h"
 
 namespace facebook::velox::connector::hive {
 namespace {
@@ -758,24 +759,92 @@ double getPrestoSampleRate(
   return std::max(0.0, std::min(1.0, rate->value().value<double>()));
 }
 
+// Adds implied 'filter' on 'subfield' to 'filters'. Skips 'filter' if it does
+// not merge with the existing filter on 'subfield'. That is safe because the
+// predicate it is derived from stays in the remaining filter.
+void addImpliedFilter(
+    common::Subfield subfield,
+    common::FilterPtr filter,
+    common::SubfieldFilters& filters) {
+  auto it = filters.find(subfield);
+  if (it == filters.end()) {
+    filters.emplace(std::move(subfield), std::move(filter));
+    return;
+  }
+  VELOX_CHECK(
+      filter->is(common::FilterKind::kStringLength),
+      "Implied filters are StringLength filters: {}",
+      filter->toString());
+  if (filter->as<common::StringLength>()->canMergeWith(*it->second)) {
+    it->second = filter->mergeWith(it->second.get());
+  }
+}
+
+// Derives the filter implied by leaf 'call', if any, and adds it to
+// 'impliedFilters'. The call itself stays in the remaining filter.
+void deriveImpliedFilter(
+    const core::CallTypedExpr& call,
+    core::ExpressionEvaluator* evaluator,
+    bool negated,
+    const CanPushDownFilter& canPushDown,
+    common::SubfieldFilters& impliedFilters) {
+  try {
+    auto subfieldAndFilter =
+        exec::ExprToSubfieldFilterParser::getInstance()
+            ->leafCallToImpliedSubfieldFilter(call, evaluator, negated);
+    if (!subfieldAndFilter.has_value() ||
+        !canPushDown(*subfieldAndFilter->second)) {
+      return;
+    }
+
+    auto& [subfield, filter] = subfieldAndFilter.value();
+    addImpliedFilter(std::move(subfield), std::move(filter), impliedFilters);
+  } catch (const VeloxException&) {
+    LOG(WARNING) << "Unexpected failure when deriving implied filter for: "
+                 << call.toString();
+  }
+}
+
+// Returns 'filter' merged with 'other', or nullptr if their kinds do not
+// merge, e.g. lower(x) = 'a' with x > 'm'. The predicate of 'filter' then stays
+// in the remaining filter.
+std::unique_ptr<common::Filter> tryMergeWith(
+    const common::Filter& filter,
+    const common::Filter& other) {
+  try {
+    return filter.mergeWith(&other);
+  } catch (const VeloxUserError& e) {
+    if (e.errorCode() != error_code::kUnsupported) {
+      throw;
+    }
+    return nullptr;
+  }
+}
+
 core::TypedExprPtr extractFiltersFromRemainingFilter(
     const core::TypedExprPtr& expr,
     core::ExpressionEvaluator* evaluator,
     bool negated,
+    const CanPushDownFilter& canPushDown,
     common::SubfieldFilters& filters,
+    common::SubfieldFilters& impliedFilters,
     double& sampleRate) {
   common::Filter* oldFilter = nullptr;
   try {
-    if (auto subfieldAndFilter =
-            exec::ExprToSubfieldFilterParser::getInstance()
-                ->leafToSubfieldFilter(*expr, evaluator, negated)) {
+    auto subfieldAndFilter =
+        exec::ExprToSubfieldFilterParser::getInstance()->leafToSubfieldFilter(
+            *expr, evaluator, negated);
+    if (subfieldAndFilter.has_value() &&
+        canPushDown(*subfieldAndFilter->second)) {
       auto& [subfield, filter] = subfieldAndFilter.value();
       if (auto it = filters.find(subfield); it != filters.end()) {
         oldFilter = it->second.get();
-        filter = filter->mergeWith(oldFilter);
+        filter = tryMergeWith(*filter, *oldFilter);
       }
-      filters.insert_or_assign(std::move(subfield), std::move(filter));
-      return nullptr;
+      if (filter != nullptr) {
+        filters.insert_or_assign(std::move(subfield), std::move(filter));
+        return nullptr;
+      }
     }
   } catch (const VeloxException&) {
     LOG(WARNING) << "Unexpected failure when extracting filter for: "
@@ -792,7 +861,13 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
 
   if (isNotExpr(expr, call, evaluator)) {
     auto inner = extractFiltersFromRemainingFilter(
-        call->inputs()[0], evaluator, !negated, filters, sampleRate);
+        call->inputs()[0],
+        evaluator,
+        !negated,
+        canPushDown,
+        filters,
+        impliedFilters,
+        sampleRate);
     return inner ? replaceInputs(call, {inner}) : nullptr;
   }
 
@@ -802,7 +877,13 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
     args.reserve(call->inputs().size());
     for (const auto& input : call->inputs()) {
       if (auto arg = extractFiltersFromRemainingFilter(
-              input, evaluator, negated, filters, sampleRate)) {
+              input,
+              evaluator,
+              negated,
+              canPushDown,
+              filters,
+              impliedFilters,
+              sampleRate)) {
         args.push_back(std::move(arg));
       }
       // If extractFiltersFromRemainingFilter returns nullptr, it means
@@ -824,9 +905,17 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
 
     for (const auto& input : call->inputs()) {
       common::SubfieldFilters tmpFilters;
+      // Filters implied by a disjunct do not hold for the disjunction.
+      common::SubfieldFilters tmpImpliedFilters;
       double tmpSampleRate = 1;
       auto tmpRemaining = extractFiltersFromRemainingFilter(
-          input, evaluator, negated, tmpFilters, tmpSampleRate);
+          input,
+          evaluator,
+          negated,
+          canPushDown,
+          tmpFilters,
+          tmpImpliedFilters,
+          tmpSampleRate);
 
       if (tmpRemaining != nullptr || tmpSampleRate != 1 ||
           tmpFilters.size() != 1) {
@@ -854,7 +943,17 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
 
       auto it = filters.find(subfield);
       if (it != filters.end()) {
-        filter = filter->mergeWith(it->second.get());
+        try {
+          filter = tryMergeWith(*filter, *it->second);
+        } catch (const VeloxException&) {
+          LOG(WARNING) << "Unexpected failure when merging filter for: "
+                       << expr->toString() << " with "
+                       << it->second->toString();
+          filter = nullptr;
+        }
+        if (filter == nullptr) {
+          return expr;
+        }
       }
 
       filters.insert_or_assign(std::move(subfield), std::move(filter));
@@ -871,6 +970,7 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
     }
   }
 
+  deriveImpliedFilter(*call, evaluator, negated, canPushDown, impliedFilters);
   return expr;
 }
 } // namespace
@@ -879,12 +979,31 @@ core::TypedExprPtr extractFiltersFromRemainingFilter(
     const core::TypedExprPtr& expr,
     core::ExpressionEvaluator* evaluator,
     common::SubfieldFilters& filters,
-    double& sampleRate) {
+    double& sampleRate,
+    const CanPushDownFilter& canPushDown) {
   if (expr == nullptr) {
     return nullptr;
   }
-  return extractFiltersFromRemainingFilter(
-      expr, evaluator, /*negated=*/false, filters, sampleRate);
+  const CanPushDownFilter pushDownAll = [](const common::Filter& /*filter*/) {
+    return true;
+  };
+  common::SubfieldFilters impliedFilters;
+  auto remaining = extractFiltersFromRemainingFilter(
+      expr,
+      evaluator,
+      /*negated=*/false,
+      canPushDown ? canPushDown : pushDownAll,
+      filters,
+      impliedFilters,
+      sampleRate);
+  // Adds implied filters last, so that each merges with the final filter on its
+  // subfield and none blocks a filter extracted later from merging.
+  while (!impliedFilters.empty()) {
+    auto implied = impliedFilters.extract(impliedFilters.begin());
+    addImpliedFilter(
+        std::move(implied.key()), std::move(implied.mapped()), filters);
+  }
+  return remaining;
 }
 
 bool shouldEagerlyMaterialize(

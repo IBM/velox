@@ -33,6 +33,28 @@ struct ParquetRuntimeStats {
   inline static constexpr std::pair<std::string_view, RuntimeCounter::Unit>
       kPageLoadTimeNsMetric = {kPageLoadTimeNs, RuntimeCounter::Unit::kNanos};
 
+  /// Number of row groups skipped because no value of their dictionary passes
+  /// the filter.
+  inline static constexpr std::string_view kNumRowGroupsSkippedByDictionary =
+      "numRowGroupsSkippedByDictionary";
+
+  /// Describes the dictionary-skipped-row-groups runtime metric.
+  inline static constexpr std::pair<std::string_view, RuntimeCounter::Unit>
+      kNumRowGroupsSkippedByDictionaryMetric = {
+          kNumRowGroupsSkippedByDictionary,
+          RuntimeCounter::Unit::kNone};
+
+  /// Number of rows skipped because the page index shows that no value in
+  /// their pages passes the filter.
+  inline static constexpr std::string_view kNumRowsSkippedByPageIndex =
+      "numRowsSkippedByPageIndex";
+
+  /// Describes the page-index-skipped-rows runtime metric.
+  inline static constexpr std::pair<std::string_view, RuntimeCounter::Unit>
+      kNumRowsSkippedByPageIndexMetric = {
+          kNumRowsSkippedByPageIndex,
+          RuntimeCounter::Unit::kNone};
+
   /// Estimated memory used by the deserialized Parquet footer in bytes.
   inline static constexpr std::string_view kFooterEstimatedBytes =
       "footerEstimatedBytes";

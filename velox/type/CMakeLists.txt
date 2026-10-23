@@ -25,6 +25,7 @@ velox_add_library(
   DecimalUtil.cpp
   Filter.cpp
   HugeInt.cpp
+  StringFunctionFilter.cpp
   StringView.cpp
   StringView.h
   Subfield.cpp
@@ -52,6 +53,7 @@ velox_add_library(
   OpaqueCustomTypes.h
   SimpleFunctionApi.h
   SimpleFunctionTags.h
+  StringFunctionFilter.h
   Subfield.h
   Time.h
   Timestamp.h

@@ -446,6 +446,24 @@ ColumnChunkMetaDataPtr::getColumnStatistics(
       logicalType);
 }
 
+std::unique_ptr<dwio::common::ColumnStatistics>
+ColumnChunkMetaDataPtr::getPageStatistics(
+    const thrift::Statistics& pageStats,
+    const TypePtr& type,
+    int64_t numRows,
+    std::optional<thrift::ConvertedType> convertedType,
+    const std::optional<thrift::LogicalType>& logicalType) const {
+  const auto& metaData =
+      apache::thrift::can_throw(*thriftColumnChunkPtr(ptr_)->meta_data());
+  return buildColumnStatisticsFromThrift(
+      pageStats,
+      *type,
+      numRows,
+      apache::thrift::can_throw(*metaData.type()),
+      convertedType,
+      logicalType);
+}
+
 std::string ColumnChunkMetaDataPtr::getColumnMetadataStatsMinValue() {
   VELOX_CHECK(hasStatistics());
   return apache::thrift::can_throw(
@@ -494,6 +512,22 @@ bool ColumnChunkMetaDataPtr::hasOffsetIndex() const {
   return thriftColumnChunkPtr(ptr_)->offset_index_offset().has_value();
 }
 
+std::pair<int64_t, int32_t> ColumnChunkMetaDataPtr::columnIndexRegion() const {
+  VELOX_CHECK(hasColumnIndex());
+  const auto* columnChunk = thriftColumnChunkPtr(ptr_);
+  return {
+      *columnChunk->column_index_offset(),
+      columnChunk->column_index_length().value_or(0)};
+}
+
+std::pair<int64_t, int32_t> ColumnChunkMetaDataPtr::offsetIndexRegion() const {
+  VELOX_CHECK(hasOffsetIndex());
+  const auto* columnChunk = thriftColumnChunkPtr(ptr_);
+  return {
+      *columnChunk->offset_index_offset(),
+      columnChunk->offset_index_length().value_or(0)};
+}
+
 common::CompressionKind ColumnChunkMetaDataPtr::compression() const {
   return thriftCodecToCompressionKind(
       apache::thrift::can_throw(
@@ -510,6 +544,55 @@ int64_t ColumnChunkMetaDataPtr::totalCompressedSize() const {
 std::vector<thrift::Encoding> ColumnChunkMetaDataPtr::encodings() const {
   return *apache::thrift::can_throw(
       thriftColumnChunkPtr(ptr_)->meta_data()->encodings());
+}
+
+bool ColumnChunkMetaDataPtr::hasOnlyDictionaryEncodedDataPages() const {
+  const auto isDictionaryEncoding = [](thrift::Encoding encoding) {
+    return encoding == thrift::Encoding::PLAIN_DICTIONARY ||
+        encoding == thrift::Encoding::RLE_DICTIONARY;
+  };
+  const auto& metaData =
+      apache::thrift::can_throw(*thriftColumnChunkPtr(ptr_)->meta_data());
+  if (const auto& encodingStats = metaData.encoding_stats()) {
+    // Requires at least one data page, so that stats without data pages do not
+    // count as all dictionary-encoded.
+    bool hasDataPages{false};
+    for (const auto& stats : *encodingStats) {
+      const auto pageType = *stats.page_type();
+      if ((pageType != thrift::PageType::DATA_PAGE &&
+           pageType != thrift::PageType::DATA_PAGE_V2) ||
+          *stats.count() == 0) {
+        continue;
+      }
+      if (!isDictionaryEncoding(*stats.encoding())) {
+        return false;
+      }
+      hasDataPages = true;
+    }
+    return hasDataPages;
+  }
+  // Without page encoding stats, PLAIN may be a dictionary page or a data page
+  // that fell back from dictionary encoding. RLE and BIT_PACKED are level
+  // encodings.
+  const auto& encodings = *metaData.encodings();
+  return std::any_of(
+             encodings.begin(), encodings.end(), isDictionaryEncoding) &&
+      std::all_of(encodings.begin(), encodings.end(), [&](auto encoding) {
+           return isDictionaryEncoding(encoding) ||
+               encoding == thrift::Encoding::RLE ||
+               encoding == thrift::Encoding::BIT_PACKED;
+         });
+}
+
+std::optional<int64_t> ColumnChunkMetaDataPtr::nullCount() const {
+  if (!hasStatistics()) {
+    return std::nullopt;
+  }
+  return apache::thrift::can_throw(
+             *apache::thrift::can_throw(thriftColumnChunkPtr(ptr_)->meta_data())
+                  ->statistics())
+      .null_count()
+      .to_optional();
 }
 
 std::vector<std::string> ColumnChunkMetaDataPtr::pathInSchema() const {

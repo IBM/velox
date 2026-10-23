@@ -106,6 +106,19 @@ void PageReader::seekToPage(int64_t row) {
   }
 }
 
+bool PageReader::readDictionaryPage() {
+  VELOX_CHECK_EQ(pageStart_, 0);
+  const auto pageHeader = readPageHeader();
+  if (*pageHeader.type() != thrift::PageType::DICTIONARY_PAGE) {
+    return false;
+  }
+  const uint32_t compressedPageSize = checkedPageSize(
+      *pageHeader.compressed_page_size(), "compressed page size");
+  pageStart_ = pageDataStart_ + compressedPageSize;
+  prepareDictionary(pageHeader);
+  return true;
+}
+
 PageHeader PageReader::readPageHeader() {
   TestValue::adjust(
       "facebook::velox::parquet::PageReader::readPageHeader", this);

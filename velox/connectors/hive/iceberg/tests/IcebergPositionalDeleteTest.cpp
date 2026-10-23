@@ -24,8 +24,10 @@
 
 #include "velox/common/encode/Base64.h"
 #include "velox/common/file/FileSystems.h"
+#include "velox/common/file/LocalFile.h"
 #include "velox/connectors/hive/iceberg/IcebergMetadataColumns.h"
 #include "velox/connectors/hive/iceberg/IcebergSplit.h"
+#include "velox/dwio/common/FileSink.h"
 #include "velox/dwio/common/tests/utils/DataFiles.h"
 #include "velox/dwio/dwrf/reader/ReaderBase.h"
 #include "velox/dwio/dwrf/writer/FlushPolicy.h"
@@ -595,6 +597,65 @@ TEST_F(IcebergPositionalDeleteTest, positionalDeleteFileWithRowGroupFilter) {
           path, deletePositionsVec, deletedPositionSize, deleteFilePath),
       "SELECT i AS id FROM range(100, 300) AS t(i)",
       0);
+}
+
+TEST_F(IcebergPositionalDeleteTest, positionalDeleteFileWithPageIndexFilter) {
+  // The file has one row group of 100-row pages and a page index. The filter
+  // skips the rows of most pages, which verifies that position deletes still
+  // align with the rows that are read.
+  auto data = makeRowVector(
+      {"id"}, {makeFlatVector<int64_t>(10'000, [](auto row) { return row; })});
+  auto dataFile = TempFilePath::create();
+  dwio::common::WriterOptions writerOptions;
+  writerOptions.memoryPool = rootPool_.get();
+  auto parquetOptions = std::make_shared<parquet::ParquetWriterOptions>();
+  parquetOptions->enableWritePageIndex = true;
+  // Each write batch ends a page, because it exceeds the 1-byte page size.
+  parquetOptions->dataPageSize = 1;
+  parquetOptions->batchSize = 100;
+  writerOptions.formatSpecificOptions = parquetOptions;
+  auto writer = std::make_unique<parquet::Writer>(
+      std::make_unique<dwio::common::WriteFileSink>(
+          std::make_unique<LocalWriteFile>(
+              dataFile->getPath(),
+              /*shouldCreateParentDirectories=*/true,
+              /*shouldThrowOnFileAlreadyExists=*/false),
+          dataFile->getPath()),
+      writerOptions,
+      asRowType(data->type()));
+  writer->write(data);
+  writer->close();
+
+  // Deletes rows inside the page that the first filter keeps (2'060-2'069), a
+  // row in a skipped page (5'000) and the last row of the file (9'999).
+  std::vector<int64_t> deletePositions(10);
+  std::iota(deletePositions.begin(), deletePositions.end(), 2'060);
+  deletePositions.push_back(5'000);
+  deletePositions.push_back(9'999);
+  for (const auto& [filter, expected] :
+       std::vector<std::pair<std::string, std::string>>{
+           {"id between 2050 and 2149",
+            "SELECT i AS id FROM range(2050, 2150) AS t(i) "
+            "WHERE i NOT BETWEEN 2060 AND 2069"},
+           {"id >= 9990", "SELECT i AS id FROM range(9990, 9999) AS t(i)"},
+       }) {
+    SCOPED_TRACE(filter);
+    auto deleteFile = TempFilePath::create();
+    assertQuery(
+        exec::test::PlanBuilder()
+            .startTableScan(test::kIcebergConnectorId)
+            .outputType(ROW({"id"}, {BIGINT()}))
+            .remainingFilter(filter)
+            .endTableScan()
+            .planNode(),
+        createParquetDeleteFileAndSplits(
+            dataFile->getPath(),
+            deletePositions,
+            deletePositions.size(),
+            deleteFile),
+        expected,
+        0);
+  }
 }
 #endif
 

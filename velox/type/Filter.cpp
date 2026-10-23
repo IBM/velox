@@ -23,6 +23,7 @@
 #include "velox/type/Filter.h"
 
 #include "velox/common/EnumDefine.h"
+#include "velox/type/StringFunctionFilter.h"
 
 namespace facebook::velox::common {
 
@@ -55,6 +56,9 @@ const auto& filterKindNames() {
       {FilterKind::kHugeintValuesUsingHashTable, "HugeintValuesUsingHashTable"},
       {FilterKind::kBigintValuesUsingBloomFilter,
        "BigintValuesUsingBloomFilter"},
+      {FilterKind::kStringLength, "StringLength"},
+      {FilterKind::kCaseMapped, "CaseMapped"},
+      {FilterKind::kStringContains, "StringContains"},
   };
   return kNames;
 }
@@ -134,6 +138,9 @@ void Filter::registerSerDe() {
   registry.Register("NegatedBytesValues", NegatedBytesValues::create);
   registry.Register("MultiRange", MultiRange::create);
   registry.Register("TimestampRange", TimestampRange::create);
+  registry.Register("StringLength", StringLength::create);
+  registry.Register("CaseMapped", CaseMapped::create);
+  registry.Register("StringContains", StringContains::create);
 }
 
 folly::dynamic Filter::serializeBase() const {
@@ -1512,6 +1519,9 @@ std::unique_ptr<Filter> MultiRange::mergeWith(const Filter* other) const {
     case FilterKind::kAlwaysFalse:
     case FilterKind::kIsNull:
     case FilterKind::kNegatedBytesRange:
+    case FilterKind::kStringLength:
+    case FilterKind::kCaseMapped:
+    case FilterKind::kStringContains:
       return other->mergeWith(this);
     case FilterKind::kIsNotNull:
       return this->clone(/*nullAllowed=*/false);
@@ -2503,6 +2513,9 @@ std::unique_ptr<Filter> BytesRange::mergeWith(const Filter* other) const {
     case FilterKind::kNegatedBytesValues:
     case FilterKind::kNegatedBytesRange:
     case FilterKind::kMultiRange:
+    case FilterKind::kStringLength:
+    case FilterKind::kCaseMapped:
+    case FilterKind::kStringContains:
       return other->mergeWith(this);
     case FilterKind::kBytesRange: {
       bool bothNullAllowed = nullAllowed_ && other->testNull();
@@ -2579,6 +2592,9 @@ std::unique_ptr<Filter> NegatedBytesRange::mergeWith(
     case FilterKind::kIsNotNull:
       return this->clone(false);
     case FilterKind::kBytesValues:
+    case FilterKind::kStringLength:
+    case FilterKind::kCaseMapped:
+    case FilterKind::kStringContains:
       return other->mergeWith(this);
     case FilterKind::kNegatedBytesValues:
     case FilterKind::kBytesRange:
@@ -2598,6 +2614,9 @@ std::unique_ptr<Filter> BytesValues::mergeWith(const Filter* other) const {
     case FilterKind::kAlwaysFalse:
     case FilterKind::kIsNull:
     case FilterKind::kMultiRange:
+    case FilterKind::kStringLength:
+    case FilterKind::kCaseMapped:
+    case FilterKind::kStringContains:
       return other->mergeWith(this);
     case FilterKind::kIsNotNull:
       return this->clone(false);
@@ -2712,6 +2731,9 @@ std::unique_ptr<Filter> NegatedBytesValues::mergeWith(
     case FilterKind::kBytesValues:
     case FilterKind::kNegatedBytesRange:
     case FilterKind::kMultiRange:
+    case FilterKind::kStringLength:
+    case FilterKind::kCaseMapped:
+    case FilterKind::kStringContains:
       return other->mergeWith(this);
     case FilterKind::kIsNotNull:
       return this->clone(false);

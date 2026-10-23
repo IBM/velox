@@ -1097,6 +1097,30 @@ Parquet Options (prefix ``hive.parquet.``)
        are missing in a Parquet file, return a NULL struct instead of preserving
        the parent struct nullness and returning a non-null struct with all-null
        children. Session: ``parquet_null_struct_if_all_fields_missing``.
+   * - ``dictionary-filter-enabled``
+     - bool
+     - true
+     - Skip a row group when no value of its dictionary passes the filter on a
+       top-level string column. Applies to row groups that statistics do not
+       skip and whose data pages are all dictionary-encoded, and reads their
+       dictionary pages. Not used for columns whose statistics are ignored.
+       Session: ``parquet_dictionary_filter_enabled``.
+   * - ``page-index-filter-enabled``
+     - bool
+     - true
+     - Skip the rows of pages whose column index shows that no value passes
+       the filter. Applies to top-level primitive columns of files written with
+       a page index, and reads the column and offset index of each filtered
+       column of a row group. Not used for columns whose statistics are
+       ignored. Session: ``parquet_page_index_filter_enabled``.
+   * - ``string-function-filters-enabled``
+     - bool
+     - true
+     - Push down predicates on ``length()``, ``lower()``, ``upper()``,
+       ``strpos()`` and LIKE as filters on the column. When false, these
+       predicates stay in the remaining filter. Applies to scans of every file
+       format, because predicates become filters before the format of a split
+       is known. Session: ``parquet_string_function_filters_enabled``.
    * - ``footer-memory-tracking-threshold``
      - integer
      - disabled (max uint64)

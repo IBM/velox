@@ -15,6 +15,9 @@
  */
 
 #pragma once
+
+#include <functional>
+
 #include <folly/container/F14Map.h>
 
 #include "velox/connectors/hive/FileConnectorUtil.h"
@@ -148,6 +151,10 @@ std::unique_ptr<dwio::common::BufferedInput> createBufferedInput(
     folly::Executor* executor,
     const folly::F14FastMap<std::string, std::string>& fileReadOps = {});
 
+/// Returns true if the data source can evaluate a filter extracted from the
+/// remaining filter, so the filter can be pushed down to it.
+using CanPushDownFilter = std::function<bool(const common::Filter&)>;
+
 /// Given a boolean expression, breaks it up into conjuncts and sorts these into
 /// single-column comparisons with constants (filters), rand() < sampleRate, and
 /// the rest (return value).
@@ -163,11 +170,18 @@ std::unique_ptr<dwio::common::BufferedInput> createBufferedInput(
 ///
 /// NOT(x OR y) is converted to (NOT x) AND (NOT y).
 ///
+/// Conjuncts that cannot be converted may still imply a filter, e.g.
+/// a LIKE 'ab%' implies that a has at least 2 bytes. Such implied filters are
+/// added to 'filters' while the conjunct stays in the returned expression.
+///
 /// @param expr Boolean expression to break up.
 /// @param evaluator Expression evaluator to use.
 /// @param filters Mapping from a column or a subfield to comparison with
 /// constant.
 /// @param sampleRate Sample rate extracted from rand() < sampleRate conjuncts.
+/// @param canPushDown If set, only filters for which it returns true are
+/// added to 'filters'. Conjuncts whose filters it rejects stay in the returned
+/// expression. If not set, all filters are added.
 /// @return Expression with filters and rand() < sampleRate conjuncts removed.
 ///
 /// Examples:
@@ -186,12 +200,18 @@ std::unique_ptr<dwio::common::BufferedInput> createBufferedInput(
 ///   sampleRate := 0.1
 ///   return value is a < b
 ///
+///   expr := a LIKE 'ab%'
+///   filters := {a: StringLength(kBytes, [2, max])}
+///   sampleRate left unmodified
+///   return value is a LIKE 'ab%'
+///
 /// A null 'expr', a scan with no remaining filter, returns nullptr.
 core::TypedExprPtr extractFiltersFromRemainingFilter(
     const core::TypedExprPtr& expr,
     core::ExpressionEvaluator* evaluator,
     common::SubfieldFilters& filters,
-    double& sampleRate);
+    double& sampleRate,
+    const CanPushDownFilter& canPushDown = nullptr);
 
 /// Determines whether a field referenced in the remaining filter should be
 /// eagerly materialized (loaded upfront) or can be lazily loaded.

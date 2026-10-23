@@ -54,6 +54,9 @@ enum class FilterKind {
   kTimestampRange,
   kHugeintValuesUsingHashTable,
   kBigintValuesUsingBloomFilter,
+  kStringLength,
+  kCaseMapped,
+  kStringContains,
 };
 
 VELOX_DECLARE_ENUM_NAME(FilterKind);

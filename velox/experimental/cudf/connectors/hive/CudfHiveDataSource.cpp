@@ -234,6 +234,15 @@ bool testPartitionKeyFilter(
                                   : PartitionValue::DateMode::kIsoString));
 }
 
+// Returns false for filters on string functions, e.g. length(x), lower(x),
+// strpos(x, s) and the length implied by x LIKE 'ab%', which have no cuDF AST
+// translation. Their predicates stay in the remaining filter.
+bool hasCudfTranslation(const facebook::velox::common::Filter& filter) {
+  using facebook::velox::common::FilterKind;
+  return !filter.is(FilterKind::kStringLength) &&
+      !filter.is(FilterKind::kCaseMapped) &&
+      !filter.is(FilterKind::kStringContains);
+}
 } // namespace
 
 CudfHiveDataSource::CudfHiveDataSource(
@@ -358,7 +367,8 @@ CudfHiveDataSource::CudfHiveDataSource(
           tableHandle_->remainingFilter(),
           expressionEvaluator_,
           subfieldFilters_,
-          sampleRate);
+          sampleRate,
+          hasCudfTranslation);
 
   // A filter on a partition key decides for the whole split, so it is tested
   // per split instead of being compiled into the reader's filter.
