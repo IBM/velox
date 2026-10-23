@@ -93,6 +93,18 @@ void translateToInnerRows(
     const vector_size_t* indices,
     const uint64_t* nulls,
     SelectivityVector& innerRows) {
+  // Fast path: when 'nulls' is present and the selected outer range is
+  // entirely null, no inner row can be selected. Detect via a single
+  // vectorised popcount over the null bitmap instead of walking every
+  // row with isBitNull (~150 popcnts vs ~10000 per-row branches for a
+  // 10K-row bitmap). Only valid when outerRows is contiguous - for
+  // sparse outerRows we'd need to intersect with outerRows.bits()
+  // first; that path is rarer and stays on the per-row loop below.
+  if (nulls != nullptr && outerRows.isAllSelected() &&
+      bits::countBits(nulls, outerRows.begin(), outerRows.end()) == 0) {
+    innerRows.updateBounds();
+    return;
+  }
   outerRows.applyToSelected([&](vector_size_t row) {
     if (!(nulls && bits::isBitNull(nulls, row))) {
       innerRows.setValid(indices[row], true);
