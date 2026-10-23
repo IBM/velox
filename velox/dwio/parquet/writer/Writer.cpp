@@ -132,8 +132,10 @@ void ParquetWriterOptions::merge(
   mergeIfSet(useParquetDataPageV2, parquetOverrides->useParquetDataPageV2);
   mergeIfSet(enableWritePageIndex, parquetOverrides->enableWritePageIndex);
   mergeIfSet(dataPageSize, parquetOverrides->dataPageSize);
+  mergeIfSet(pageMaxRows, parquetOverrides->pageMaxRows);
   mergeIfSet(batchSize, parquetOverrides->batchSize);
   mergeIfSet(rowGroupSizeBytes, parquetOverrides->rowGroupSizeBytes);
+  mergeIfSet(rowGroupMaxRows, parquetOverrides->rowGroupMaxRows);
   mergeIfSet(createdBy, parquetOverrides->createdBy);
 }
 
@@ -219,6 +221,12 @@ std::shared_ptr<WriterProperties> getArrowParquetWriterOptions(
   properties = properties->encoding(parquetOptions.encoding);
   properties = properties->dataPagesize(parquetOptions.dataPageSize.value_or(
       facebook::velox::parquet::arrow::kDefaultDataPageSize));
+  if (parquetOptions.pageMaxRows.has_value()) {
+    properties = properties->maxRowsPerPage(
+        static_cast<int64_t>(std::min<uint64_t>(
+            parquetOptions.pageMaxRows.value(),
+            facebook::velox::parquet::arrow::kDefaultMaxRowsPerPage)));
+  }
   properties = properties->writeBatchSize(parquetOptions.batchSize.value_or(
       facebook::velox::parquet::arrow::DEFAULT_WRITE_BATCH_SIZE));
   properties = properties->maxRowGroupLength(
@@ -379,6 +387,28 @@ std::optional<int64_t> toParquetPageSize(std::optional<std::string> pageSize) {
   return config::toCapacity(*pageSize, config::CapacityUnit::BYTE);
 }
 
+std::optional<uint64_t> toParquetRowGroupMaxRows(
+    std::optional<uint64_t> rowGroupMaxRows) {
+  if (rowGroupMaxRows.has_value()) {
+    VELOX_USER_CHECK_GT(
+        rowGroupMaxRows.value(),
+        0,
+        "Parquet writer row group max rows must be greater than zero");
+  }
+  return rowGroupMaxRows;
+}
+
+std::optional<uint64_t> toParquetPageMaxRows(
+    std::optional<uint64_t> pageMaxRows) {
+  if (pageMaxRows.has_value()) {
+    VELOX_USER_CHECK_GT(
+        pageMaxRows.value(),
+        0,
+        "Parquet writer page max rows must be greater than zero");
+  }
+  return pageMaxRows;
+}
+
 std::optional<uint64_t> toParquetRowGroupSize(
     std::optional<std::string> rowGroupSize) {
   if (!rowGroupSize) {
@@ -468,7 +498,9 @@ Writer::Writer(
         parquetWriterOptions.rowGroupSizeBytes.value_or(
             DefaultFlushPolicy::kDefaultBytesInRowGroup);
     flushPolicy_ = std::make_unique<DefaultFlushPolicy>(
-        DefaultFlushPolicy::kDefaultRowsInGroup, bytesInRowGroup);
+        parquetWriterOptions.rowGroupMaxRows.value_or(
+            DefaultFlushPolicy::kDefaultRowsInGroup),
+        bytesInRowGroup);
   }
   options_.timestampUnit = static_cast<TimestampUnit>(
       parquetWriteTimestampUnit.value_or(TimestampPrecision::kNanoseconds));
@@ -862,6 +894,10 @@ ParquetWriterFactory::createFormatOptions(
       ParquetConfig::writerPageSize(connectorConfig, session));
   parquetOptions->rowGroupSizeBytes = toParquetRowGroupSize(
       ParquetConfig::writerRowGroupSize(connectorConfig, session));
+  parquetOptions->rowGroupMaxRows = toParquetRowGroupMaxRows(
+      ParquetConfig::writerRowGroupMaxRows(connectorConfig, session));
+  parquetOptions->pageMaxRows = toParquetPageMaxRows(
+      ParquetConfig::writerPageMaxRows(connectorConfig, session));
   parquetOptions->batchSize = toParquetBatchSize(
       ParquetConfig::writerBatchSize(connectorConfig, session));
   parquetOptions->createdBy = ParquetConfig::writerCreatedBy(connectorConfig);
