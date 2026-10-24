@@ -639,8 +639,10 @@ std::shared_ptr<dwio::common::WriterOptions> HiveDataSink::createWriterOptions(
   options->sessionTimezoneName = connectorQueryCtx_->sessionTimezone();
   options->adjustTimestampToTimezone =
       connectorQueryCtx_->adjustTimestampToTimezone();
-  options->maxTargetFileSizeBytes =
-      (isBucketed() || sortWrite()) ? 0 : maxTargetFileBytes_;
+  // A bucket is written to one file. A sorted write passes the target so the
+  // file writer flushes its rows before the file grows past it, which lets
+  // SortedFileRotator see the file size.
+  options->maxTargetFileSizeBytes = isBucketed() ? 0 : maxTargetFileBytes_;
   auto formatScopedConfigs = makeFormatScopedConfigs(
       *hiveConfig_, *connectorSessionProperties, writerFactory_->fileFormat());
   auto sessionFormatOptions = writerFactory_->createFormatOptions(
@@ -656,6 +658,12 @@ std::shared_ptr<dwio::common::WriterOptions> HiveDataSink::createWriterOptions(
 }
 
 std::unique_ptr<dwio::common::Writer> HiveDataSink::createWriterForIndex(
+    size_t writerIndex) {
+  return maybeCreateBucketSortWriter(
+      writerIndex, createFileWriter(writerIndex));
+}
+
+std::unique_ptr<dwio::common::Writer> HiveDataSink::createFileWriter(
     size_t writerIndex) {
   VELOX_CHECK_LT(writerIndex, writerInfo_.size());
   VELOX_CHECK_LT(writerIndex, ioStats_.size());
@@ -685,7 +693,7 @@ std::unique_ptr<dwio::common::Writer> HiveDataSink::createWriterForIndex(
           fileSystemStats_.get(),
           insertTableHandle_->storageParameters()),
       options);
-  return maybeCreateBucketSortWriter(writerIndex, std::move(writer));
+  return writer;
 }
 
 std::string HiveDataSink::getPartitionName(uint32_t partitionId) const {
@@ -697,6 +705,33 @@ std::string HiveDataSink::getPartitionName(uint32_t partitionId) const {
       partitionKeyAsLowerCase_);
 }
 
+class HiveDataSink::SortedFileRotator
+    : public dwio::common::SortingWriter::FileRotator {
+ public:
+  SortedFileRotator(HiveDataSink* dataSink, size_t writerIndex)
+      : dataSink_(dataSink), writerIndex_(writerIndex) {}
+
+  bool isFileFull(const dwio::common::Writer& writer) override {
+    return writer.reachedTargetFileSize() ||
+        dataSink_->getCurrentFileBytes(writerIndex_) >=
+        dataSink_->maxTargetFileBytes_;
+  }
+
+  std::unique_ptr<dwio::common::Writer> rotate(
+      std::unique_ptr<dwio::common::Writer> fullWriter,
+      uint64_t numRows) override {
+    dataSink_->closeSortedFile(writerIndex_, *fullWriter, numRows);
+    // Releases the full writer's memory before the next writer allocates.
+    fullWriter.reset();
+    ++dataSink_->writerInfo_[writerIndex_]->fileSequenceNumber;
+    return dataSink_->createFileWriter(writerIndex_);
+  }
+
+ private:
+  HiveDataSink* const dataSink_;
+  const size_t writerIndex_;
+};
+
 std::unique_ptr<facebook::velox::dwio::common::Writer>
 HiveDataSink::maybeCreateBucketSortWriter(
     size_t writerIndex,
@@ -707,7 +742,7 @@ HiveDataSink::maybeCreateBucketSortWriter(
   auto* sortPool = writerInfo_[writerIndex]->sortPool.get();
   VELOX_CHECK_NOT_NULL(sortPool);
   auto sortBuffer = std::make_unique<exec::SortBuffer>(
-      getNonPartitionTypes(dataChannels_, inputType_),
+      getNonPartitionTypes(sortInputChannels(), inputType_),
       sortColumnIndices_,
       sortCompareFlags_,
       sortPool,
@@ -723,7 +758,12 @@ HiveDataSink::maybeCreateBucketSortWriter(
           connectorQueryCtx_->sessionProperties()),
       hiveConfig_->sortWriterMaxOutputBytes(
           connectorQueryCtx_->sessionProperties()),
-      sortWriterFinishTimeSliceLimitMs_);
+      sortWriterFinishTimeSliceLimitMs_,
+      static_cast<column_index_t>(sortOnlyChannels_.size()),
+      // A bucket is written to one file.
+      isBucketed() || maxTargetFileBytes_ == 0
+          ? nullptr
+          : std::make_unique<SortedFileRotator>(this, writerIndex));
 }
 
 WriterParameters HiveDataSink::getWriterParameters(

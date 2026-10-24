@@ -598,10 +598,21 @@ void Writer::write(const VectorPtr& data) {
   // row-group target or the file-size target. Otherwise callers that rotate
   // files based on raw written bytes won't observe the row group until the
   // next write.
-  if (flushPolicy_->shouldFlush(getStripeProgress(currentRowGroupBytes)) ||
-      stagedBytesReachTargetFileSize(
-          maxTargetFileSizeBytes_, streamBytes, currentRowGroupBytes)) {
+  const bool fileFull = stagedBytesReachTargetFileSize(
+      maxTargetFileSizeBytes_, streamBytes, currentRowGroupBytes);
+  if (fileFull ||
+      flushPolicy_->shouldFlush(getStripeProgress(currentRowGroupBytes))) {
     flush();
+    // The estimate counts buffered pages before encoding and compression, so
+    // the file can end below the target. Close to the target, the owner should
+    // start a new file rather than let the next writes close tiny row groups.
+    // Far below it, as with compressed data and a small target, the file takes
+    // more row groups.
+    if (fileFull) {
+      PARQUET_ASSIGN_OR_THROW(const auto fileBytes, stream_->Tell());
+      reachedTargetFileSize_ = static_cast<uint64_t>(fileBytes) >=
+          maxTargetFileSizeBytes_ - maxTargetFileSizeBytes_ / 10;
+    }
   } else if (flushPolicy_->bytesInRowGroup() <= stream_->bufferedBytes()) {
     // Flush the sink separately so completed row groups don't keep accumulating
     // in the stream buffer when Arrow keeps starting new row groups before the

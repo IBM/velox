@@ -91,6 +91,17 @@ class Writer {
   /// Data can no longer be written.
   virtual void abort() = 0;
 
+  /// Returns true once the writer has closed a stripe or row group because the
+  /// file reached WriterOptions::maxTargetFileSizeBytes, and the file is close
+  /// enough to the target to end it. The writer compares the target against
+  /// its estimate of the buffered bytes, which can exceed the bytes it then
+  /// writes, so the file can end slightly below the target. The owner should
+  /// still start a new file, instead of letting the next writes close tiny
+  /// stripes or row groups until the file passes the target.
+  virtual bool reachedTargetFileSize() const {
+    return false;
+  }
+
  protected:
   bool isRunning() const;
   bool isFinishing() const;

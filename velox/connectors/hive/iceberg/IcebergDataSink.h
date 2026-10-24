@@ -61,6 +61,17 @@ class IcebergFileNameGenerator : public FileNameGenerator {
       void* context);
 };
 
+/// One field of an Iceberg sort order. Only identity transforms are supported,
+/// so the field sorts on the value of its source column.
+struct IcebergSortField {
+  /// Iceberg field id of the top-level source column. Unset when the field
+  /// sorts on a sort key that the plan computes, such as a z-order value. Such
+  /// keys follow the input columns in the input rows, in the order of their
+  /// sort fields, and are not written to the data file.
+  std::optional<int32_t> sourceFieldId;
+  core::SortOrder sortOrder;
+};
+
 /// Represents a request for Iceberg write.
 class IcebergInsertTableHandle final : public HiveInsertTableHandle {
  public:
@@ -132,6 +143,10 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
   /// INSERT and for first-time mutations; populated by the coordinator for a
   /// V3 repeated mutation so the deletion-vector sink seeds the new DV with
   /// the prior DV's positions.
+  /// @param insertedColumns Target column names of the INSERT statement. See
+  /// insertedColumns().
+  /// @param sortOrder Sort order for rows within each data file. Empty when the
+  /// table is unsorted.
   IcebergInsertTableHandle(
       std::vector<IcebergColumnHandlePtr> inputColumns,
       LocationHandlePtr locationHandle,
@@ -144,7 +159,8 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
           existingDeletionVectors = {},
       std::shared_ptr<const FileNameGenerator> fileNameGenerator =
           std::make_shared<const IcebergFileNameGenerator>(),
-      std::vector<std::string> insertedColumns = {});
+      std::vector<std::string> insertedColumns = {},
+      std::vector<IcebergSortField> sortOrder = {});
 
   /// Returns the Iceberg partition specification that defines how the table
   /// is partitioned.
@@ -176,12 +192,19 @@ class IcebergInsertTableHandle final : public HiveInsertTableHandle {
     return insertedColumns_;
   }
 
+  /// Returns the sort order for rows within each data file. Empty when the
+  /// table is unsorted.
+  const std::vector<IcebergSortField>& sortOrder() const {
+    return sortOrder_;
+  }
+
  private:
   const IcebergPartitionSpecPtr partitionSpec_;
   const WriteKind writeKind_;
   const std::unordered_map<std::string, ExistingDeletionVector>
       existingDeletionVectors_;
   const std::vector<std::string> insertedColumns_;
+  const std::vector<IcebergSortField> sortOrder_;
 };
 
 using IcebergInsertTableHandlePtr =
@@ -319,6 +342,22 @@ class IcebergDataSink : public HiveDataSink {
   // (Parquet stats when the format provides them; an empty entry otherwise).
   // Caller is responsible for the surrounding NonReclaimableSectionGuard.
   void closeWriterAndCollectStats(size_t index);
+
+  // Appends the IcebergDataFileStatistics of the file 'writer' just closed to
+  // dataFileStats_[index]. 'metadata' is what close() returned. 'numRows' is
+  // the file's row count when the caller knows it; otherwise it is derived from
+  // the rows the writer received since its previous file.
+  void collectFileStats(
+      size_t index,
+      dwio::common::Writer& writer,
+      std::unique_ptr<dwio::common::FileMetadata>& metadata,
+      std::optional<uint64_t> numRows);
+
+  // Also collects the Iceberg statistics of the closed file.
+  void closeSortedFile(
+      size_t index,
+      dwio::common::Writer& writer,
+      uint64_t numRows) override;
 
   // Iceberg partition specification defining how the table is partitioned.
   // Contains partition fields with source column names, transform types

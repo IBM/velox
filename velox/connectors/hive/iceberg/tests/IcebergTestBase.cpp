@@ -208,7 +208,8 @@ void addColumnHandles(
 IcebergInsertTableHandlePtr IcebergTestBase::createInsertTableHandle(
     const RowTypePtr& rowType,
     const std::string& outputDirectoryPath,
-    const std::vector<PartitionField>& partitionFields) {
+    const std::vector<PartitionField>& partitionFields,
+    const std::vector<IcebergSortField>& sortOrder) {
   std::vector<IcebergColumnHandlePtr> columnHandles;
   addColumnHandles(rowType, partitionFields, columnHandles);
 
@@ -224,17 +225,29 @@ IcebergInsertTableHandlePtr IcebergTestBase::createInsertTableHandle(
       locationHandle,
       /*tableStorageFormat=*/fileFormat_,
       partitionSpec,
-      /*compressionKind=*/common::CompressionKind::CompressionKind_ZSTD);
+      /*compressionKind=*/common::CompressionKind::CompressionKind_ZSTD,
+      /*serdeParameters=*/std::unordered_map<std::string, std::string>{},
+      /*writeKind=*/IcebergInsertTableHandle::WriteKind::kData,
+      /*existingDeletionVectors=*/
+      std::unordered_map<
+          std::string,
+          IcebergInsertTableHandle::ExistingDeletionVector>{},
+      /*fileNameGenerator=*/
+      std::make_shared<const IcebergFileNameGenerator>(),
+      /*insertedColumns=*/std::vector<std::string>{},
+      sortOrder);
 }
 
 std::shared_ptr<IcebergDataSink> IcebergTestBase::createDataSink(
     const RowTypePtr& rowType,
     const std::string& outputDirectoryPath,
-    const std::vector<PartitionField>& partitionFields) {
-  auto tableHandle =
-      createInsertTableHandle(rowType, outputDirectoryPath, partitionFields);
+    const std::vector<PartitionField>& partitionFields,
+    const std::vector<IcebergSortField>& sortOrder,
+    const RowTypePtr& inputType) {
+  auto tableHandle = createInsertTableHandle(
+      rowType, outputDirectoryPath, partitionFields, sortOrder);
   return std::make_shared<IcebergDataSink>(
-      rowType,
+      inputType != nullptr ? inputType : rowType,
       tableHandle,
       connectorQueryCtx_.get(),
       CommitStrategy::kNoCommit,
@@ -245,11 +258,12 @@ std::shared_ptr<IcebergDataSink> IcebergTestBase::createDataSink(
 std::shared_ptr<IcebergDataSink> IcebergTestBase::createDataSinkAndAppendData(
     const std::vector<RowVectorPtr>& vectors,
     const std::string& dataPath,
-    const std::vector<PartitionField>& partitionFields) {
+    const std::vector<PartitionField>& partitionFields,
+    const std::vector<IcebergSortField>& sortOrder) {
   VELOX_CHECK(!vectors.empty(), "vectors cannot be empty");
 
   auto rowType = vectors.front()->rowType();
-  auto dataSink = createDataSink(rowType, dataPath, partitionFields);
+  auto dataSink = createDataSink(rowType, dataPath, partitionFields, sortOrder);
 
   for (const auto& vector : vectors) {
     dataSink->appendData(vector);

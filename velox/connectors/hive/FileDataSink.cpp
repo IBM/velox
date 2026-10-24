@@ -110,6 +110,15 @@ RowVectorPtr FileDataSink::makeDataInput(
       input->getNullCount());
 }
 
+std::vector<column_index_t> FileDataSink::sortInputChannels() const {
+  std::vector<column_index_t> channels;
+  channels.reserve(dataChannels_.size() + sortOnlyChannels_.size());
+  channels.insert(channels.end(), dataChannels_.begin(), dataChannels_.end());
+  channels.insert(
+      channels.end(), sortOnlyChannels_.begin(), sortOnlyChannels_.end());
+  return channels;
+}
+
 FileDataSink::FileDataSink(
     RowTypePtr inputType,
     const ConnectorQueryCtx* connectorQueryCtx,
@@ -185,7 +194,9 @@ void FileDataSink::appendData(RowVectorPtr input) {
 
 void FileDataSink::write(size_t index, RowVectorPtr input) {
   WRITER_NON_RECLAIMABLE_SECTION_GUARD(index);
-  auto dataInput = makeDataInput(dataChannels_, input);
+  auto dataInput = sortOnlyChannels_.empty()
+      ? makeDataInput(dataChannels_, input)
+      : makeDataInput(sortInputChannels(), input);
 
   if (writers_[index] == nullptr) {
     writers_[index] = createWriterForIndex(index);
@@ -203,8 +214,8 @@ void FileDataSink::write(size_t index, RowVectorPtr input) {
     return;
   }
 
-  const auto currentFileBytes = getCurrentFileBytes(index);
-  if (currentFileBytes >= maxTargetFileBytes_) {
+  if (writers_[index]->reachedTargetFileSize() ||
+      getCurrentFileBytes(index) >= maxTargetFileBytes_) {
     rotateWriter(index);
   }
 }
@@ -244,6 +255,28 @@ void FileDataSink::finalizeWriterFile(size_t index) {
   // Update cumulative stats as a snapshot of total stats so far.
   // This becomes the baseline for the next file.
   info->cumulativeWrittenBytes = ioStats_[index]->rawBytesWritten();
+}
+
+void FileDataSink::closeSortedFile(
+    size_t index,
+    dwio::common::Writer& writer,
+    uint64_t numRows) {
+  writer.close();
+  finalizeSortedFile(index, numRows);
+  mergeWriterStats(closedWriterStats_, writer.runtimeStats());
+}
+
+void FileDataSink::finalizeSortedFile(size_t index, uint64_t numRows) {
+  VELOX_CHECK_LT(index, writerInfo_.size());
+  auto& info = writerInfo_[index];
+  // A sorted write counts the rows it receives before it writes any file, so
+  // currentFileWrittenRows holds the rows of this file and of the files after
+  // it.
+  VELOX_CHECK_LE(numRows, info->currentFileWrittenRows);
+  const auto remainingRows = info->currentFileWrittenRows - numRows;
+  info->currentFileWrittenRows = numRows;
+  finalizeWriterFile(index);
+  info->currentFileWrittenRows = remainingRows;
 }
 
 void FileDataSink::rotateWriter(size_t index) {

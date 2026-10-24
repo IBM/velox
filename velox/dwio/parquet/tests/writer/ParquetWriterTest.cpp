@@ -1088,6 +1088,65 @@ TEST_F(ParquetWriterTest, flushRowGroupByMaxTargetFileSize) {
   EXPECT_EQ(2, reader->fileMetaData().numRowGroups());
 }
 
+TEST_F(ParquetWriterTest, reachedTargetFileSize) {
+  const auto schema = ROW("payload", VARCHAR());
+  const std::string payload(512, 'x');
+  auto batch = makeRowVector(
+      {makeFlatVector<std::string>(64, [&](auto /*row*/) { return payload; })});
+  ParquetWriterOptions writerOptions;
+  writerOptions.enableDictionary = false;
+
+  // A row group closed by the file-size target ends the file.
+  {
+    dwio::common::WriterOptions options;
+    options.memoryPool = rootPool_.get();
+    options.compressionKind = CompressionKind::CompressionKind_NONE;
+    options.maxTargetFileSizeBytes = 1024 * 1024;
+    auto writerWithSink = makeWriterWithSink(schema, options, writerOptions);
+    writerWithSink.writer->write(batch);
+    EXPECT_FALSE(writerWithSink.writer->reachedTargetFileSize());
+    while (writerWithSink.sink->size() == 0) {
+      writerWithSink.writer->write(batch);
+    }
+    EXPECT_TRUE(writerWithSink.writer->reachedTargetFileSize());
+    writerWithSink.writer->close();
+  }
+
+  // Compressed pages are much smaller than the estimate, so a row group closed
+  // by the file-size target leaves the file far below it, and room for more.
+  if (parquet::Writer::isCodecAvailable(
+          CompressionKind::CompressionKind_ZSTD)) {
+    dwio::common::WriterOptions options;
+    options.memoryPool = rootPool_.get();
+    options.compressionKind = CompressionKind::CompressionKind_ZSTD;
+    options.maxTargetFileSizeBytes = 1024 * 1024;
+    auto writerWithSink = makeWriterWithSink(schema, options, writerOptions);
+    while (writerWithSink.sink->size() == 0) {
+      writerWithSink.writer->write(batch);
+    }
+    EXPECT_LT(writerWithSink.sink->size(), options.maxTargetFileSizeBytes / 2);
+    EXPECT_FALSE(writerWithSink.writer->reachedTargetFileSize());
+    writerWithSink.writer->close();
+  }
+
+  // A row group closed by the row-group target leaves room in the file.
+  {
+    dwio::common::WriterOptions options;
+    options.memoryPool = rootPool_.get();
+    options.compressionKind = CompressionKind::CompressionKind_NONE;
+    options.maxTargetFileSizeBytes = 1024 * 1024 * 1024;
+    options.flushPolicyFactory = []() {
+      return std::make_unique<DefaultFlushPolicy>(
+          /*rowsInRowGroup=*/1'024 * 1'024, /*bytesInRowGroup=*/8 * 1024);
+    };
+    auto writerWithSink = makeWriterWithSink(schema, options, writerOptions);
+    writerWithSink.writer->write(batch);
+    EXPECT_GT(writerWithSink.sink->size(), 0);
+    EXPECT_FALSE(writerWithSink.writer->reachedTargetFileSize());
+    writerWithSink.writer->close();
+  }
+}
+
 TEST_F(ParquetWriterTest, flushEmptyRowGroup) {
   ParquetWriterOptions writerOptions;
   dwio::common::WriterOptions options;
