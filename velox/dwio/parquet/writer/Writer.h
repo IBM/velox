@@ -142,8 +142,13 @@ struct ParquetWriterOptions : public dwio::common::FormatSpecificOptions {
 
   std::optional<int64_t> batchSize;
   std::optional<int64_t> dataPageSize;
+  /// Maximum number of rows in a data page. Defaults to no limit.
+  std::optional<uint64_t> pageMaxRows;
   std::optional<int64_t> dictionaryPageSizeLimit;
   std::optional<uint64_t> rowGroupSizeBytes;
+  /// Maximum number of rows in a row group. Defaults to
+  /// DefaultFlushPolicy::kDefaultRowsInGroup.
+  std::optional<uint64_t> rowGroupMaxRows;
   std::optional<bool> enableDictionary;
   /// Controls how DECIMAL values are stored by the Writer.
   /// - If unset, the Writer defaults to storing as integer (true),
@@ -174,9 +179,10 @@ class Writer : public dwio::common::Writer {
   // Constructs a writer with output to 'sink'. 'options' carries common writer
   // options and Parquet-specific format options. For Parquet,
   // 'options.flushPolicyFactory' is a programmatic C++ hook and must create a
-  // DefaultFlushPolicy (or a subclass). If not provided, the writer uses its
-  // built-in row-group limits: a soft 128MB byte target and a hard row-count
-  // cap of DefaultFlushPolicy::kDefaultRowsInGroup (~1M rows).
+  // DefaultFlushPolicy (or a subclass). If not provided, the writer limits row
+  // groups by ParquetWriterOptions: a soft byte target of 'rowGroupSizeBytes'
+  // (default 128MB) and a hard row-count cap of 'rowGroupMaxRows' (default
+  // DefaultFlushPolicy::kDefaultRowsInGroup, about 1M rows).
   // 'options.maxTargetFileSizeBytes' is tracked independently so the writer
   // can flush the current row group early and make file rotation visible to
   // the caller. 'pool' is used for temporary memory. 'schema' specifies the

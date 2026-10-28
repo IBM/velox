@@ -1344,35 +1344,51 @@ void ColumnWriterImpl::flushBufferedDataPages() {
 // ----------------------------------------------------------------------.
 // TypedColumnWriter.
 
-template <typename Action>
-inline void doInBatches(int64_t total, int64_t batchSize, Action&& action) {
-  int64_t numBatches = static_cast<int>(total / batchSize);
-  for (int round = 0; round < numBatches; round++) {
-    action(round * batchSize, batchSize, true);
-  }
-  // Write the remaining values.
-  if (total % batchSize > 0) {
-    action(numBatches * batchSize, total % batchSize, true);
+// Calls 'action' on consecutive chunks of at most 'batchSize' levels. A chunk
+// also ends where the current page reaches its row limit, as given by
+// 'pageRowsLeft', so the page check after the chunk closes the page there.
+template <typename Action, typename PageRowsLeft>
+inline void doInBatches(
+    int64_t total,
+    int64_t batchSize,
+    PageRowsLeft&& pageRowsLeft,
+    Action&& action) {
+  int64_t offset = 0;
+  while (offset < total) {
+    const int64_t size = std::min(
+        {batchSize, total - offset, std::max<int64_t>(1, pageRowsLeft())});
+    action(offset, size, true);
+    offset += size;
   }
 }
 
-template <typename Action>
+template <typename Action, typename PageRowsLeft>
 inline void doInBatches(
     const int16_t* defLevels,
     const int16_t* repLevels,
     int64_t numLevels,
     int64_t batchSize,
+    PageRowsLeft&& pageRowsLeft,
     Action&& action,
     bool pagesChangeOnRecordBoundaries) {
   if (!pagesChangeOnRecordBoundaries || !repLevels) {
     // If repLevels is null, then we are writing a non-repeated column.
     // In this case, every record contains only one level.
-    return doInBatches(numLevels, batchSize, std::forward<Action>(action));
+    return doInBatches(
+        numLevels,
+        batchSize,
+        std::forward<PageRowsLeft>(pageRowsLeft),
+        std::forward<Action>(action));
   }
 
   int64_t offset = 0;
   while (offset < numLevels) {
-    int64_t endOffset = std::min(offset + batchSize, numLevels);
+    // A record has at least one level, so a chunk of this many levels holds at
+    // most as many records as the page has room for, plus the record that the
+    // chunk is extended to finish.
+    int64_t endOffset = std::min(
+        offset + std::min(batchSize, std::max<int64_t>(1, pageRowsLeft())),
+        numLevels);
 
     // Find next record boundary (i.e. repLevel = 0).
     while (endOffset < numLevels && repLevels[endOffset] != 0) {
@@ -1525,6 +1541,7 @@ class TypedColumnWriterImpl : public ColumnWriterImpl,
         repLevels,
         numValues,
         properties_->writeBatchSize(),
+        [this]() { return pageRowsLeft(); },
         writeChunk,
         pagesChangeOnRecordBoundaries());
     return valueOffset;
@@ -1586,6 +1603,7 @@ class TypedColumnWriterImpl : public ColumnWriterImpl,
         repLevels,
         numValues,
         properties_->writeBatchSize(),
+        [this]() { return pageRowsLeft(); },
         writeChunk,
         pagesChangeOnRecordBoundaries());
   }
@@ -1899,10 +1917,17 @@ class TypedColumnWriterImpl : public ColumnWriterImpl,
     numBufferedNulls_ += numNulls;
 
     if (checkPageSize &&
-        currentEncoder_->estimatedDataEncodedSize() >=
-            properties_->dataPagesize()) {
+        (currentEncoder_->estimatedDataEncodedSize() >=
+             properties_->dataPagesize() ||
+         numBufferedRows_ >= properties_->maxRowsPerPage())) {
       addDataPage();
     }
+  }
+
+  // Returns how many more rows the current data page takes before it reaches
+  // WriterProperties::maxRowsPerPage().
+  int64_t pageRowsLeft() const {
+    return properties_->maxRowsPerPage() - numBufferedRows_;
   }
 
   void fallbackToPlainEncoding() {
@@ -2137,6 +2162,7 @@ Status TypedColumnWriterImpl<DType>::writeArrowDictionary(
       repLevels,
       numLevels,
       properties_->writeBatchSize(),
+      [this]() { return pageRowsLeft(); },
       writeIndicesChunk,
       pagesChangeOnRecordBoundaries()));
   return Status::OK();
@@ -2703,6 +2729,7 @@ Status TypedColumnWriterImpl<ByteArrayType>::writeArrowDense(
       repLevels,
       numLevels,
       properties_->writeBatchSize(),
+      [this]() { return pageRowsLeft(); },
       writeChunk,
       pagesChangeOnRecordBoundaries()));
   return Status::OK();
