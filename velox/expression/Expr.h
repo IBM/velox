@@ -390,6 +390,13 @@ class Expr {
     return distinctFields_;
   }
 
+  /// Subset of distinctFields() that are referenced by more than one
+  /// input subtree.  Used by the ExprV2 adapter and by lazy-loading
+  /// decisions; exposed publicly for those consumers.
+  const std::unordered_set<FieldReference*>& multiplyReferencedFields() const {
+    return multiplyReferencedFields_;
+  }
+
   static bool isSameFields(
       const std::vector<FieldReference*>& fields1,
       const std::vector<FieldReference*>& fields2);
@@ -443,6 +450,27 @@ class Expr {
 
   const VectorFunctionMetadata& vectorFunctionMetadata() const {
     return vectorFunctionMetadata_;
+  }
+
+  /// Listeners invoked around vectorFunction_->apply().  Empty for
+  /// special-form nodes.  Exposed for the ExprV2 adapter.
+  const std::vector<VectorFunctionListeners>& listeners() const {
+    return listeners_;
+  }
+
+  /// True if this expression should always track CPU usage (set at
+  /// compile time from query config).  Distinct from adaptive
+  /// sampling, which is decided at runtime.
+  bool trackCpuUsage() const {
+    return trackCpuUsage_;
+  }
+
+  /// Returns the per-Expr output tracer if one has been installed by
+  /// ExprSet::maybeSetupTracers, or nullptr otherwise.  Exposed
+  /// publicly so the V2 evaluator can route trace writes through the
+  /// V1 tracer state during the migration period.
+  trace::TraceExprWriter* outputTracer() const {
+    return outputTracer_.get();
   }
 
   std::vector<VectorPtr>& inputValues() {
