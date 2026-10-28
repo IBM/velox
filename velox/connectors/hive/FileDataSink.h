@@ -287,6 +287,10 @@ class FileDataSink : public DataSink {
       const std::vector<column_index_t>& dataCols,
       const RowVectorPtr& input);
 
+  // Returns the data channels followed by the sort-only channels, which is the
+  // column order of the rows the sorting writer receives.
+  std::vector<column_index_t> sortInputChannels() const;
+
   FOLLY_ALWAYS_INLINE bool sortWrite() const {
     return sortWrite_;
   }
@@ -373,6 +377,17 @@ class FileDataSink : public DataSink {
   // Finalizes the current file for the writer at the given index.
   void finalizeWriterFile(size_t index);
 
+  // Closes 'writer', the full file writer of the sorted write at 'index', and
+  // records its file, which holds 'numRows' rows. Unlike rotateWriter(), the
+  // sorting writer at 'index' stays open and writes the rest of its sorted
+  // rows to the next file.
+  virtual void
+  closeSortedFile(size_t index, dwio::common::Writer& writer, uint64_t numRows);
+
+  // Records the current file of the sorted write at 'index', which holds
+  // 'numRows' of the rows the writer received.
+  void finalizeSortedFile(size_t index, uint64_t numRows);
+
   virtual void closeInternal();
 
   // IMPORTANT NOTE: these are passed to writers as raw pointers. FileDataSink
@@ -401,6 +416,12 @@ class FileDataSink : public DataSink {
   /// Whether this sink uses sorted writes. Set by subclass after computing
   /// sort columns in its constructor.
   bool sortWrite_{false};
+
+  /// Input channels that only feed the sort keys of a sorted write, such as a
+  /// computed z-order value. They follow the data channels in the rows the
+  /// sorting writer receives and are dropped before the file is written. Set
+  /// by subclass in its constructor.
+  std::vector<column_index_t> sortOnlyChannels_;
 
   State state_{State::kRunning};
 

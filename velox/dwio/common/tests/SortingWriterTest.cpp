@@ -119,7 +119,9 @@ TEST_F(SortingWriterTest, largeRowSizeExceedsMaxOutputBytes) {
       std::move(sortBuffer),
       maxOutputRowsConfig,
       maxOutputBytesConfig,
-      outputTimeSliceLimitMs);
+      outputTimeSliceLimitMs,
+      /*numSortOnlyColumns=*/0,
+      /*fileRotator=*/nullptr);
 
   RowVectorPtr testData = createTestData(10);
   sortingWriter.write(testData);

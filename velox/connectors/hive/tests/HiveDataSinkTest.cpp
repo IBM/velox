@@ -1230,6 +1230,72 @@ TEST_F(
   EXPECT_EQ(1, fileMeta.numRowGroups());
   EXPECT_EQ(kNumRows * kNumBatches, fileMeta.rowGroup(0).numRows());
 }
+
+TEST_F(HiveDataSinkTest, parquetRowGroupClosedByTargetFileSizeEndsFile) {
+  // With the row-group target equal to the file-size target, the writer closes
+  // a row group once its estimate reaches both. The estimate can exceed the
+  // bytes written, leaving the file just below the target. The file must still
+  // be rotated, instead of closing tiny row groups until it passes the target.
+  connectorSessionProperties_->set(
+      HiveConfig::kParquetMaxTargetFileSizeSession, "1MB");
+  connectorSessionProperties_->set(
+      dwio::common::formatSessionProperty(
+          dwio::common::FileFormat::PARQUET,
+          parquet::ParquetConfig::kWriterRowGroupSizeSession),
+      "1MB");
+  auto writeOptions = std::make_shared<dwio::common::WriterOptions>();
+  writeOptions->compressionKind = CompressionKind::CompressionKind_NONE;
+
+  const auto rowType = ROW({"id", "payload"}, {BIGINT(), VARCHAR()});
+  const auto outputDirectory = TempDirectoryPath::create();
+  auto dataSink = createDataSink(
+      rowType,
+      outputDirectory->getPath(),
+      dwio::common::FileFormat::PARQUET,
+      {},
+      nullptr,
+      writeOptions);
+
+  constexpr int32_t kNumRows = 1'024;
+  constexpr int32_t kNumBatches = 60;
+  std::vector<RowVectorPtr> vectors;
+  for (int32_t batch = 0; batch < kNumBatches; ++batch) {
+    // Distinct values make the dictionary grow until the writer falls back to
+    // plain encoding, as the high-cardinality columns of real tables do.
+    vectors.push_back(makeRowVector(
+        {makeFlatVector<int64_t>(
+             kNumRows, [&](auto row) { return batch * kNumRows + row; }),
+         makeFlatVector<std::string>(kNumRows, [&](auto row) {
+           const auto id = static_cast<uint64_t>(batch * kNumRows + row);
+           return fmt::format(
+               "{:016x}{:016x}",
+               id * 0x9E3779B97F4A7C15ULL,
+               id * 0xC2B2AE3D27D4EB4FULL);
+         })}));
+    dataSink->appendData(vectors.back());
+  }
+  ASSERT_TRUE(dataSink->finish());
+  dataSink->close();
+
+  dwio::common::ReaderOptions readerOpts(pool_.get());
+  const auto filePaths = listFiles(outputDirectory->getPath());
+  ASSERT_GT(filePaths.size(), 2);
+  int64_t numRows = 0;
+  int32_t numMultiRowGroupFiles = 0;
+  for (const auto& filePath : filePaths) {
+    auto reader = std::make_unique<facebook::velox::parquet::ParquetReader>(
+        std::make_unique<dwio::common::BufferedInput>(
+            std::make_shared<LocalReadFile>(filePath), readerOpts.memoryPool()),
+        readerOpts);
+    const auto fileMeta = reader->fileMetaData();
+    numRows += reader->numberOfRows().value();
+    if (fileMeta.numRowGroups() > 1) {
+      ++numMultiRowGroupFiles;
+    }
+  }
+  EXPECT_EQ(numRows, kNumRows * kNumBatches);
+  EXPECT_EQ(numMultiRowGroupFiles, 0);
+}
 #endif
 
 TEST_F(HiveDataSinkTest, flushPolicyWithDWRF) {

@@ -513,6 +513,10 @@ class HiveDataSink : public FileDataSink {
   std::unique_ptr<facebook::velox::dwio::common::Writer> createWriterForIndex(
       size_t writerIndex) override;
 
+  // Creates the file writer for the next file of the writer at 'writerIndex'.
+  std::unique_ptr<facebook::velox::dwio::common::Writer> createFileWriter(
+      size_t writerIndex);
+
   // Creates and configures WriterOptions based on file format.
   std::shared_ptr<dwio::common::WriterOptions> createWriterOptions()
       const override;
@@ -527,6 +531,10 @@ class HiveDataSink : public FileDataSink {
   maybeCreateBucketSortWriter(
       size_t writerIndex,
       std::unique_ptr<facebook::velox::dwio::common::Writer> writer);
+
+  // Starts the next file of a sorted write once the current file reaches the
+  // target file size.
+  class SortedFileRotator;
 
   WriterParameters getWriterParameters(
       const std::optional<std::string>& partition,

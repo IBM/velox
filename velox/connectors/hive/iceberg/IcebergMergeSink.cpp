@@ -92,7 +92,8 @@ IcebergInsertTableHandlePtr IcebergMergeSink::cloneHandleWithKind(
   // seeds each new DV with the prior DV's positions on an UPDATE/MERGE that
   // re-touches a data file already carrying a DV. The kData sub-sink ignores
   // the map. Preserve the original file-name generator and insertedColumns so
-  // write-default logic fires correctly in the kData sub-sink.
+  // write-default logic fires correctly in the kData sub-sink, and the sort
+  // order so it sorts the rows it writes.
   return std::make_shared<const IcebergInsertTableHandle>(
       std::move(icebergInputs),
       original.locationHandle(),
@@ -103,7 +104,8 @@ IcebergInsertTableHandlePtr IcebergMergeSink::cloneHandleWithKind(
       kind,
       original.existingDeletionVectors(),
       original.fileNameGenerator(),
-      original.insertedColumns());
+      original.insertedColumns(),
+      original.sortOrder());
 }
 
 RowTypePtr IcebergMergeSink::projectDataInputType(

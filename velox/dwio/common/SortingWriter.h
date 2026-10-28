@@ -25,12 +25,37 @@ namespace facebook::velox::dwio::common {
 /// Sorting Writer object is used to write sorted data into a single file.
 class SortingWriter : public Writer {
  public:
+  /// Starts a new output file when the current one is full, so the sorted
+  /// output spans several files. Each file then holds a contiguous range of the
+  /// sort order.
+  class FileRotator {
+   public:
+    virtual ~FileRotator() = default;
+
+    /// Returns true when the output file of 'writer' has reached its target
+    /// size.
+    virtual bool isFileFull(const Writer& writer) = 0;
+
+    /// Closes 'fullWriter', which wrote 'numRows' rows, and returns the writer
+    /// for the next file.
+    virtual std::unique_ptr<Writer> rotate(
+        std::unique_ptr<Writer> fullWriter,
+        uint64_t numRows) = 0;
+  };
+
+  /// @param numSortOnlyColumns Number of trailing input columns that only serve
+  /// as sort keys. 'sortBuffer' sorts on them, and they are dropped before the
+  /// sorted rows reach 'writer'.
+  /// @param fileRotator Splits the sorted output across files. Null writes all
+  /// of it to 'writer'.
   SortingWriter(
       std::unique_ptr<Writer> writer,
       std::unique_ptr<exec::SortBuffer> sortBuffer,
       vector_size_t maxOutputRowsConfig,
       uint64_t maxOutputBytesConfig,
-      uint64_t outputTimeSliceLimitMs);
+      uint64_t outputTimeSliceLimitMs,
+      column_index_t numSortOnlyColumns,
+      std::unique_ptr<FileRotator> fileRotator);
 
   ~SortingWriter() override;
 
@@ -84,14 +109,23 @@ class SortingWriter : public Writer {
 
   vector_size_t outputBatchRows();
 
-  const std::unique_ptr<Writer> outputWriter_;
+  // Drops the sort-only columns from 'sorted'.
+  RowVectorPtr dropSortOnlyColumns(const RowVectorPtr& sorted) const;
+
+  // Writes the current output file. Replaced when 'fileRotator_' starts a new
+  // file.
+  std::unique_ptr<Writer> outputWriter_;
   const vector_size_t maxOutputRowsConfig_;
   const uint64_t maxOutputBytesConfig_;
   const uint64_t finishTimeSliceLimitMs_;
+  const column_index_t numSortOnlyColumns_;
+  const std::unique_ptr<FileRotator> fileRotator_;
   memory::MemoryPool* const sortPool_;
   const bool canReclaim_;
 
   std::unique_ptr<exec::SortBuffer> sortBuffer_;
+  // Rows written to the current output file.
+  uint64_t numRowsInFile_{0};
 };
 
 } // namespace facebook::velox::dwio::common

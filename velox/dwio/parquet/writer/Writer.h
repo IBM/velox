@@ -205,6 +205,10 @@ class Writer : public dwio::common::Writer {
     return true;
   }
 
+  bool reachedTargetFileSize() const override {
+    return reachedTargetFileSize_;
+  }
+
   // Closes 'this'. After close, data can no longer be added and the completed
   // Parquet file is flushed into 'sink' provided at construction. 'sink' stays
   // live until destruction of 'this'. Returns file metadata, or null if no
@@ -253,6 +257,9 @@ class Writer : public dwio::common::Writer {
 
   std::unique_ptr<DefaultFlushPolicy> flushPolicy_;
   const uint64_t maxTargetFileSizeBytes_{0};
+  // Set once a row group closed because of 'maxTargetFileSizeBytes_' leaves
+  // the file within 10% of it.
+  bool reachedTargetFileSize_{false};
 
   const RowTypePtr schema_;
 
