@@ -76,36 +76,6 @@ inline std::exception_ptr makeBadCastException(
       false));
 }
 
-// Returns true if casting from 'fromType' to 'toType' is a supported fast
-// upcast.
-bool isSupportedFastUpcast(const TypePtr& fromType, const TypePtr& toType) {
-  auto isIntegralType = [](const TypePtr& type) {
-    return type == TINYINT() || type == SMALLINT() || type == INTEGER() ||
-        type == BIGINT();
-  };
-
-  auto isBasicNumericType = [&isIntegralType](const TypePtr& type) {
-    return isIntegralType(type) || type == REAL() || type == DOUBLE();
-  };
-
-  if (isIntegralType(fromType) && isBasicNumericType(toType)) {
-    if (fromType->cppSizeInBytes() < toType->cppSizeInBytes()) {
-      return true;
-    }
-    if (fromType == INTEGER() && toType == REAL()) {
-      return true;
-    }
-    if (fromType == BIGINT() && (toType == REAL() || toType == DOUBLE())) {
-      return true;
-    }
-  }
-
-  if (fromType == REAL() && toType == DOUBLE()) {
-    return true;
-  }
-  return false;
-}
-
 } // namespace
 
 template <typename Func>
@@ -677,7 +647,10 @@ void CastExpr::applyCastPrimitives(
   auto* resultFlatVector = result->as<FlatVector<To>>();
   auto* inputSimpleVector = input.as<SimpleVector<From>>();
 
-  switch (hooks_->getPolicy()) {
+  // hooks_->getPolicy() is constant for the lifetime of this CastExpr;
+  // policy() caches the resolved value on the first call so the switch
+  // below doesn't pay a virtual call per applyCastPrimitives.
+  switch (policy()) {
     case LegacyCastPolicy:
       applyToSelectedNoThrowLocal(context, rows, result, [&](int row) {
         applyCastKernel<ToKind, FromKind, util::LegacyCastPolicy>(
@@ -704,7 +677,7 @@ void CastExpr::applyCastPrimitives(
       break;
 
     default:
-      VELOX_NYI("Policy {} not yet implemented.", hooks_->getPolicy());
+      VELOX_NYI("Policy {} not yet implemented.", policy());
   }
 }
 
@@ -781,7 +754,7 @@ void CastExpr::applyCastPrimitivesDispatch(
     verifyToTimestampCast(fromType, toType);
   }
 
-  if (isSupportedFastUpcast(fromType, toType)) {
+  if (CastExpr::isSupportedFastUpcast(fromType, toType)) {
     VELOX_DYNAMIC_SCALAR_TEMPLATE_TYPE_DISPATCH(
         applyNumericUpcast,
         ToKind,

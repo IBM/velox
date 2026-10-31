@@ -327,6 +327,36 @@ class Expr {
     return false;
   }
 
+  /// Returns true if recomputing this expression on the peeled base is
+  /// cheap enough that proactively evaluating all uncached base positions
+  /// (rather than only the rows touched by the current input vector) is
+  /// a net win once the dictionary cache becomes complete. Used by
+  /// Expr::evalWithMemo's eager-fill path: on the second sighting of a
+  /// stable dictionary base, an expression that opts in pays the cost of
+  /// filling every base position once and turns every subsequent batch
+  /// over that base into an O(1) dictionary wrap of the cache (no
+  /// per-batch peel, evaluate, result allocation, or copy). Defaults to
+  /// false. Overridden by CastExpr to return true for fast numeric
+  /// upcasts (e.g. INT->BIGINT, REAL->DOUBLE) where the per-row cost is
+  /// a single static_cast.
+  /// Whether the per-row evaluation of this expression is cheap and
+  /// non-throwing enough that Expr::evalWithMemo's eager-fill path
+  /// can speculatively evaluate every position of the peeled
+  /// dictionary base, not just the rows the current batch requests.
+  /// Eager-fill pays one full-base eval up front so subsequent
+  /// batches over the same base hit cache-covers-base in
+  /// peelEncodings and return the cached vector directly without
+  /// the per-row FlatVector<StringView>::copy ->
+  /// acquireSharedStringBuffers -> atomic-refcount-bump chain.
+  ///
+  /// Default Expr implementation (in Expr.cpp) returns true for
+  /// function calls whose registered name is in the curated
+  /// cheap-and-non-throwing set (date / time accessors, basic string
+  /// ops, simple math, comparisons) and false otherwise. Subclasses
+  /// override - CastExpr returns true for fast numeric upcasts and
+  /// date conversions.
+  virtual bool isCheapToReevaluate() const;
+
   bool hasConditionals() const {
     return hasConditionals_;
   }
@@ -390,6 +420,13 @@ class Expr {
     return distinctFields_;
   }
 
+  /// Subset of distinctFields() that are referenced by more than one
+  /// input subtree.  Used by the ExprV2 adapter and by lazy-loading
+  /// decisions; exposed publicly for those consumers.
+  const std::unordered_set<FieldReference*>& multiplyReferencedFields() const {
+    return multiplyReferencedFields_;
+  }
+
   static bool isSameFields(
       const std::vector<FieldReference*>& fields1,
       const std::vector<FieldReference*>& fields2);
@@ -445,6 +482,27 @@ class Expr {
     return vectorFunctionMetadata_;
   }
 
+  /// Listeners invoked around vectorFunction_->apply().  Empty for
+  /// special-form nodes.  Exposed for the ExprV2 adapter.
+  const std::vector<VectorFunctionListeners>& listeners() const {
+    return listeners_;
+  }
+
+  /// True if this expression should always track CPU usage (set at
+  /// compile time from query config).  Distinct from adaptive
+  /// sampling, which is decided at runtime.
+  bool trackCpuUsage() const {
+    return trackCpuUsage_;
+  }
+
+  /// Returns the per-Expr output tracer if one has been installed by
+  /// ExprSet::maybeSetupTracers, or nullptr otherwise.  Exposed
+  /// publicly so the V2 evaluator can route trace writes through the
+  /// V1 tracer state during the migration period.
+  trace::TraceExprWriter* outputTracer() const {
+    return outputTracer_.get();
+  }
+
   std::vector<VectorPtr>& inputValues() {
     return inputValues_;
   }
@@ -492,8 +550,15 @@ class Expr {
     SelectivityVector* newFinalSelection;
     bool mayCache;
 
+    /// When true, the dictionaryCache_ is already populated for every
+    /// position of the peeled base, so the caller can wrap the cache
+    /// directly with the peeled encoding and skip evalWithMemo /
+    /// evalWithNulls entirely. newRows / newFinalSelection are not
+    /// computed in this case (translateToInnerRows is bypassed).
+    bool cacheCoversBase;
+
     static PeelEncodingsResult empty() {
-      return {nullptr, nullptr, false};
+      return {nullptr, nullptr, false, false};
     }
   };
 
