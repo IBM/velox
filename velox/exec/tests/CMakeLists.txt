@@ -66,6 +66,7 @@ set(
   EnforceDistinctTest.cpp
   TraceUtilTest.cpp
   HashPartitionFunctionTest.cpp
+  OptimizedHashPartitionFunctionTest.cpp
   SpatialIndexTest.cpp
   ValuesTest.cpp
   ParallelProjectTest.cpp
@@ -155,6 +156,8 @@ set(
   FileExchangeTest.cpp
   CursorTest.cpp
   SplitLifecycleTest.cpp
+  OptimizedPartitionedOutputTest.cpp
+  OptimizedVectorHasherTest.cpp
 )
 
 set(
