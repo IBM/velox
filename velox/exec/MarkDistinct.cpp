@@ -463,8 +463,14 @@ void MarkDistinct::setupInputSpiller(
       &spillConfig_.value(),
       spillStats_.get());
 
-  spillHashFunction_ = std::make_unique<HashPartitionFunction>(
-      inputSpiller_->hashBits(), inputType_, distinctKeyChannels_);
+  spillHashFunction_ = createHashPartitionFunction(
+      inputSpiller_->hashBits(),
+      inputType_,
+      distinctKeyChannels_,
+      {},
+      operatorCtx_->driverCtx()
+          ->queryConfig()
+          .optimizedHashPartitionFunctionEnabled());
 }
 
 void MarkDistinct::spill() {

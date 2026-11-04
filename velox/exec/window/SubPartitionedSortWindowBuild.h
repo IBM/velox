@@ -33,6 +33,7 @@ class SubPartitionedSortWindowBuild : public WindowBuild {
   SubPartitionedSortWindowBuild(
       const std::shared_ptr<const core::WindowNode>& node,
       int32_t numSubPartitions,
+      const core::QueryConfig& queryConfig,
       velox::memory::MemoryPool* pool,
       common::PrefixSortConfig&& prefixSortConfig,
       const common::SpillConfig* spillConfig,
@@ -80,7 +81,7 @@ class SubPartitionedSortWindowBuild : public WindowBuild {
   exec::SpillStats* const spillStats_;
 
   // Divide input rows to the corresponding sub partitions.
-  std::unique_ptr<HashPartitionFunction> subPartitioningFunction_;
+  std::unique_ptr<HashPartitionFunctionBase> subPartitioningFunction_;
 
   // WindowBuilds for each sub partition.
   std::vector<std::unique_ptr<SortWindowBuild>> subWindowBuilds_;

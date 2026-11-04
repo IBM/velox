@@ -81,7 +81,8 @@ function github_checkout {
 # The values that CPU_ARCH can take are as follows:
 #   arm64  : Target Apple silicon.
 #   aarch64: Target general 64 bit arm cpus.
-#   avx:     Target Intel CPUs with AVX.
+#   avx512:  Target Intel CPUs with AVX-512F.
+#   avx:     Target Intel CPUs with AVX2.
 #   sse:     Target Intel CPUs with sse.
 # Echo's the appropriate compiler flags which can be captured as so
 # CXX_FLAGS=$(get_cxx_flags) or
@@ -102,7 +103,9 @@ function get_cxx_flags {
       else # x86_64
         local CPU_CAPABILITIES
         CPU_CAPABILITIES=$(sysctl -a | grep machdep.cpu.features | awk '{print tolower($0)}')
-        if [[ $CPU_CAPABILITIES =~ "avx" ]]; then
+        if [[ $CPU_CAPABILITIES =~ "avx512f" ]]; then
+          CPU_ARCH="avx512"
+        elif [[ $CPU_CAPABILITIES =~ "avx" ]]; then
           CPU_ARCH="avx"
         else
           CPU_ARCH="sse"
@@ -114,7 +117,9 @@ function get_cxx_flags {
       else # x86_64
         local CPU_CAPABILITIES
         CPU_CAPABILITIES=$(cat /proc/cpuinfo | grep flags | head -n 1 | awk '{print tolower($0)}')
-        if [[ $CPU_CAPABILITIES =~ "avx" ]]; then
+        if [[ $CPU_CAPABILITIES =~ "avx512f" ]]; then
+          CPU_ARCH="avx512"
+        elif [[ $CPU_CAPABILITIES =~ "avx" ]]; then
           CPU_ARCH="avx"
         elif [[ $CPU_CAPABILITIES =~ "sse" ]]; then
           CPU_ARCH="sse"
@@ -131,8 +136,12 @@ function get_cxx_flags {
     echo -n "-mcpu=apple-m1+crc"
     ;;
 
+  "avx512")
+    echo -n "-mavx512f -mavx2 -mfma -mavx -mf16c -mlzcnt -mbmi2"
+    ;;
+
   "avx")
-    echo -n "-mavx2 -mfma -mavx -mf16c -mlzcnt  -mbmi2"
+    echo -n "-mavx2 -mfma -mavx -mf16c -mlzcnt -mbmi2"
     ;;
 
   "sse")
