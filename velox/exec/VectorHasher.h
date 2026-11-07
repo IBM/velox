@@ -18,6 +18,8 @@
 #include <folly/container/F14Map.h>
 #include <folly/container/F14Set.h>
 
+#include <string_view>
+
 #include <type_traits>
 
 #include <velox/type/Filter.h>
@@ -25,6 +27,10 @@
 #include "velox/exec/Operator.h"
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
+
+namespace facebook::velox::common {
+class NativeBufferedWriter;
+}
 
 namespace facebook::velox::exec {
 
@@ -71,6 +77,15 @@ class UniqueValue {
     }
     // String is stored as a pointer in data_.
     return std::string{reinterpret_cast<const char*>(data_), size_};
+  }
+
+  std::string_view bytesView() const {
+    if (size_ <= sizeof(int64_t)) {
+      return std::string_view{
+          reinterpret_cast<const char*>(&data_), static_cast<size_t>(size_)};
+    }
+    return std::string_view{
+        reinterpret_cast<const char*>(data_), static_cast<size_t>(size_)};
   }
 
   void setData(int64_t data) {
@@ -368,6 +383,17 @@ class VectorHasher {
   }
 
   std::string toString() const;
+
+  // Serializes the value-id / range state needed to preserve non-kHash join
+  // probe behavior across process boundaries.
+  std::string serializeState() const;
+
+  uint32_t serializedStateSize() const;
+
+  void serializeState(common::NativeBufferedWriter& writer) const;
+
+  // Restores state produced by serializeState().
+  void deserializeState(std::string_view data);
 
   size_t numUniqueValues() const {
     return numDistinct();
