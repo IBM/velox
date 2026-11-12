@@ -19,6 +19,7 @@
 #include <folly/init/Init.h>
 
 #include "velox/common/base/BitUtil.h"
+#include "velox/common/base/Nulls.h"
 #include "velox/vector/SelectivityVector.h"
 
 namespace facebook::velox::test {
@@ -275,6 +276,64 @@ BENCHMARK_PARAM(BM_countSelected, 1);
 BENCHMARK_PARAM(BM_countSelected, 1000);
 BENCHMARK_PARAM(BM_countSelected, 1000000);
 BENCHMARK_PARAM(BM_countSelected, 10000000);
+BENCHMARK_DRAW_LINE();
+
+// translateToInnerRows Tests
+//
+// Measures the free function velox::translateToInnerRows used by
+// PeeledEncoding::translateToInnerRows when an Expr peels a dictionary
+// wrapping. It walks every selected outer row, optionally checks
+// whether the corresponding dictionary position is null, and sets the
+// inner-row bit at indices[row] when not null. The hoisted-branch fast
+// path (nulls == nullptr) is the common production case; nullPct=50
+// exercises the null-aware loop; nullPct=100 marks every position
+// null so no inner row is selected.
+
+void BM_translateToInnerRows(
+    uint32_t iterations,
+    size_t numEntries,
+    int32_t nullPct) {
+  folly::BenchmarkSuspender suspender;
+  SelectivityVector outerRows(numEntries);
+  SelectivityVector innerRows(numEntries);
+  innerRows.clearAll();
+
+  std::vector<vector_size_t> indices(numEntries);
+  for (size_t i = 0; i < numEntries; ++i) {
+    // Identity mapping: indices[row] == row.
+    indices[i] = static_cast<vector_size_t>(i);
+  }
+
+  std::vector<uint64_t> nullsStorage;
+  const uint64_t* nulls = nullptr;
+  if (nullPct > 0) {
+    nullsStorage.resize((numEntries + 63) / 64);
+    if (nullPct >= 100) {
+      bits::fillBits(nullsStorage.data(), 0, numEntries, bits::kNull);
+    } else {
+      bits::fillBits(nullsStorage.data(), 0, numEntries, bits::kNotNull);
+      const int32_t step = 100 / nullPct;
+      for (size_t i = 0; i < numEntries; i += step) {
+        bits::setNull(nullsStorage.data(), i, true);
+      }
+    }
+    nulls = nullsStorage.data();
+  }
+  suspender.dismiss();
+
+  for (uint32_t i = 0; i < iterations; ++i) {
+    translateToInnerRows(outerRows, indices.data(), nulls, innerRows);
+    folly::doNotOptimizeAway(innerRows);
+  }
+  suspender.rehire();
+}
+
+BENCHMARK_NAMED_PARAM(BM_translateToInnerRows, 1000_0, 1000, 0);
+BENCHMARK_NAMED_PARAM(BM_translateToInnerRows, 1000_50, 1000, 50);
+BENCHMARK_NAMED_PARAM(BM_translateToInnerRows, 1000_100, 1000, 100);
+BENCHMARK_NAMED_PARAM(BM_translateToInnerRows, 1000000_0, 1000000, 0);
+BENCHMARK_NAMED_PARAM(BM_translateToInnerRows, 1000000_50, 1000000, 50);
+BENCHMARK_NAMED_PARAM(BM_translateToInnerRows, 1000000_100, 1000000, 100);
 BENCHMARK_DRAW_LINE();
 
 // operatorEquals test

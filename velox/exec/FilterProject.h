@@ -97,9 +97,11 @@ class FilterProject : public Operator {
   // updated.
   vector_size_t filter(EvalCtx& evalCtx, const SelectivityVector& allRows);
 
-  // Evaluate projections on the specified rows and return the results.
+  // Evaluate projections on the specified rows. The results are written into
+  // 'projectResults_' (a member, reused across calls). Returns a reference to
+  // 'projectResults_' for use by 'fillOutput'.
   // pre-condition: !isIdentityProjection_
-  std::vector<VectorPtr> project(
+  const std::vector<VectorPtr>& project(
       const SelectivityVector& rows,
       EvalCtx& evalCtx);
 
@@ -136,5 +138,16 @@ class FilterProject : public Operator {
   // (no partial-row loading through pushdown hooks) and expects lazy vectors to
   // remain unloaded for downstream parallel processing.
   std::vector<column_index_t> reusedInputChannels_;
+
+  // Filter and projection result vectors held across getOutput() calls so
+  // EvalCtx's VectorPool can recycle them. Each call to filter()/project()
+  // first releases the prior entries (which are singly-referenced when the
+  // downstream consumer has dropped the prior output) back to the pool, so
+  // the next exprs_->eval finds recyclable vectors via ensureWritable
+  // instead of allocating fresh ones. Entries that are still multi-owned
+  // because the consumer still holds the prior output are skipped by
+  // VectorPool::release - the harm is just a missed reuse, not correctness.
+  std::vector<VectorPtr> filterResults_;
+  std::vector<VectorPtr> projectResults_;
 };
 } // namespace facebook::velox::exec

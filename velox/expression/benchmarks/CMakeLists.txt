@@ -61,3 +61,6 @@ target_link_libraries(velox_benchmark_variadic ${BENCHMARK_DEPENDENCIES})
 
 add_executable(velox_benchmark_expr_compile ExprCompileBenchmark.cpp)
 target_link_libraries(velox_benchmark_expr_compile ${BENCHMARK_DEPENDENCIES})
+
+add_executable(velox_benchmark_widening_cast WideningCastBenchmark.cpp)
+target_link_libraries(velox_benchmark_widening_cast ${BENCHMARK_DEPENDENCIES})
