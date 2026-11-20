@@ -26,6 +26,8 @@
 #include "velox/vector/FlatVector.h"
 #include "velox/vector/VectorTypeUtils.h"
 
+#include <string_view>
+
 namespace facebook::velox::exec {
 
 class Aggregate;
@@ -509,6 +511,10 @@ class RowContainer {
       const FlatVector<StringView>& vector,
       vector_size_t index,
       char* row);
+
+  /// Copies serialized row bytes produced by 'extractSerializedRows' into the
+  /// container.
+  void storeSerializedRow(std::string_view serialized, char* row);
 
   // Reading values.
 
