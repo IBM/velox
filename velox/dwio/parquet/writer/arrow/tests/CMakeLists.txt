@@ -15,6 +15,7 @@
 add_executable(
   velox_dwio_arrow_parquet_writer_test
   BloomFilterTest.cpp
+  CompressionTest.cpp
   ColumnReaderTest.cpp
   ColumnWriterTest.cpp
   FileDeserializeTest.cpp
