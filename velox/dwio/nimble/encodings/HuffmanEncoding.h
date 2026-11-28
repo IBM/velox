@@ -33,6 +33,7 @@
 #include "velox/dwio/nimble/common/Exceptions.h"
 #include "velox/dwio/nimble/common/Varint.h"
 #include "velox/dwio/nimble/common/Vector.h"
+#include "velox/dwio/nimble/encodings/ConstantEncoding.h"
 #include "velox/dwio/nimble/encodings/common/Encoding.h"
 #include "velox/dwio/nimble/encodings/common/EncodingPrimitives.h"
 #include "velox/dwio/nimble/encodings/selection/EncodingSelection.h"
@@ -112,6 +113,8 @@ class HuffmanEncoding final
         });
   }
 
+  /// Emits a Constant encoding when 'values' holds one distinct value, which
+  /// has no Huffman code.
   static std::string_view encode(
       EncodingSelection<physicalType>& selection,
       std::span<const physicalType> values,
@@ -411,14 +414,14 @@ std::optional<uint64_t> HuffmanEncoding<T>::estimateSize(
 
 template <typename T>
 std::string_view HuffmanEncoding<T>::encode(
-    EncodingSelection<physicalType>&,
+    EncodingSelection<physicalType>& selection,
     std::span<const physicalType> values,
     Buffer& buffer,
     const Encoding::Options& options) {
   static_assert(
       std::is_integral_v<physicalType> && !std::is_same_v<physicalType, bool>);
-  if (values.size() < 2) {
-    NIMBLE_INCOMPATIBLE_ENCODING("Huffman encoding requires at least two rows");
+  if (values.empty()) {
+    NIMBLE_INCOMPATIBLE_ENCODING("Huffman encoding cannot be empty");
   }
 
   auto* pool = &buffer.getMemoryPool();
@@ -439,8 +442,11 @@ std::string_view HuffmanEncoding<T>::encode(
     ++frequencies[it->second];
   }
   if (alphabet.size() < 2) {
-    NIMBLE_INCOMPATIBLE_ENCODING(
-        "Huffman encoding requires at least two symbols");
+    // The reader requires at least two symbols. Selection never picks Huffman
+    // here, since estimateSize() declines it, but replaying a Huffman layout on
+    // a slice or a later chunk can pass a single symbol. MainlyConstant falls
+    // back to Constant for all-common data the same way.
+    return ConstantEncoding<T>::encode(selection, values, buffer, options);
   }
 
   Vector<TreeNode> nodes{pool};

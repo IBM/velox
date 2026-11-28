@@ -293,6 +293,36 @@ TEST_F(HuffmanEncodingTest, resetAndMaterializeOneAtATime) {
   EXPECT_TRUE(std::equal(result.begin(), result.end(), values.begin()));
 }
 
+TEST_F(HuffmanEncodingTest, encodesSingleSymbolAsConstant) {
+  // A slice or a replayed layout can hand Huffman one row or one symbol.
+  const auto expectConstant = [&](uint32_t numRows) {
+    Vector<int32_t> values{pool_.get()};
+    for (uint32_t i = 0; i < numRows; ++i) {
+      values.push_back(7);
+    }
+    auto encoding = encode(values);
+    EXPECT_EQ(encoding->encodingType(), EncodingType::Constant);
+    ASSERT_EQ(encoding->rowCount(), numRows);
+    Vector<int32_t> result{pool_.get(), numRows};
+    encoding->materialize(numRows, result.data());
+    EXPECT_TRUE(std::equal(result.begin(), result.end(), values.begin()));
+  };
+  {
+    SCOPED_TRACE("one row");
+    expectConstant(1);
+  }
+  {
+    SCOPED_TRACE("one symbol");
+    expectConstant(300);
+  }
+}
+
+TEST_F(HuffmanEncodingTest, encodeRejectsEmptyInput) {
+  const Vector<int32_t> values{pool_.get()};
+  NIMBLE_ASSERT_USER_THROW(
+      encodeData(values), "Huffman encoding cannot be empty");
+}
+
 TEST_F(HuffmanEncodingTest, readWithVisitorDenseAndSparseAcrossCheckpoints) {
   Vector<int64_t> values{pool_.get()};
   for (uint32_t i = 0; i < 1025; ++i) {

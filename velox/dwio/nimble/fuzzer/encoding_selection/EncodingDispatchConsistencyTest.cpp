@@ -144,9 +144,8 @@ WriteOutcome expectedOutcome(
   if (encodingType == EncodingType::Reversed && !columnCase.isNonIncreasing) {
     return WriteOutcome::kNotApplied;
   }
-  // "Huffman encoding requires at least two symbols" -- a single-symbol
-  // alphabet has no code to assign, and estimateSize declines it for the same
-  // reason.
+  // A single-symbol alphabet has no code to assign, so estimateSize declines
+  // it.
   if (encodingType == EncodingType::Huffman && columnCase.isSingleValued) {
     return WriteOutcome::kNotApplied;
   }

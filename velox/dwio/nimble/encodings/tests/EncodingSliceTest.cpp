@@ -347,6 +347,17 @@ class EncodingSliceTest : public ::testing::Test {
         expectedEncodingType = nimble::EncodingType::Constant;
       }
     }
+    if constexpr (std::is_same_v<EncodingType, nimble::HuffmanEncoding<T>>) {
+      // A range whose rows hold one distinct value comes back as Constant:
+      // Huffman has no code for a single symbol, so encode() emits Constant for
+      // it.
+      if (std::all_of(
+              values.begin() + offset + 1,
+              values.begin() + offset + length,
+              [&](T value) { return value == values[offset]; })) {
+        expectedEncodingType = nimble::EncodingType::Constant;
+      }
+    }
     if constexpr (std::is_same_v<EncodingType, nimble::RLEEncoding<T>>) {
       // A range that starts or ends inside a run keeps the boundary runs whole
       // and comes back wrapped.
@@ -491,17 +502,13 @@ TYPED_TEST(EncodingSliceTypedTest, materializesRandomRanges) {
 
   for (uint32_t iteration = 0; iteration < kIterations; ++iteration) {
     SCOPED_TRACE(testing::Message() << "iteration=" << iteration);
-    constexpr bool kRequiresAtLeastTwoRows = std::is_same_v<
-        EncodingType,
-        nimble::HuffmanEncoding<typename EncodingType::cppDataType>>;
-    const auto rowCount = std::uniform_int_distribution<uint32_t>{
-        kRequiresAtLeastTwoRows ? 2U : 1U, 128}(rng);
+    const auto rowCount = std::uniform_int_distribution<uint32_t>{1, 128}(rng);
     const auto values =
         this->template makeRandomValuesForEncoding<EncodingType>(rng, rowCount);
-    const auto offset = std::uniform_int_distribution<uint32_t>{
-        0, rowCount - (kRequiresAtLeastTwoRows ? 2U : 1U)}(rng);
-    const auto length = std::uniform_int_distribution<uint32_t>{
-        kRequiresAtLeastTwoRows ? 2U : 1U, rowCount - offset}(rng);
+    const auto offset =
+        std::uniform_int_distribution<uint32_t>{0, rowCount - 1}(rng);
+    const auto length =
+        std::uniform_int_distribution<uint32_t>{1, rowCount - offset}(rng);
 
     SCOPED_TRACE(
         testing::Message() << "rowCount=" << rowCount << ", offset=" << offset
@@ -509,6 +516,22 @@ TYPED_TEST(EncodingSliceTypedTest, materializesRandomRanges) {
     this->template expectFactorySliceMaterializes<EncodingType>(
         values, offset, length);
   }
+}
+
+TEST_F(EncodingSliceTest, huffmanSingleSymbolRangeSlicesToConstant) {
+  const auto values = makeVector<uint32_t>({10, 11, 10, 12, 12, 12, 10, 11});
+  const auto encoded =
+      nimble::test::Encoder<nimble::HuffmanEncoding<uint32_t>>::encode(
+          *buffer_, values);
+
+  auto encoding = createEncoding(slice(encoded, /*offset=*/3, /*length=*/3));
+  EXPECT_EQ(encoding->encodingType(), nimble::EncodingType::Constant);
+  ASSERT_EQ(encoding->rowCount(), 3);
+  nimble::Vector<uint32_t> output{pool_.get(), 3};
+  encoding->materialize(3, output.data());
+  EXPECT_THAT(
+      std::vector<uint32_t>(output.begin(), output.end()),
+      testing::ElementsAre(12, 12, 12));
 }
 
 TEST_F(EncodingSliceTest, materializesNumericRange) {
